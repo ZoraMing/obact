@@ -1,0 +1,7 @@
+{
+  "run_id": "run_42",
+  "workflow": "daily_orders",
+  "mode": "headed",
+  "state": "WAITING",
+  "step_id": "s04"
+}

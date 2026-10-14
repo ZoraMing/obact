@@ -1,0 +1,9 @@
+{
+  "locator": {
+    "css": "button.audit-btn",
+    "role": "button",
+    "name": "审核",
+    "within": "tr[data-id='88231']"
+  },
+  "unique": true
+}

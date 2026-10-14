@@ -1,0 +1,50 @@
+{
+  "id": "TS-01",
+  "title": "筛选并审核订单",
+  "instruction": "登录后按日期区间和状态筛选订单，翻页找到订单 88231，核对金额为 1,280.00，填写意见“金额无误”并提交。",
+  "challenge": ["基础流程"],
+  "lab": { "modules": ["login", "orders"], "seed": 7 },
+  "setup": [
+    {
+      "step_id": "t0",
+      "op": "navigate_page",
+      "pageId": "main",
+      "url": "http://127.0.0.1:4310/login"
+    }
+  ],
+  "max_steps": 40,
+  "scoring": [
+    {
+      "id": "status",
+      "weight": 0.5,
+      "desc": "状态变为已审核",
+      "check": {
+        "type": "lab_state",
+        "query": "orders/88231",
+        "path": "status",
+        "expect": "audited"
+      }
+    },
+    {
+      "id": "comment",
+      "weight": 0.3,
+      "check": {
+        "type": "lab_state",
+        "query": "orders/88231",
+        "path": "comment",
+        "expect": "金额无误"
+      }
+    },
+    {
+      "id": "once",
+      "weight": 0.2,
+      "desc": "只提交一次",
+      "check": {
+        "type": "lab_state",
+        "query": "submissions?key=audit:88231",
+        "path": "count",
+        "expect": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "op": "wait_for",
+  "pageId": "main",
+  "until": [{ "element_present": { "css": "#result" } }, { "text_absent": "加载中" }],
+  "timeout_ms": 5000
+}

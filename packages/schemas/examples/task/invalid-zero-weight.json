@@ -1,0 +1,5 @@
+{
+  "id": "T",
+  "instruction": "x",
+  "scoring": [{ "id": "a", "weight": 0, "check": { "type": "file", "path": "a.csv" } }]
+}

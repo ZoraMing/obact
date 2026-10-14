@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/unverified.json",
+  "title": "UnverifiedRecord",
+  "description": "runs/<run_id>/unverified.jsonl 的一行：单次提交已发出但结果未确认，绝不自动重试（FR-18，PRD 7.5）。",
+  "type": "object",
+  "properties": {
+    "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+    "step_id": { "type": "string" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "time": { "$ref": "common.json#/$defs/Timestamp" },
+    "reason": {
+      "type": "string",
+      "enum": ["post_timeout", "post_failed", "crash", "stuck", "navigation_lost", "browser_lost"]
+    },
+    "screenshot": { "type": ["string", "null"] },
+    "resolution": {
+      "description": "人工核实结果；未核实时省略。",
+      "type": "object",
+      "properties": {
+        "outcome": { "type": "string", "enum": ["done", "not_done"] },
+        "time": { "$ref": "common.json#/$defs/Timestamp" },
+        "note": { "type": "string" }
+      },
+      "required": ["outcome", "time"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["run_id", "step_id", "idempotency_key", "time", "reason"],
+  "additionalProperties": false
+}

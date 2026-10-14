@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/methods.json",
+  "title": "Methods",
+  "description": "统一接口各方法的参数与返回（FR-27，PRD 7.1）。observe、act、act_batch 的结构见各自文件。",
+  "$defs": {
+    "RunRef": {
+      "type": "object",
+      "properties": { "run_id": { "$ref": "checkpoint.json#/$defs/RunId" } },
+      "required": ["run_id"],
+      "additionalProperties": false
+    },
+    "RunStateResult": {
+      "type": "object",
+      "properties": {
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "state": { "$ref": "checkpoint.json#/$defs/RunState" }
+      },
+      "required": ["run_id", "state"],
+      "additionalProperties": false
+    },
+    "Empty": { "type": "object", "additionalProperties": false, "tsType": "Record<string, never>" },
+    "ResolveLocatorParams": {
+      "type": "object",
+      "properties": {
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "ref": { "$ref": "common.json#/$defs/Ref" }
+      },
+      "required": ["pageId", "ref"],
+      "additionalProperties": false
+    },
+    "ResolveLocatorResult": {
+      "description": "两类定位器均实测唯一（FR-07）；某一类无法唯一时省略该类字段。",
+      "type": "object",
+      "properties": {
+        "locator": { "$ref": "common.json#/$defs/Locator" },
+        "unique": { "type": "boolean" }
+      },
+      "required": ["locator", "unique"],
+      "additionalProperties": false
+    },
+    "NetworkEntry": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string" },
+        "method": { "type": "string" },
+        "status": { "type": "integer" },
+        "mime": { "type": "string" },
+        "action_seq": { "type": "integer", "minimum": 0, "description": "响应到达时的动作序号。" },
+        "time": { "$ref": "common.json#/$defs/Timestamp" },
+        "size": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["id", "url", "method", "status", "action_seq", "time"],
+      "additionalProperties": false
+    },
+    "ListNetworkRequestsParams": {
+      "type": "object",
+      "properties": {
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "url": { "type": "string", "description": "URL 正则过滤。" },
+        "since_action": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["pageId"],
+      "additionalProperties": false
+    },
+    "ListNetworkRequestsResult": {
+      "type": "object",
+      "properties": {
+        "requests": { "type": "array", "items": { "$ref": "#/$defs/NetworkEntry" } }
+      },
+      "required": ["requests"],
+      "additionalProperties": false
+    },
+    "GetNetworkRequestParams": {
+      "type": "object",
+      "properties": {
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "id": { "type": "string" }
+      },
+      "required": ["pageId", "id"],
+      "additionalProperties": false
+    },
+    "GetNetworkRequestResult": {
+      "type": "object",
+      "properties": {
+        "entry": { "$ref": "#/$defs/NetworkEntry" },
+        "body": { "description": "解析后的 JSON 响应体。" }
+      },
+      "required": ["entry", "body"],
+      "additionalProperties": false
+    },
+    "AskHumanParams": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["question", "infeasible"],
+          "description": "infeasible：报告任务无法完成（FR-34）。"
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["message"],
+      "additionalProperties": false
+    },
+    "AskHumanResult": {
+      "type": "object",
+      "properties": {
+        "answer": { "type": ["string", "null"], "description": "超时或取消为 null。" },
+        "option_index": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["answer"],
+      "additionalProperties": false
+    },
+    "HumanReplyParams": {
+      "description": "界面（侧边栏、终端）回答 need_human / ask_save（FR-21、FR-34）。PRD 7.1 未列，为接管闭环补充。",
+      "type": "object",
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1 },
+        "answer": { "type": "string" },
+        "option_index": { "type": "integer", "minimum": 0 },
+        "action": { "type": "string", "enum": ["continue", "stop"] },
+        "writeback": { "type": "string", "enum": ["once", "popup_rule", "workflow_step"] },
+        "save_params": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "scope": { "type": "string", "enum": ["workflow", "site", "global"] }
+            },
+            "required": ["key", "scope"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["request_id"],
+      "additionalProperties": false
+    },
+    "FileEntry": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "dir": { "type": "boolean" },
+        "size": { "type": "integer", "minimum": 0 },
+        "mtime": { "$ref": "common.json#/$defs/Timestamp" }
+      },
+      "required": ["path", "dir"],
+      "additionalProperties": false
+    },
+    "WorkspacePath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "相对 workspace/files 的路径；越出工作区报 path_outside_workspace（FR-35）。"
+    },
+    "Encoding": { "type": "string", "enum": ["utf8", "base64"] },
+    "FilesListParams": {
+      "type": "object",
+      "properties": { "path": { "$ref": "#/$defs/WorkspacePath" } },
+      "additionalProperties": false
+    },
+    "FilesListResult": {
+      "type": "object",
+      "properties": { "files": { "type": "array", "items": { "$ref": "#/$defs/FileEntry" } } },
+      "required": ["files"],
+      "additionalProperties": false
+    },
+    "FilesReadParams": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "#/$defs/WorkspacePath" },
+        "encoding": { "$ref": "#/$defs/Encoding" }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "FilesReadResult": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "encoding": { "$ref": "#/$defs/Encoding" },
+        "size": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["content", "encoding", "size"],
+      "additionalProperties": false
+    },
+    "FilesWriteParams": {
+      "type": "object",
+      "properties": {
+        "path": { "$ref": "#/$defs/WorkspacePath" },
+        "content": { "type": "string" },
+        "encoding": { "$ref": "#/$defs/Encoding" },
+        "append": { "type": "boolean" }
+      },
+      "required": ["path", "content"],
+      "additionalProperties": false
+    },
+    "FilesWriteResult": {
+      "type": "object",
+      "properties": { "path": { "type": "string" }, "size": { "type": "integer", "minimum": 0 } },
+      "required": ["path", "size"],
+      "additionalProperties": false
+    },
+    "RunParams": {
+      "type": "object",
+      "properties": {
+        "workflow": { "type": "string", "minLength": 1 },
+        "mode": { "$ref": "common.json#/$defs/Mode" },
+        "resume": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "vars": { "type": "object", "description": "初始运行变量。", "additionalProperties": true }
+      },
+      "required": ["workflow"],
+      "additionalProperties": false,
+      "description": "resume：从该运行的检查点续跑。"
+    },
+    "StatusResult": {
+      "type": "object",
+      "properties": {
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "state": { "$ref": "checkpoint.json#/$defs/RunState" },
+        "step_id": { "type": "string" },
+        "loop_index": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "stats": { "$ref": "events.json#/$defs/RunStats" },
+        "unverified": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["run_id", "state"],
+      "additionalProperties": false
+    },
+    "SwitchModeParams": {
+      "description": "在检查点边界切换有头/无头（PRD 5.5）。",
+      "type": "object",
+      "properties": {
+        "account": { "type": "string", "minLength": 1 },
+        "mode": { "$ref": "common.json#/$defs/Mode" }
+      },
+      "required": ["account", "mode"],
+      "additionalProperties": false
+    },
+    "SwitchModeResult": {
+      "type": "object",
+      "properties": {
+        "mode": { "$ref": "common.json#/$defs/Mode" },
+        "suspended_runs": { "type": "array", "items": { "$ref": "checkpoint.json#/$defs/RunId" } }
+      },
+      "required": ["mode", "suspended_runs"],
+      "additionalProperties": false
+    },
+    "ParamScope": { "type": "string", "enum": ["workflow", "site", "global"] },
+    "ParamsGetParams": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "workflow": { "type": "string" },
+        "site": { "type": "string" }
+      },
+      "required": ["key"],
+      "additionalProperties": false
+    },
+    "ParamsGetResult": {
+      "type": "object",
+      "properties": {
+        "found": { "type": "boolean" },
+        "scope": { "anyOf": [{ "$ref": "#/$defs/ParamScope" }, { "type": "null" }] },
+        "value": { "$ref": "params.json#/$defs/Value" }
+      },
+      "required": ["found", "scope"],
+      "additionalProperties": false,
+      "description": "敏感参数的 value 返回 ***。"
+    },
+    "ParamsSetParams": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "value": { "$ref": "params.json#/$defs/Value" },
+        "scope": { "$ref": "#/$defs/ParamScope" },
+        "workflow": { "type": "string" },
+        "site": { "type": "string" }
+      },
+      "required": ["key", "value", "scope"],
+      "allOf": [
+        {
+          "if": { "properties": { "scope": { "const": "workflow" } } },
+          "then": { "required": ["workflow"] }
+        },
+        {
+          "if": { "properties": { "scope": { "const": "site" } } },
+          "then": { "required": ["site"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "TaskLoadParams": {
+      "type": "object",
+      "properties": {
+        "task": { "type": "string", "minLength": 1, "description": "任务 ID 或任务文件路径。" }
+      },
+      "required": ["task"],
+      "additionalProperties": false
+    },
+    "TaskLoadResult": {
+      "type": "object",
+      "properties": {
+        "task": { "$ref": "task.json" },
+        "run_space": { "type": "string", "description": "本次运行在测试应用中的独立数据空间。" }
+      },
+      "required": ["task", "run_space"],
+      "additionalProperties": false
+    },
+    "TaskEvaluateParams": {
+      "type": "object",
+      "properties": {
+        "task_id": { "type": "string", "minLength": 1 },
+        "run_space": { "type": "string" }
+      },
+      "required": ["task_id", "run_space"],
+      "additionalProperties": false
+    },
+    "TaskEvaluateResult": {
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "按权重的部分得分。"
+        },
+        "complete": { "type": "boolean", "description": "评分点全部通过。" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "weight": { "type": "number" },
+              "pass": { "type": "boolean" },
+              "detail": { "type": "string" }
+            },
+            "required": ["id", "weight", "pass"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["score", "complete", "items"],
+      "additionalProperties": false
+    }
+  }
+}

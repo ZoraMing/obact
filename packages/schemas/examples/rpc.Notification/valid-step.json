@@ -1,0 +1,5 @@
+{
+  "jsonrpc": "2.0",
+  "method": "step",
+  "params": { "run_id": "run_42", "step_id": "s04", "status": "start" }
+}

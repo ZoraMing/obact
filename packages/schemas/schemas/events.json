@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/events.json",
+  "title": "Events",
+  "description": "服务推送的事件（JSON-RPC 通知），method 为事件名，params 为下列结构（FR-27，PRD 7.1）。",
+  "$defs": {
+    "Step": {
+      "title": "StepEvent",
+      "type": "object",
+      "properties": {
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "step_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["start", "ok", "error", "skipped", "unverified"] },
+        "loop_index": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "error": { "$ref": "common.json#/$defs/Error" }
+      },
+      "required": ["run_id", "step_id", "status"],
+      "additionalProperties": false
+    },
+    "NeedHuman": {
+      "title": "NeedHumanEvent",
+      "description": "需要人工接管或回答问题（FR-20、FR-34 共用通道）。",
+      "type": "object",
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "description": "回答或确认时引用。" },
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "captcha",
+            "login_missing_param",
+            "locator_failed",
+            "manual_pause",
+            "question",
+            "infeasible"
+          ]
+        },
+        "step_id": { "type": "string" },
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "message": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "screenshot": { "type": "string" },
+        "priority": { "type": "string", "enum": ["normal", "high"] }
+      },
+      "required": ["request_id", "reason", "message"],
+      "additionalProperties": false
+    },
+    "AskSave": {
+      "title": "AskSaveEvent",
+      "description": "接管结束确认：写回性质三选一 + 要存进参数库的输入（FR-21）。",
+      "type": "object",
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1 },
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "step_id": { "type": "string" },
+        "writeback_options": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["once", "popup_rule", "workflow_step"] }
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "preview": { "type": "string", "description": "敏感参数显示为 ***。" },
+              "suggested_scope": { "type": "string", "enum": ["workflow", "site", "global"] }
+            },
+            "required": ["key"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["request_id", "run_id", "writeback_options"],
+      "additionalProperties": false
+    },
+    "Unverified": { "title": "UnverifiedEvent", "$ref": "unverified.json" },
+    "RunDone": {
+      "title": "RunDoneEvent",
+      "type": "object",
+      "properties": {
+        "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+        "state": { "type": "string", "enum": ["DONE", "STOPPED", "FAILED", "TRIPPED"] },
+        "stats": { "$ref": "#/$defs/RunStats" },
+        "report_path": { "type": "string" }
+      },
+      "required": ["run_id", "state", "stats"],
+      "additionalProperties": false
+    },
+    "RunStats": {
+      "title": "RunStats",
+      "type": "object",
+      "properties": {
+        "steps": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "human": { "type": "integer", "minimum": 0 },
+        "resumes": { "type": "integer", "minimum": 0 },
+        "unverified": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["steps", "ok", "failed", "human", "resumes", "unverified"],
+      "additionalProperties": false
+    }
+  }
+}

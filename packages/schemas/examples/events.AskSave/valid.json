@@ -1,0 +1,7 @@
+{
+  "request_id": "h2",
+  "run_id": "run_42",
+  "step_id": "s02",
+  "writeback_options": ["once", "popup_rule", "workflow_step"],
+  "params": [{ "key": "login_password", "preview": "***", "suggested_scope": "site" }]
+}

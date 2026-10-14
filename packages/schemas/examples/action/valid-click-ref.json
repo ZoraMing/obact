@@ -1,0 +1,6 @@
+{
+  "op": "click",
+  "pageId": "main",
+  "target": { "ref": 15 },
+  "post": [{ "text_present": "审核通过" }]
+}

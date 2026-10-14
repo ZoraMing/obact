@@ -1,0 +1,9 @@
+[
+  {
+    "id": "order_list",
+    "kind": "page",
+    "url": "/orders$",
+    "must_exist": [{ "role": "table", "name": "订单" }]
+  },
+  { "id": "login", "kind": "login", "must_exist": [{ "css": "input[type=password]" }] }
+]

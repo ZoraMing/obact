@@ -1,0 +1,7 @@
+{
+  "step_id": "s04",
+  "op": "click",
+  "pageId": "main",
+  "target": { "css": "button.audit-btn" },
+  "once_only": true
+}

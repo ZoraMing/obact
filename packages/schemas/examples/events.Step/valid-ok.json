@@ -1,0 +1,7 @@
+{
+  "run_id": "run_42",
+  "step_id": "s04",
+  "status": "ok",
+  "loop_index": { "s03": 37 },
+  "duration_ms": 310
+}

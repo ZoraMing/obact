@@ -1,0 +1,7 @@
+{
+  "status": "error",
+  "error": { "code": "stale_ref", "message": "编号 15 对应的节点已失效，请重新 observe" },
+  "locator_used": "ref",
+  "duration_ms": 4,
+  "effects": { "navigated": false, "new_pages": [], "dialogs": [], "changed": false }
+}

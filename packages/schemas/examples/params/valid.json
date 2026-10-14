@@ -1,0 +1,5 @@
+{
+  "global": { "export_dir": "outputs" },
+  "sites": { "saucedemo": { "login_user": "standard_user", "login_password": "secret_sauce" } },
+  "workflows": { "daily_orders": { "batch": 30, "regions": ["cn-hangzhou", "cn-beijing"] } }
+}

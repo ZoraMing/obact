@@ -1,0 +1,1 @@
+{ "step_id": "s03", "op": "loop_begin", "over": "{{file:inputs/orders.csv}}" }

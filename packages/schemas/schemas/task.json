@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/task.json",
+  "title": "Task",
+  "description": "任务集的一个任务（FR-36，PRD 5.8）：初始化 + 指令 + 带权重的评分点（参考 OSWorld 2.0）。评分点（scoring）与续跑用的检查点不是一回事。",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+    "title": { "type": "string" },
+    "instruction": { "type": "string", "minLength": 1 },
+    "challenge": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "考察的挑战类型，如 多条目跟踪、视觉精确。"
+    },
+    "lab": {
+      "type": "object",
+      "properties": {
+        "modules": { "type": "array", "items": { "type": "string" } },
+        "seed": { "type": "integer" },
+        "faults": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "开启的故障注入开关。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "setup": { "type": "array", "items": { "$ref": "step.json" }, "description": "初始化步骤。" },
+    "max_steps": { "type": "integer", "minimum": 1 },
+    "scoring": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ScoringItem" } }
+  },
+  "required": ["id", "instruction", "scoring"],
+  "additionalProperties": false,
+  "$defs": {
+    "ScoringItem": {
+      "title": "ScoringItem",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "desc": { "type": "string" },
+        "weight": { "type": "number", "exclusiveMinimum": 0 },
+        "check": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "查询测试应用的状态接口，按字段路径比较。",
+              "properties": {
+                "type": { "const": "lab_state" },
+                "query": { "type": "string" },
+                "path": { "type": "string" },
+                "expect": {}
+              },
+              "required": ["type", "query", "expect"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "description": "页面断言。",
+              "properties": {
+                "type": { "const": "assert" },
+                "pageId": { "$ref": "common.json#/$defs/PageId" },
+                "checks": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "$ref": "common.json#/$defs/Assertion" }
+                }
+              },
+              "required": ["type", "checks"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "description": "核对工作区文件（如导出的报表）。",
+              "properties": {
+                "type": { "const": "file" },
+                "path": { "type": "string" },
+                "expect_rows": { "type": "integer", "minimum": 0 },
+                "expect_contains": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["type", "path"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["id", "weight", "check"],
+      "additionalProperties": false
+    }
+  }
+}

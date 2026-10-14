@@ -1,0 +1,6 @@
+{
+  "jsonrpc": "2.0",
+  "id": "a-2",
+  "method": "act",
+  "params": { "op": "click_at", "pageId": "main", "x": 10, "y": 20 }
+}

@@ -1,0 +1,23 @@
+{
+  "run_id": "run_42",
+  "seq": 7,
+  "time": "2026-10-14T10:20:58Z",
+  "step_id": "s04",
+  "loop_index": { "s03": 36 },
+  "observation": { "url": "https://example.com/orders", "signature": "order_list" },
+  "action": {
+    "op": "click",
+    "pageId": "main",
+    "target": { "css": "button.audit-btn", "within": "tr[data-id='88231']" }
+  },
+  "result": {
+    "status": "ok",
+    "locator_used": "css",
+    "duration_ms": 310,
+    "screenshot_path": null,
+    "effects": { "navigated": false, "new_pages": [], "dialogs": [], "changed": true },
+    "assertions": [{ "text_present": "审核通过", "pass": true }],
+    "diff": null
+  },
+  "source": "workflow"
+}

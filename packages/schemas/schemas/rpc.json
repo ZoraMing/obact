@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/rpc.json",
+  "title": "Rpc",
+  "description": "JSON-RPC 2.0 消息（WebSocket 与同格式的 HTTP 入口，PRD 8.2）。每个方法的 params 结构写在 Call 变体里，返回结构由 x-result 标注（仅注解，不参与校验）。",
+  "$defs": {
+    "Id": { "type": ["string", "integer"] },
+    "Request": {
+      "title": "RpcRequest",
+      "type": "object",
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/Id" },
+        "method": { "type": "string" },
+        "params": {}
+      },
+      "required": ["jsonrpc", "id", "method"],
+      "additionalProperties": false,
+      "oneOf": [
+        { "$ref": "#/$defs/Call.observe" },
+        { "$ref": "#/$defs/Call.act" },
+        { "$ref": "#/$defs/Call.act_batch" },
+        { "$ref": "#/$defs/Call.resolve_locator" },
+        { "$ref": "#/$defs/Call.list_network_requests" },
+        { "$ref": "#/$defs/Call.get_network_request" },
+        { "$ref": "#/$defs/Call.ask_human" },
+        { "$ref": "#/$defs/Call.human.reply" },
+        { "$ref": "#/$defs/Call.files.list" },
+        { "$ref": "#/$defs/Call.files.read" },
+        { "$ref": "#/$defs/Call.files.write" },
+        { "$ref": "#/$defs/Call.run" },
+        { "$ref": "#/$defs/Call.pause" },
+        { "$ref": "#/$defs/Call.resume" },
+        { "$ref": "#/$defs/Call.stop" },
+        { "$ref": "#/$defs/Call.status" },
+        { "$ref": "#/$defs/Call.switch_mode" },
+        { "$ref": "#/$defs/Call.params.get" },
+        { "$ref": "#/$defs/Call.params.set" },
+        { "$ref": "#/$defs/Call.task.load" },
+        { "$ref": "#/$defs/Call.task.evaluate" }
+      ]
+    },
+    "Notification": {
+      "title": "RpcNotification",
+      "type": "object",
+      "properties": { "jsonrpc": { "const": "2.0" }, "method": { "type": "string" }, "params": {} },
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "step" },
+            "params": { "$ref": "events.json#/$defs/Step" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "need_human" },
+            "params": { "$ref": "events.json#/$defs/NeedHuman" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "ask_save" },
+            "params": { "$ref": "events.json#/$defs/AskSave" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "unverified" },
+            "params": { "$ref": "events.json#/$defs/Unverified" }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "method": { "const": "run_done" },
+            "params": { "$ref": "events.json#/$defs/RunDone" }
+          }
+        }
+      ]
+    },
+    "Response": {
+      "title": "RpcResponse",
+      "type": "object",
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }] },
+        "result": {},
+        "error": { "$ref": "#/$defs/RpcError" }
+      },
+      "required": ["jsonrpc", "id"],
+      "additionalProperties": false,
+      "oneOf": [{ "required": ["result"] }, { "required": ["error"] }]
+    },
+    "RpcError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "description": "JSON-RPC 错误码；工具层错误统一用 -32000，详情在 data。"
+        },
+        "message": { "type": "string" },
+        "data": { "$ref": "common.json#/$defs/Error" }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    },
+    "Call.observe": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "observe" },
+        "params": { "$ref": "observe.json#/$defs/Params" }
+      },
+      "required": ["method", "params"],
+      "x-result": "observe.json#/$defs/Result"
+    },
+    "Call.act": {
+      "type": "object",
+      "properties": { "method": { "const": "act" }, "params": { "$ref": "action.json" } },
+      "required": ["method", "params"],
+      "x-result": "act-result.json"
+    },
+    "Call.act_batch": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "act_batch" },
+        "params": { "$ref": "act-batch.json#/$defs/Params" }
+      },
+      "required": ["method", "params"],
+      "x-result": "act-batch.json#/$defs/Result"
+    },
+    "Call.resolve_locator": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "resolve_locator" },
+        "params": { "$ref": "methods.json#/$defs/ResolveLocatorParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/ResolveLocatorResult"
+    },
+    "Call.list_network_requests": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "list_network_requests" },
+        "params": { "$ref": "methods.json#/$defs/ListNetworkRequestsParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/ListNetworkRequestsResult"
+    },
+    "Call.get_network_request": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "get_network_request" },
+        "params": { "$ref": "methods.json#/$defs/GetNetworkRequestParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/GetNetworkRequestResult"
+    },
+    "Call.ask_human": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "ask_human" },
+        "params": { "$ref": "methods.json#/$defs/AskHumanParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/AskHumanResult"
+    },
+    "Call.human.reply": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "human.reply" },
+        "params": { "$ref": "methods.json#/$defs/HumanReplyParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/Empty"
+    },
+    "Call.files.list": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "files.list" },
+        "params": { "$ref": "methods.json#/$defs/FilesListParams" }
+      },
+      "required": ["method"],
+      "x-result": "methods.json#/$defs/FilesListResult"
+    },
+    "Call.files.read": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "files.read" },
+        "params": { "$ref": "methods.json#/$defs/FilesReadParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/FilesReadResult"
+    },
+    "Call.files.write": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "files.write" },
+        "params": { "$ref": "methods.json#/$defs/FilesWriteParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/FilesWriteResult"
+    },
+    "Call.run": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "run" },
+        "params": { "$ref": "methods.json#/$defs/RunParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/RunStateResult"
+    },
+    "Call.pause": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "pause" },
+        "params": { "$ref": "methods.json#/$defs/RunRef" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/RunStateResult"
+    },
+    "Call.resume": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "resume" },
+        "params": { "$ref": "methods.json#/$defs/RunRef" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/RunStateResult"
+    },
+    "Call.stop": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "stop" },
+        "params": { "$ref": "methods.json#/$defs/RunRef" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/RunStateResult"
+    },
+    "Call.status": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "status" },
+        "params": { "$ref": "methods.json#/$defs/RunRef" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/StatusResult"
+    },
+    "Call.switch_mode": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "switch_mode" },
+        "params": { "$ref": "methods.json#/$defs/SwitchModeParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/SwitchModeResult"
+    },
+    "Call.params.get": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "params.get" },
+        "params": { "$ref": "methods.json#/$defs/ParamsGetParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/ParamsGetResult"
+    },
+    "Call.params.set": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "params.set" },
+        "params": { "$ref": "methods.json#/$defs/ParamsSetParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/Empty"
+    },
+    "Call.task.load": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "task.load" },
+        "params": { "$ref": "methods.json#/$defs/TaskLoadParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/TaskLoadResult"
+    },
+    "Call.task.evaluate": {
+      "type": "object",
+      "properties": {
+        "method": { "const": "task.evaluate" },
+        "params": { "$ref": "methods.json#/$defs/TaskEvaluateParams" }
+      },
+      "required": ["method", "params"],
+      "x-result": "methods.json#/$defs/TaskEvaluateResult"
+    }
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/observe.json",
+  "title": "Observe",
+  "description": "observe 方法的参数与返回（FR-05、FR-31，PRD 7.2）。",
+  "$defs": {
+    "View": { "type": "string", "enum": ["text", "screenshot", "som", "axtree"] },
+    "Params": {
+      "title": "ObserveParams",
+      "type": "object",
+      "properties": {
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "views": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/View" },
+          "uniqueItems": true,
+          "description": "默认 [\"text\"]。"
+        },
+        "max_chars": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "文本快照与摘要的字符预算，默认 40000。"
+        }
+      },
+      "required": ["pageId"],
+      "additionalProperties": false
+    },
+    "ElementStates": {
+      "type": "object",
+      "properties": {
+        "disabled": { "type": "boolean" },
+        "checked": { "type": ["boolean", "string"], "description": "true / false / \"mixed\"" },
+        "selected": { "type": "boolean" },
+        "expanded": { "type": "boolean" },
+        "focused": { "type": "boolean" },
+        "required": { "type": "boolean" },
+        "readonly": { "type": "boolean" },
+        "editable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "Element": {
+      "title": "ObservedElement",
+      "type": "object",
+      "properties": {
+        "ref": { "$ref": "common.json#/$defs/Ref" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "states": { "$ref": "#/$defs/ElementStates" },
+        "bbox": { "$ref": "common.json#/$defs/BBox" },
+        "visible_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "clickable": { "type": "boolean" },
+        "within": { "type": "string", "description": "所在行或容器（业务主键）的 CSS 选择器。" },
+        "frame": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "所在 frame 的 iframe 选择器链；顶层文档省略。"
+        }
+      },
+      "required": ["ref", "role", "name", "bbox", "visible_ratio", "clickable"],
+      "additionalProperties": false
+    },
+    "Result": {
+      "title": "ObserveResult",
+      "type": "object",
+      "properties": {
+        "pageId": { "$ref": "common.json#/$defs/PageId" },
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "signature": {
+          "type": ["string", "null"],
+          "description": "命中的页面签名 ID，未命中为 null（FR-08）。"
+        },
+        "canvas_warning": { "type": "boolean" },
+        "snapshot_text": { "type": "string", "description": "编号元素表（view=text）。" },
+        "elements": { "type": "array", "items": { "$ref": "#/$defs/Element" } },
+        "text_md": { "type": "string", "description": "页面文本摘要。" },
+        "truncated": { "type": "boolean" },
+        "viewport": { "$ref": "common.json#/$defs/Viewport" },
+        "screenshot_path": { "type": "string" },
+        "som_path": { "type": "string", "description": "编号框截图路径（view=som）。" },
+        "axtree": {
+          "type": "string",
+          "description": "可访问性树文本（view=axtree），编号与 elements 一致。"
+        }
+      },
+      "required": [
+        "pageId",
+        "url",
+        "title",
+        "signature",
+        "canvas_warning",
+        "elements",
+        "text_md",
+        "truncated",
+        "viewport"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

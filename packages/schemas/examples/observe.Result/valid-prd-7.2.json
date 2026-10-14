@@ -1,0 +1,22 @@
+{
+  "pageId": "main",
+  "url": "https://example.com/orders",
+  "title": "订单列表",
+  "signature": "order_list",
+  "canvas_warning": false,
+  "snapshot_text": "[12] button \"查询\"\n[13] textbox \"订单号\" value=\"\"\n[15] button \"审核\" within=row(\"88231\")",
+  "elements": [
+    {
+      "ref": 15,
+      "role": "button",
+      "name": "审核",
+      "bbox": [1020, 420, 64, 28],
+      "visible_ratio": 1,
+      "clickable": true,
+      "within": "tr[data-id='88231']"
+    }
+  ],
+  "text_md": "订单列表，共 238 条 …",
+  "truncated": false,
+  "viewport": { "width": 1280, "height": 800, "scale": 1 }
+}
