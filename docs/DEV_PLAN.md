@@ -27,10 +27,10 @@ M0 契约与脚手架 → M1 观察与执行内核 → M2 工作流引擎 → M3
 | 2 | C-1（任务进程被杀自动重启）在 M2 出口，而守护与熔断（FR-19）在 M4 | M2 含最小监督进程（拉起子进程 + 心跳超时）；熔断与卡住截图留 M4 |
 | 3 | BW-12 在 M1 出口，但需要的 Lab“看板与画布”在 M5 | M1 用 UI Testing Playground 本地部署版 + 自建 Canvas 夹具；M5 Lab 看板完成后回归 |
 | 4 | BW-9、C-4 依赖 Lab 的幂等键记录与“提交超时但已落库”故障 | Lab v1（M1）即带重置 / 状态 / 故障注入三接口与订单后台写操作 |
-| 5 | MiniWoB++ 是 Python 环境，PRD 只写“可以跑通” | M0 预研定接入方式：本地 Python 起任务页面，Obact（Node）驱动页面，读其 reward 对照 |
+| 5 | MiniWoB++ 是 Python 环境，PRD 只写“可以跑通” | M0 预研结论：任务页是静态 HTML，本地静态托管，由 Obact（Node）驱动并读取页面里的奖励，不需要它的 Python 环境 |
 | 6 | FR-03 浏览器池为 P0，但并行为 P1 | M1 只做“按账号起浏览器 + 任务子进程连接”；并行规则放 M4 |
 | 7 | 9.2 写“标‘建议’的需确认”，第 12 节写“无待确认”；BW-14 仍标“建议值” | 已确认建议项，PRD 已统一表述（v1.5.1），BW-14 按“召回不低于 BrowserGym”执行 |
-| 8 | Chrome 137 起移除 `--load-extension`，第 11 节未列该风险 | M0 预研（见 3.1）；失败则侧边栏降级为独立本地页面，FR-29 为 P1，不阻塞 |
+| 8 | Chrome 137 起移除 `--load-extension`，第 11 节未列该风险 | M0 预研：Chromium 141 上 `--load-extension` 可用，Puppeteer `enableExtensions` 在开调试端口时不可用；待 CfT 复核，失败则侧边栏降级为本地页面（FR-29 为 P1，不阻塞） |
 | 9 | FR-02 的“参数库自动填写登录”依赖 FR-22（M3） | M1 只做独立配置目录与登录态复用；自动填写随参数库在 M3 交付 |
 | 10 | FR-26 留痕被 M2（运行）与 M4（报告）同时需要 | M2 交付逐步留痕与轨迹文件；M4 补运行报告与资源采样 |
 
@@ -39,15 +39,15 @@ M0 契约与脚手架 → M1 观察与执行内核 → M2 工作流引擎 → M3
 模块只通过 `packages/schemas` 中的 JSON Schema 交互，每个模块自带夹具测试。
 
 ```
-docs/                 PRD.md、DEV_PLAN.md
-packages/schemas/     JSON Schema（observe、act、步骤、检查点、待核实清单、事件）
+docs/                 PRD.md、DEV_PLAN.md、spikes/（预研结论）
+packages/schemas/     JSON Schema 契约、生成的 TS 类型、契约样例（M0 已完成）
 packages/core/        任务执行器：observe、act、定位、等待、接口缓存、录制注入、虚拟光标
 packages/server/      浏览器池、调度、守护与熔断、JSON-RPC 2.0（WebSocket + HTTP）
 packages/workflow/    JSONL 引擎、检查点、单次提交、参数库、采集输出
 packages/recorder/    录制脚本；与 core 共用定位器生成逻辑
 extension/            MV3 侧边栏与标签组，只做界面
-python/obact/         统一接口的薄客户端
-python/evaluator/     任务加载、重置 Lab、评分点打分
+python/obact/         统一接口的薄客户端（M0：契约校验）；evaluator 子包做任务加载、重置 Lab、评分点打分
+spikes/               M0 预研脚本（不进入产品代码）
 lab/                  Obact Lab 测试应用（Node）
 fixtures/             本地 HTML 夹具库（PRD 9.3）
 workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓库），结构见 PRD 7.6
@@ -61,20 +61,30 @@ workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓
 2. 服务管理的浏览器：任务子进程连接已运行浏览器，并在 DOM 上写入元素编号属性，确认 iframe / Shadow DOM 下可行。
 3. MiniWoB++ 接入：本地起页面、读 reward 的方式，以及 BrowserGym 提取结果的导出方式（供 BW-14）。
 
+结论见 [M0 预研结论](spikes/M0-spikes.md)，要点：
+
+- **进程模型可行**：任务子进程被杀后浏览器与页面不受影响，新进程可接管；同一配置目录重启后登录态保留。
+- **编号**：页面脚本 + CDP 能覆盖主文档、同源和跨域 iframe、开放和封闭 Shadow DOM；但整块克隆重绘会把编号属性带到新节点上，所以编号必须以 backendNodeId 为准，属性只用于各视图对齐。
+- **observe 性能**：全量可访问性树在 1 万个可交互元素时要约 3 秒，因此默认只取视口内元素的可访问性信息。
+- **扩展**：用 `--load-extension` 可行（Chromium 141）；Puppeteer 的 `enableExtensions` 在开调试端口时不可用。还需在选定的 CfT 版本上复核。
+- **MiniWoB++**：静态托管即可，由 Node 驱动、读取它自带的奖励；BrowserGym 的提取函数可以导出 BW-14 基线。
+
 ## 4. 里程碑任务拆分
 
 “并行”列：同一里程碑内标 A/B/C 的组可同时开发；依赖写在“前置”。
 
 ### M0 契约与脚手架
 
-| 任务 | 说明 | 前置 |
-|---|---|---|
-| 工具链 | monorepo、TS 与 Python 工程、lint、单元测试、CI（每次提交跑 F、T） | — |
-| 契约 Schema | 冻结 7.1~7.5 的结构：observe 返回、act 返回、act_batch、步骤、检查点、待核实清单、事件 | — |
-| 契约测试框架 | 用 Schema 校验样例；后续各模块共用 | Schema |
-| 预研 | 3.1 的三项 | — |
+| 任务 | 说明 | 前置 | 状态 |
+|---|---|---|---|
+| 工具链 | monorepo、TS 与 Python 工程、lint、单元测试、CI（每次提交跑 F、T） | — | 完成 |
+| 契约 Schema | 冻结 7.1~7.7 的结构：observe、act、act_batch、步骤、检查点、待核实清单、事件、全部方法与 RPC 消息、工作流目录文件、参数库、任务 | — | 完成，待评审（见 `packages/schemas/README.md`） |
+| 契约测试框架 | 用 Schema 校验样例；TS 与 Python 两端共用同一批样例 | Schema | 完成 |
+| 预研 | 3.1 的三项 | — | 完成；需在 CfT 固定版本上复核 |
 
 出口：Schema 评审冻结；`T` 框架可跑；预研结论写入本文。
+
+M1 需要承接的预研结论：编号表以 backendNodeId 为准、克隆节点重新编号、`<option>` 编号、observe 只取视口内元素的可访问性信息、OOPIF 用它自己的 target 会话、扩展的 service worker 用 CDP 会话调用。
 
 ### M1 观察与执行内核
 
@@ -177,6 +187,7 @@ C-7、C-8 的故障注入开关在 M2 随 Lab 提供，验收在 M4（需参数�
 
 沿用 PRD 第 11 节，另加本计划发现项：
 
-- 扩展加载（第 2 节第 8 项）：M0 预研前不假定侧边栏可用。
+- 扩展加载（第 2 节第 8 项）：在选定的 CfT 版本上复跑 `spikes/extension/load.ts` 前，不假定侧边栏可用。
+- CfT 固定版本尚未选定：本仓库的预研在 Chromium 141 上完成，选定版本后按 `docs/spikes/M0-spikes.md` 第 4 节复跑。
 - 防休眠写进部署说明（PRD 已列）。
 - 推迟到接入 AI 之后：依赖模型推理的题型、模型试跑、FR-33 / FR-34 的验收（PRD 第 12 节）。

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>大表</title></head>
+<body>
+  <table id="t"><tbody></tbody></table>
+  <script>
+    const n = Number(new URLSearchParams(location.search).get('rows') || 5000);
+    const rows = [];
+    for (let i = 0; i < n; i++) {
+      rows.push(`<tr data-id="${i}"><td>订单 ${i}</td><td><input value="${i}"></td><td><button>审核</button></td></tr>`);
+    }
+    document.querySelector('#t tbody').innerHTML = rows.join('');
+  </script>
+</body>
+</html>
