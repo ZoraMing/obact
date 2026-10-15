@@ -14,5 +14,11 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["packages/*/src", "packages/*/scripts", "packages/*/test", "spikes/**/*.ts"]
+  "include": [
+    "packages/*/src",
+    "packages/*/scripts",
+    "packages/*/test",
+    "lab/**/*.ts",
+    "spikes/**/*.ts"
+  ]
 }

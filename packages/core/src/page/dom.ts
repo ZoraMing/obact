@@ -343,6 +343,57 @@ export function obResolve(loc: {
   return { el: null, via: null, reason: ambiguous ? 'not_unique' : 'not_found', counts };
 }
 
+/**
+ * id、类名、属性值是否稳定，可用于定位（FR-07）：排除长数字串、CSS-in-JS 与 CSS Modules 生成的哈希类名、
+ * React useId 之类带冒号的值、混有数字的随机串。
+ */
+export function obIsStableToken(t: string | null | undefined): boolean {
+  if (!t || t.length > 48) return false;
+  if (/\d{3,}/.test(t)) return false;
+  if (/:/.test(t)) return false;
+  if (/^(css|sc|jsx|emotion|styled|svelte)-/i.test(t)) return false;
+  if (/__[A-Za-z0-9-]{4,}$/.test(t)) return false;
+  if (/[_-][A-Za-z0-9]{5,}$/.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t.slice(-5))) return false;
+  if (/^[A-Za-z0-9]{8,}$/.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t)) return false;
+  return true;
+}
+
+/** 文本是否适合放进定位器：含数字或日期的文本会变（FR-07）。 */
+export function obIsStableText(t: string): boolean {
+  return t.length > 0 && t.length <= 80 && !/\d/.test(t);
+}
+
+/**
+ * 元素所在的行或容器（业务主键）选择器，如 tr[data-id='88231']，用于同名元素消歧（FR-07）。
+ * 从近到远找带业务主键属性、且在本文档内唯一的祖先；找不到返回 null。
+ */
+export function obWithin(el: Element): string | null {
+  const KEYS = ['data-id', 'data-key', 'data-row-key', 'data-rowid', 'data-testid'];
+  let cur: Element | null = el.parentElement;
+  while (cur && cur !== document.documentElement) {
+    const tag = cur.tagName.toLowerCase();
+    for (const k of KEYS) {
+      const v = cur.getAttribute(k);
+      if (v && /^[\w.-]{1,64}$/.test(v)) {
+        const sel = `${tag}[${k}='${v}']`;
+        if (obDeepAll(document, sel).length === 1) return sel;
+      }
+    }
+    const id = cur.id;
+    if (
+      id &&
+      obIsStableToken(id) &&
+      /^[A-Za-z][\w-]*$/.test(id) &&
+      ['tr', 'li', 'article', 'section', 'form', 'fieldset', 'dialog'].includes(tag)
+    ) {
+      const sel = `${tag}#${id}`;
+      if (obDeepAll(document, sel).length === 1) return sel;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
 /** 全部助手，供 bundle 使用。新增助手时加到这里。 */
 export const DOM_LIB = [
   obNorm,
@@ -358,4 +409,7 @@ export const DOM_LIB = [
   obFindRef,
   obPickUnique,
   obResolve,
+  obIsStableToken,
+  obIsStableText,
+  obWithin,
 ];

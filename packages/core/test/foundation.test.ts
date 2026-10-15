@@ -216,3 +216,51 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
     assert.deepEqual(e.toJSON(), { code: 'not_found', message: 'x', details: { a: 1 } });
   });
 });
+
+describe('页面内助手：稳定性判断与所在容器', { skip: SKIP }, () => {
+  let env2: TestEnv;
+  before(async () => {
+    env2 = await setup();
+  });
+  after(async () => {
+    await env2?.close();
+  });
+
+  test('obIsStableToken / obIsStableText / obWithin', async () => {
+    const pageId = await env2.open('/pages/basic.html');
+    const page = env2.session.pages.get(pageId);
+    const { bundle } = await import('../src/page/bundle.ts');
+    const { DOM_LIB, obIsStableToken, obIsStableText, obWithin } = await import(
+      '../src/page/dom.ts'
+    );
+    const tokens = await page.evaluate(
+      bundle((list: string[]) => list.map((t) => obIsStableToken(t)), DOM_LIB),
+      [
+        'audit-btn',
+        'submit',
+        'order-list',
+        'id-1696845123',
+        'css-1x2y3z',
+        'Button_btn__3xK9z',
+        ':r1:',
+        'a8f3k2l9q',
+        'sc-bdVaJa',
+        'row-2',
+      ],
+    );
+    assert.deepEqual(tokens, [true, true, true, false, false, false, false, false, false, true]);
+    const texts = await page.evaluate(
+      bundle((l: string[]) => l.map((t) => obIsStableText(t)), DOM_LIB),
+      ['审核', '订单 88231', '2026-10-15'],
+    );
+    assert.deepEqual(texts, [true, false, false]);
+    const within = await page.evaluate(
+      bundle(() => obWithin(document.querySelectorAll('button.audit')[1] as Element), DOM_LIB),
+    );
+    assert.equal(within, "tr[data-id='88232']");
+    const none = await page.evaluate(
+      bundle(() => obWithin(document.getElementById('query') as Element), DOM_LIB),
+    );
+    assert.equal(none, null);
+  });
+});
