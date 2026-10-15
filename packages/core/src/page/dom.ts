@@ -116,6 +116,24 @@ export function obRole(el: Element): string {
   return 'generic';
 }
 
+/** label 的文字：不含其中表单控件（下拉框选项、文本框内容等）的文字。 */
+export function obLabelText(label: Element): string {
+  let text = '';
+  const walk = (n: Node) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === Node.TEXT_NODE) text += c.textContent ?? '';
+      else if (c.nodeType === Node.ELEMENT_NODE) {
+        const tag = (c as Element).tagName;
+        if (['SELECT', 'TEXTAREA', 'INPUT', 'DATALIST', 'BUTTON', 'SCRIPT', 'STYLE'].includes(tag))
+          continue;
+        walk(c);
+      }
+    }
+  };
+  walk(label);
+  return obNorm(text);
+}
+
 /** 可访问名称（accname 的常用子集）：aria-labelledby、aria-label、label、alt、按内容、title、placeholder。 */
 export function obName(el: Element): string {
   const root = el.getRootNode() as Document | ShadowRoot;
@@ -143,7 +161,7 @@ export function obName(el: Element): string {
   if (tag === 'input' || tag === 'select' || tag === 'textarea') {
     const labels = (el as HTMLInputElement).labels;
     if (labels?.length) {
-      const text = obNorm([...labels].map((l) => l.textContent ?? '').join(' '));
+      const text = obNorm([...labels].map((l) => obLabelText(l)).join(' '));
       if (text) return text;
     }
     return obNorm(el.getAttribute('title')) || obNorm(el.getAttribute('placeholder'));
@@ -168,9 +186,16 @@ export function obName(el: Element): string {
     'tooltip',
   ];
   const role = obRole(el);
-  if (fromContent.includes(role) || (role === 'generic' && obIsClickableGeneric(el))) {
+  // 可点击的行、列表项、单元格等（点击监听、onclick、pointer 推断）也按内容取名，后台系统里很常见
+  if (fromContent.includes(role) || obIsClickableGeneric(el)) {
     const text = obNorm((el as HTMLElement).innerText || el.textContent);
     if (text) return text;
+    // 只含图标或图片的链接、按钮：取后代的 alt / aria-label / title
+    const alt = [...el.querySelectorAll('img[alt], [aria-label], [title]')]
+      .map((c) => c.getAttribute('alt') || c.getAttribute('aria-label') || c.getAttribute('title'))
+      .filter(Boolean)
+      .join(' ');
+    if (obNorm(alt)) return obNorm(alt);
   }
   return obNorm(el.getAttribute('title'));
 }
@@ -250,14 +275,15 @@ export function obInferredKind(el: Element): 'pointer' | 'scroll' | null {
   return 'pointer';
 }
 
-/** 角色为 generic 但可点击的元素（onclick、tabindex、点击监听、pointer 推断），名称取自内容。 */
+/** 靠脚本或样式才可操作的元素（onclick、tabindex、点击监听、pointer 推断、可拖拽），名称取自内容。 */
 export function obIsClickableGeneric(el: Element): boolean {
   const tabindex = el.getAttribute('tabindex');
   return (
     el.hasAttribute('onclick') ||
     (tabindex !== null && tabindex !== '-1') ||
     Boolean((el as unknown as { __obactClickable?: boolean }).__obactClickable) ||
-    el.getAttribute('data-obact-kind') === 'pointer'
+    el.getAttribute('data-obact-kind') === 'pointer' ||
+    el.getAttribute('draggable') === 'true'
   );
 }
 
@@ -523,6 +549,7 @@ export const DOM_LIB = [
   obDeepAll,
   obActiveElement,
   obRole,
+  obLabelText,
   obName,
   obIsInteractive,
   obInferredKind,
