@@ -1,8 +1,204 @@
-import type { Action, ActResult } from '@obact/schemas';
-import { ObactError } from '../errors.ts';
+import type { Action, ActResult, Assert, AssertionResult, WaitFor } from '@obact/schemas';
+import { Contracts } from '@obact/schemas';
+import { asObactError, ObactError } from '../errors.ts';
 import type { Session } from '../session.ts';
+import { checkAssertions } from './assert.ts';
+import { Aborted, type ActOptions, type Ctx, Effects, fail, makeCtx } from './ctx.ts';
+import { HANDLERS, newPage, shotPath } from './ops.ts';
+import { pendingOf, stateOf, watchPage } from './state.ts';
+import { sleep } from './util.ts';
 
-/** 执行一个动作（FR-12~FR-15、FR-32，契约 action.json / act-result.json）。M1 并行实现中。 */
-export async function act(_s: Session, _action: Action): Promise<ActResult> {
-  throw new ObactError('internal', 'act 尚未实现');
+export type { ActOptions, ObscuredInfo } from './ctx.ts';
+export { currentActionSeq } from './state.ts';
+
+/** FR-14：没有后置检查时的短时稳定等待上限。 */
+const SETTLE_CAP_MS = 5000;
+/** 后置检查、wait_for 的轮询间隔。 */
+const POLL_MS = 50;
+
+let contracts: Contracts | null = null;
+
+/** 轮询检查项直到全部通过或到期；返回最后一次的结果。 */
+async function pollChecks(
+  ctx: Ctx,
+  checks: AssertionResult[] | Parameters<typeof checkAssertions>[2],
+  deadline: number,
+): Promise<{ results: AssertionResult[]; pass: boolean }> {
+  const opts = {
+    signatures: ctx.opts.signatures,
+    matchSignature: ctx.opts.matchSignature,
+    timeoutMs: Math.max(200, deadline - Date.now()),
+  };
+  for (;;) {
+    ctx.alive();
+    const results = await checkAssertions(ctx.s, ctx.pageId, checks, opts);
+    const pass = results.every((r) => r.pass);
+    if (pass || Date.now() >= deadline) return { results, pass };
+    await sleep(POLL_MS);
+  }
+}
+
+/** wait_for：直到 until 全部满足（FR-14），超时报 timeout。 */
+async function waitFor(ctx: Ctx): Promise<void> {
+  const a = ctx.action as Action & WaitFor;
+  ctx.wait = 'none';
+  ctx.dispatched = true;
+  const r = await pollChecks(ctx, a.until, Date.now() + ctx.timeout);
+  ctx.assertions = r.results;
+  if (!r.pass) {
+    const failed = r.results
+      .filter((x) => !x.pass)
+      .map((x) => x.detail ?? '')
+      .filter(Boolean);
+    fail(
+      'timeout',
+      `等待 ${ctx.timeout} 毫秒后条件仍未满足${failed.length ? `：${failed.join('；')}` : ''}`,
+    );
+  }
+}
+
+/** assert：只判定一次，任一不通过报 assertion_failed。 */
+async function assertOnce(ctx: Ctx): Promise<void> {
+  const a = ctx.action as Action & Assert;
+  ctx.wait = 'none';
+  ctx.dispatched = true;
+  const results = await checkAssertions(ctx.s, ctx.pageId, a.checks, {
+    signatures: ctx.opts.signatures,
+    matchSignature: ctx.opts.matchSignature,
+    timeoutMs: ctx.timeout,
+  });
+  ctx.assertions = results;
+  if (!results.every((r) => r.pass)) fail('assertion_failed', '断言未通过');
+}
+
+async function runOp(ctx: Ctx, fx: Effects): Promise<void> {
+  const op = ctx.action.op;
+  if (op === 'wait_for') return waitFor(ctx);
+  if (op === 'assert') return assertOnce(ctx);
+  if (op === 'extract') {
+    fail('invalid_params', 'extract（页面抽取与接口截获）在 M2 实现');
+  }
+  const h = HANDLERS[op];
+  if (!h) fail('invalid_params', `未知动作：${op}`);
+  return h(ctx, fx);
+}
+
+function emptyEffects(ctx: Ctx): ActResult['effects'] {
+  return {
+    navigated: ctx.navigated,
+    new_pages: [...ctx.newPages],
+    dialogs: ctx.dialogs,
+    changed: ctx.navigated,
+  };
+}
+
+/**
+ * 执行一个动作（FR-12~FR-15、FR-32；契约 action.json → act-result.json）。不向外抛异常：
+ * 失败都以 status:'error' 返回，error.code 取自契约的错误码。
+ *
+ * 流程：校验参数 → 页面上有未处理的对话框则除 handle_dialog 外一律报 dialog_blocking →
+ * 执行（定位、可操作性检查、可信输入）→ 等待（有后置检查就轮询到通过；否则按动作类型做短时稳定等待
+ * 或只等一帧）→ 汇总效果（导航、新标签页、对话框、页面变化、可选的文本差异与截图）。
+ * 动作执行中弹出对话框时（页面脚本被挂起），只要输入已经派发就算执行完成，对话框记为 pending。
+ */
+export async function act(s: Session, action: Action, opts: ActOptions = {}): Promise<ActResult> {
+  const started = Date.now();
+  const st = stateOf(s);
+  const seq = ++st.seq;
+  contracts ??= new Contracts();
+  const invalid = contracts.check('action', action);
+  const ctx = makeCtx(s, st, action, opts, seq);
+  const done = (
+    effects: ActResult['effects'],
+    diff: string | null | undefined,
+    err?: ObactError,
+  ) => {
+    const r: ActResult = {
+      status: err ? 'error' : 'ok',
+      locator_used: ctx.locator,
+      duration_ms: Date.now() - started,
+      screenshot_path: ctx.screenshot,
+      effects,
+      action_seq: seq,
+    };
+    if (err) r.error = err.toJSON();
+    if (ctx.assertions) r.assertions = ctx.assertions;
+    if (diff !== undefined) r.diff = diff;
+    if (ctx.data !== undefined) r.data = ctx.data;
+    return r;
+  };
+  if (invalid) {
+    const msg = contracts.ajv.errorsText(invalid.slice(0, 3));
+    return done(
+      emptyEffects(ctx),
+      undefined,
+      new ObactError('invalid_params', `动作参数不符合契约：${msg}`),
+    );
+  }
+
+  let fx: Effects | null = null;
+  try {
+    if (action.op === 'new_page') {
+      await newPage(ctx);
+    } else {
+      const page = s.pages.get(ctx.pageId);
+      ctx.page = page;
+      watchPage(st, page);
+      const pend = pendingOf(st, page);
+      if (pend && action.op !== 'handle_dialog' && action.op !== 'close_page') {
+        fail(
+          'dialog_blocking',
+          `页面上有未处理的 ${pend.type} 对话框：“${pend.message}”，请先 handle_dialog`,
+          {
+            dialog: { type: pend.type, message: pend.message },
+          },
+        );
+      }
+      fx = new Effects(ctx, page);
+      await fx.track(page.mainFrame());
+      if (action.diff) await fx.captureTextBefore();
+
+      const run = runOp(ctx, fx);
+      const first = await Promise.race([
+        run.then(() => 'done' as const),
+        fx.dialogOpened.then(() => 'dialog' as const),
+      ]);
+      if (first === 'dialog') {
+        // 页面脚本被对话框挂起，输入派发要等对话框处理后才返回：留给 handle_dialog 收尾
+        ctx.aborted = true;
+        st.inflight.set(
+          page,
+          run.catch(() => {}),
+        );
+        if (!ctx.dispatched)
+          fail('dialog_blocking', '动作执行前页面弹出了对话框，请先 handle_dialog');
+      } else if (action.post?.length) {
+        const r = await pollChecks(ctx, action.post, Date.now() + ctx.timeout);
+        ctx.assertions = r.results;
+        if (!r.pass) fail('assertion_failed', '后置检查未通过');
+      } else if (ctx.wait === 'action') {
+        await fx.settle(Math.min(SETTLE_CAP_MS, ctx.timeout));
+      } else if (ctx.wait === 'input') {
+        await fx.waitFrame(Math.min(SETTLE_CAP_MS, ctx.timeout));
+      }
+    }
+    if (action.screenshot && ctx.page && !ctx.page.isClosed() && !pendingOf(st, ctx.page)) {
+      const { path, type } = shotPath(ctx);
+      await ctx.page.screenshot({ path, type });
+      ctx.screenshot = path;
+    }
+    const fin = fx ? await fx.finish() : { ...emptyEffects(ctx), diff: undefined };
+    const { diff, ...effects } = fin;
+    return done(effects, diff);
+  } catch (e) {
+    const err =
+      e instanceof Aborted ? new ObactError('dialog_blocking', e.message) : asObactError(e);
+    let effects = emptyEffects(ctx);
+    let diff: string | null | undefined;
+    if (fx) {
+      const fin = await fx.finish().catch(() => null);
+      if (fin) ({ diff, ...effects } = fin);
+    }
+    return done(effects, diff, err);
+  }
 }

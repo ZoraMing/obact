@@ -40,3 +40,16 @@ node bench/bw14.ts --limit 20 # 只跑前 20 个 MiniWoB++ 页面
 | 角色叫法不同 | 114：主要是 CSS `content:url()` 渲染的图标，Chrome 叫 image、Obact 叫 generic；这些元素没有可访问名称，Obact 用 `hint` 给出 star、delete trash、search、reply 等提示 |
 
 这次对照找出并修复了 3 个问题：带非交互角色、又绑了监听的容器（可拖拽对话框、事件委托的 tablist）被漏掉；没有 href 但绑了监听的 `<a>` 被漏掉；`<a href role="presentation">` 没有按 ARIA 冲突规则忽略 presentation 角色。
+
+## MiniWoB++ 任务（`miniwob.ts`）
+
+只用 `observe` + `act` 完成 MiniWoB++ 任务：每步先 `observe` 拿到可操作元素及其可用操作，按任务说明选出元素和动作，再用 `act` 执行（可信输入），最后读任务页的 reward 判定成败。求解规则写在脚本里，不读页面私有变量。
+
+```bash
+spikes/miniwob/fetch.sh   # 同上
+node bench/miniwob.ts     # 10 个任务 × 5 个种子
+```
+
+### 最近一次结果（2026-10-15，Chromium 141）
+
+click-button、click-link、click-dialog、click-tab、focus-text、enter-text、enter-password、login-user、click-checkboxes、click-option 各 5/5，合计 50/50。
