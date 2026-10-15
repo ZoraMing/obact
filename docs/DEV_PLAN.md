@@ -30,7 +30,7 @@ M0 契约与脚手架 → M1 观察与执行内核 → M2 工作流引擎 → M3
 | 5 | MiniWoB++ 是 Python 环境，PRD 只写“可以跑通” | M0 预研结论：任务页是静态 HTML，本地静态托管，由 Obact（Node）驱动并读取页面里的奖励，不需要它的 Python 环境 |
 | 6 | FR-03 浏览器池为 P0，但并行为 P1 | M1 只做“按账号起浏览器 + 任务子进程连接”；并行规则放 M4 |
 | 7 | 9.2 写“标‘建议’的需确认”，第 12 节写“无待确认”；BW-14 仍标“建议值” | 已确认建议项，PRD 已统一表述（v1.5.1），BW-14 按“召回不低于 BrowserGym”执行 |
-| 8 | Chrome 137 起移除 `--load-extension`，第 11 节未列该风险 | M0 预研：Chromium 141 上 `--load-extension` 可用，Puppeteer `enableExtensions` 在开调试端口时不可用；待 CfT 复核，失败则侧边栏降级为本地页面（FR-29 为 P1，不阻塞） |
+| 8 | Chrome 137 起移除 `--load-extension`，第 11 节未列该风险 | 已关闭：Chromium 141 与 CfT 141.0.7390.122 上 `--load-extension` 均可用（CI `spikes-cft` 持续验证）；Puppeteer `enableExtensions` 在开调试端口时不可用 |
 | 9 | FR-02 的“参数库自动填写登录”依赖 FR-22（M3） | M1 只做独立配置目录与登录态复用；自动填写随参数库在 M3 交付 |
 | 10 | FR-26 留痕被 M2（运行）与 M4（报告）同时需要 | M2 交付逐步留痕与轨迹文件；M4 补运行报告与资源采样 |
 
@@ -53,7 +53,7 @@ fixtures/             本地 HTML 夹具库（PRD 9.3）
 workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓库），结构见 PRD 7.6
 ```
 
-技术基线：TypeScript（Node）+ Puppeteer；Chrome for Testing 固定版本；Python 做客户端与评测；存储用文件，不引入数据库。
+技术基线：TypeScript（Node ≥ 22.18）+ puppeteer-core 25.12；Chrome for Testing 141.0.7390.122（暂定，见第 7 节）；Python 做客户端与评测；存储用文件，不引入数据库。
 
 ### 3.1 M0 预研项
 
@@ -66,7 +66,7 @@ workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓
 - **进程模型可行**：任务子进程被杀后浏览器与页面不受影响，新进程可接管；同一配置目录重启后登录态保留。
 - **编号**：页面脚本 + CDP 能覆盖主文档、同源和跨域 iframe、开放和封闭 Shadow DOM；但整块克隆重绘会把编号属性带到新节点上，所以编号必须以 backendNodeId 为准，属性只用于各视图对齐。
 - **observe 性能**：全量可访问性树在 1 万个可交互元素时要约 3 秒，因此默认只取视口内元素的可访问性信息。
-- **扩展**：用 `--load-extension` 可行（Chromium 141）；Puppeteer 的 `enableExtensions` 在开调试端口时不可用。还需在选定的 CfT 版本上复核。
+- **扩展**：用 `--load-extension` 可行，已在 Chrome for Testing 141.0.7390.122 上复核（无头和有头）；Puppeteer 的 `enableExtensions` 在开调试端口时不可用。
 - **MiniWoB++**：静态托管即可，由 Node 驱动、读取它自带的奖励；BrowserGym 的提取函数可以导出 BW-14 基线。
 
 ## 4. 里程碑任务拆分
@@ -80,7 +80,7 @@ workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓
 | 工具链 | monorepo、TS 与 Python 工程、lint、单元测试、CI（每次提交跑 F、T） | — | 完成 |
 | 契约 Schema | 冻结 7.1~7.7 的结构：observe、act、act_batch、步骤、检查点、待核实清单、事件、全部方法与 RPC 消息、工作流目录文件、参数库、任务 | — | 完成，待评审（见 `packages/schemas/README.md`） |
 | 契约测试框架 | 用 Schema 校验样例；TS 与 Python 两端共用同一批样例 | Schema | 完成 |
-| 预研 | 3.1 的三项 | — | 完成；需在 CfT 固定版本上复核 |
+| 预研 | 3.1 的三项 | — | 完成；已在 CfT 141.0.7390.122 上复核 |
 
 出口：Schema 评审冻结；`T` 框架可跑；预研结论写入本文。
 
@@ -187,7 +187,6 @@ C-7、C-8 的故障注入开关在 M2 随 Lab 提供，验收在 M4（需参数�
 
 沿用 PRD 第 11 节，另加本计划发现项：
 
-- 扩展加载（第 2 节第 8 项）：在选定的 CfT 版本上复跑 `spikes/extension/load.ts` 前，不假定侧边栏可用。
-- CfT 固定版本尚未选定：本仓库的预研在 Chromium 141 上完成，选定版本后按 `docs/spikes/M0-spikes.md` 第 4 节复跑。
+- CfT 固定版本：CI 暂定 141.0.7390.122（与本机 Chromium 141 同一大版本）。升级版本时同步修改 `CFT_VERSION`，`spikes-cft` 任务会复核扩展加载。
 - 防休眠写进部署说明（PRD 已列）。
 - 推迟到接入 AI 之后：依赖模型推理的题型、模型试跑、FR-33 / FR-34 的验收（PRD 第 12 节）。

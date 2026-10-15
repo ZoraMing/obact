@@ -6,15 +6,15 @@ on:
   pull_request:
 
 env:
-  # Chrome for Testing 固定大版本；选定具体版本后改成完整版本号（见 docs/spikes/M0-spikes.md 第 4 节）
-  CFT_VERSION: '141'
+  # Chrome for Testing 固定版本（docs/spikes/M0-spikes.md 第 5 节）；升级时 spikes-cft 会复核扩展加载
+  CFT_VERSION: '141.0.7390.122'
 
 jobs:
   node:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -31,8 +31,8 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install -e "python[dev]"
@@ -43,8 +43,8 @@ jobs:
   spikes-cft:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

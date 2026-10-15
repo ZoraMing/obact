@@ -9,3 +9,7 @@ workspace/
 # 预研下载的第三方资源与运行产物
 spikes/.cache/
 spikes/out/
+
+# Claude Code 本机设置与 workflow 的临时 worktree
+.claude/settings.local.json
+.claude/worktrees/

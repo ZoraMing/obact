@@ -4,7 +4,7 @@
 
 **环境**：Chromium 141.0.7390.37（本容器预装，Playwright 构建 1194）、puppeteer-core 25.12.0、Node 22.22、Linux 容器（root）。有头模式用 Xvfb 运行，结果与无头一致。
 
-**未覆盖**：这个容器下载不了 Chrome for Testing（googlechromelabs.github.io 和 storage.googleapis.com 被网络策略拦截），所以这里的结论都基于 Chromium 141。在开发机上用选定的 CfT 固定版本复跑三个脚本（见文末），确认结论不变后，M0 才算正式出口。
+**CfT 复核（已完成）**：这个容器下载不了 Chrome for Testing，所以改在 GitHub Actions 的 `spikes-cft` 任务里，用 **Chrome for Testing 141.0.7390.122** 复跑了扩展加载（无头、有头 Xvfb）和进程模型/编号两个脚本。结果与本机 Chromium 141 完全一致，见第 5 节。
 
 ## 1. 服务管理浏览器 + 元素编号
 
@@ -128,7 +128,7 @@
 - Python 只用来导出 BrowserGym 基线。
 - M1 要做一个比对脚本：同一页面分别用 Obact 和 BrowserGym 提取，按角色和名称逐条对齐。
 
-## 4. 在开发机上用 CfT 复跑
+## 4. 在开发机上用 CfT 复跑（可选）
 
 ```bash
 npx @puppeteer/browsers install chrome@<固定版本>   # 记下输出的可执行文件路径
@@ -139,3 +139,18 @@ spikes/miniwob/fetch.sh && node spikes/miniwob/run.ts
 ```
 
 选定的版本号记入 `docs/DEV_PLAN.md` 第 3 节的技术基线。
+
+## 5. Chrome for Testing 141.0.7390.122 复核结果（CI `spikes-cft`）
+
+| 项目 | 结果 |
+|---|---|
+| 扩展加载方式 A（`--load-extension`），无头 | ✓ 加载；侧边栏页面连上本机 WebSocket（Origin 为扩展）；标签组建立；外部进程能连上浏览器 |
+| 扩展加载方式 A，有头（Xvfb） | ✓ 同上 |
+| 方式 B、C、D | ✗ `Extensions.loadUnpacked: Method not available`（与本机一致） |
+| 方式 E（只用 pipe） | ✓ 能加载，但没有调试端口（与本机一致） |
+| 进程模型 | ✓ 子进程被杀后浏览器和页面不受影响、新进程接管、重启后登录态保留 |
+| 编号 | ✓ 与本机一致（15 个编号、OOPIF 2/2、克隆重绘判定失效） |
+| 性能（1 万个可交互元素） | 写编号 69 ms、DOMSnapshot 137 ms、全量可访问性树 1.1 s、视口内 40 个元素的可访问性信息 12 ms |
+| 运行用户 | GitHub runner 为非 root，开启沙箱运行（Ubuntu 24.04 需放开 `apparmor_restrict_unprivileged_userns`） |
+
+结论：**扩展加载风险关闭**，采用方式 A。CI 固定使用 CfT 141.0.7390.122（`.github/workflows/ci.yml` 的 `CFT_VERSION`），与本机预装的 Chromium 141 同一大版本。
