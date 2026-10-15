@@ -6,5 +6,8 @@
   "description": "Obact Lab：本地测试应用（PRD 9.3），承担写操作对账、故障注入、浸泡与长程任务",
   "scripts": {
     "start": "node server.ts"
+  },
+  "devDependencies": {
+    "@obact/core": "*"
   }
 }
