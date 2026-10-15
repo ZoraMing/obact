@@ -86,7 +86,7 @@
       "type": "object",
       "properties": {
         "entry": { "$ref": "#/$defs/NetworkEntry" },
-        "body": { "description": "解析后的 JSON 响应体。" }
+        "body": { "description": "解析后的 JSON 响应体。", "tsType": "unknown" }
       },
       "required": ["entry", "body"],
       "additionalProperties": false

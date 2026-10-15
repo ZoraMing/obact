@@ -6,6 +6,27 @@
  * 不可枚举属性 `__obactClosedRoot` 上（见 mark.ts），这里的遍历统一处理开放和封闭两种。
  */
 
+/** bundle 为每次页面内调用提供的共享缓存（见 bundle.ts）；直接在 Node 里调用助手时不存在。 */
+declare const __obactCache: Map<string, unknown> | undefined;
+
+/**
+ * 控件关联的 label（等同 input.labels）。Chrome 首次访问每个控件的 labels 要遍历整个文档，
+ * 大表里逐个访问是平方级开销（5000 个输入框约 2.6 秒）；这里每次调用只建一次 控件→label 索引。
+ */
+export function obLabelsOf(el: Element): Element[] {
+  const cache = typeof __obactCache === 'undefined' ? null : __obactCache;
+  let idx = cache?.get('labels') as Map<Element, Element[]> | undefined;
+  if (!idx) {
+    idx = new Map();
+    for (const l of obDeepAll(document, 'label')) {
+      const c = (l as HTMLLabelElement).control;
+      if (c) idx.set(c, [...(idx.get(c) ?? []), l]);
+    }
+    cache?.set('labels', idx);
+  }
+  return idx.get(el) ?? [];
+}
+
 /** 折叠空白并去掉首尾空白。 */
 export function obNorm(s: string | null | undefined): string {
   return (s ?? '').replace(/\s+/g, ' ').trim();
@@ -165,9 +186,9 @@ export function obName(el: Element): string {
     if (type === 'image') return obNorm(input.alt) || obNorm(input.title);
   }
   if (tag === 'input' || tag === 'select' || tag === 'textarea') {
-    const labels = (el as HTMLInputElement).labels;
-    if (labels?.length) {
-      const text = obNorm([...labels].map((l) => obLabelText(l)).join(' '));
+    const labels = obLabelsOf(el);
+    if (labels.length) {
+      const text = obNorm(labels.map((l) => obLabelText(l)).join(' '));
       if (text) return text;
     }
     return obNorm(el.getAttribute('title')) || obNorm(el.getAttribute('placeholder'));
@@ -194,7 +215,10 @@ export function obName(el: Element): string {
   const role = obRole(el);
   // 可点击的行、列表项、单元格等（点击监听、onclick、pointer 推断）也按内容取名，后台系统里很常见
   if (fromContent.includes(role) || obIsClickableGeneric(el)) {
-    const text = obNorm((el as HTMLElement).innerText || el.textContent);
+    // 没有子元素时 textContent 折叠空白后与 innerText 相同，且不触发排版：
+    // innerText 首次调用要为每个块建立排版映射，5000 个按钮约 2.6 秒（大表 observe 的主要耗时）
+    const raw = el.childElementCount === 0 ? el.textContent : (el as HTMLElement).innerText;
+    const text = obNorm(raw || el.textContent);
     if (text) return text;
     // 只含图标或图片的链接、按钮：取后代的 alt / aria-label / title
     const alt = [...el.querySelectorAll('img[alt], [aria-label], [title]')]
@@ -388,7 +412,7 @@ export function obOptions(
   } else return null;
   const options = list.slice(0, limit).map((o) => {
     const item: { label: string; value: string; selected?: boolean; disabled?: boolean } = {
-      label: obNorm(o.label || o.text),
+      label: obNorm(o.label || o.text || o.value),
       value: o.value,
     };
     if (o.selected && el.tagName === 'SELECT') item.selected = true;
@@ -426,7 +450,10 @@ export function obStates(el: Element): Record<string, boolean | string> {
   else if (tag === 'details') s.expanded = (el as HTMLDetailsElement).open;
   if (obActiveElement() === el) s.focused = true;
   if (el.matches(':required') || aria('required') === 'true') s.required = true;
-  if (el.matches(':read-only') && (tag === 'input' || tag === 'textarea')) s.readonly = true;
+  // readOnly 只对文本类输入框和 textarea 有意义（复选框、按钮等也匹配 :read-only，不能用伪类）
+  if ((tag === 'input' || tag === 'textarea') && (el as HTMLInputElement).readOnly)
+    s.readonly = true;
+  else if (aria('readonly') === 'true') s.readonly = true;
   if ((el as HTMLElement).isContentEditable) s.editable = true;
   return s;
 }
@@ -581,7 +608,7 @@ export function obWithin(el: Element): string | null {
       id &&
       obIsStableToken(id) &&
       /^[A-Za-z][\w-]*$/.test(id) &&
-      ['tr', 'li', 'article', 'section', 'form', 'fieldset', 'dialog'].includes(tag)
+      ['tr', 'li', 'article'].includes(tag)
     ) {
       const sel = `${tag}#${id}`;
       if (obDeepAll(document, sel).length === 1) return sel;
@@ -593,6 +620,7 @@ export function obWithin(el: Element): string | null {
 
 /** 全部助手，供 bundle 使用。新增助手时加到这里。 */
 export const DOM_LIB = [
+  obLabelsOf,
   obNorm,
   obShadow,
   obDeepAll,

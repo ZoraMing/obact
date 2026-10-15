@@ -844,9 +844,7 @@ export interface ActResult {
   /**
    * extract、evaluate_script 等动作的返回数据。
    */
-  data?: {
-    [k: string]: unknown | undefined;
-  };
+  data?: unknown;
   /**
    * 本动作的序号，接口缓存按它判定响应先后（PRD 5.6）。
    */
@@ -1211,9 +1209,7 @@ export interface GetNetworkRequestResult {
   /**
    * 解析后的 JSON 响应体。
    */
-  body: {
-    [k: string]: unknown | undefined;
-  };
+  body: unknown;
 }
 export interface AskHumanParams {
   /**

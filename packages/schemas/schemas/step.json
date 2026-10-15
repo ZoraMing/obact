@@ -178,7 +178,7 @@
       "properties": {
         "op": { "const": "set_var" },
         "name": { "type": "string", "minLength": 1 },
-        "value": {}
+        "value": { "tsType": "unknown" }
       },
       "required": ["op", "name", "value"],
       "title": "SetVarStep"

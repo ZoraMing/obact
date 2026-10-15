@@ -39,7 +39,7 @@
     },
     "assertions": { "type": "array", "items": { "$ref": "common.json#/$defs/AssertionResult" } },
     "diff": { "type": ["string", "null"], "description": "页面变化差异（仅在请求时返回）。" },
-    "data": { "description": "extract、evaluate_script 等动作的返回数据。" },
+    "data": { "description": "extract、evaluate_script 等动作的返回数据。", "tsType": "unknown" },
     "action_seq": {
       "type": "integer",
       "minimum": 0,
