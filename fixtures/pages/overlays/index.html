@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>申请开通服务（遮挡与弹窗）</title>
+<!--
+  夹具：遮挡与弹窗（PRD 9.3，FR-13、FR-23）。页面不滚动，遮挡物无法靠滚动避开。
+  - 隐藏层（同 UI Testing Playground 的 Hidden Layers）：点一次“绿色按钮”后，它上面盖上一层透明的层；
+  - 透明引导层：完全透明的遮罩盖住“提交申请”，按 Esc 关闭；?tour=full 时盖住整个页面（在 Cookie 提示条之下）；
+  - Cookie 提示条：固定在底部，完全盖住“下一步”，盖住“保存草稿”的下半部分；点“接受全部”或“仅必要”关闭；
+  - 广告层（同 The Internet 的 Entry Ad）：全屏半透明背景 + 对话框“限时优惠”，点“关闭广告”关闭；
+    ?ad=timer：加载后按 seed 决定的延时（300～1199 毫秒）弹出；
+    ?ad=click：第 k 次点击之后弹出（k 由 seed 决定，2～4）；不带 ad 参数时不弹。
+  点击记录：window.__log（落点所在的 data-log，没有则记为“(标签名)”）；广告计划：window.__adPlan；弹出次数：window.__adShown。
+-->
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { font: 14px/1.6 system-ui, sans-serif; }
+  header { padding: 12px 24px; background: #f5f5f5; }
+  header h1 { margin: 0; font-size: 20px; }
+  main { display: flex; gap: 32px; padding: 16px 24px; }
+  section { width: 340px; }
+  .stack { position: relative; width: 160px; height: 40px; }
+  .stack button { width: 160px; height: 40px; }
+  .green { background: #52c41a; color: #fff; border: 0; border-radius: 4px; }
+  #layer { position: absolute; inset: 0; background: transparent; }
+  .field { display: block; margin: 8px 0; }
+  .submit-area { position: relative; display: inline-block; margin-top: 12px; }
+  #submit { width: 140px; height: 40px; }
+  #tour-mask { position: absolute; inset: -12px; background: transparent; }
+  #tour-mask.full { position: fixed; inset: 0; z-index: 5; }
+  .tour-tip { position: absolute; left: 160px; top: 0; width: 180px; padding: 6px 8px; background: #e6f4ff; border: 1px solid #91caff; font-size: 12px; }
+  #result { margin-top: 16px; color: #389e0d; }
+  #draft { position: fixed; left: 40px; bottom: 100px; width: 120px; height: 40px; }
+  #next { position: fixed; left: 200px; bottom: 30px; width: 120px; height: 40px; }
+  #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; height: 120px; z-index: 10; background: rgba(20, 20, 20, 0.92); color: #fff; padding: 16px 24px; box-sizing: border-box; }
+  #cookie-banner .actions { position: absolute; right: 24px; top: 40px; display: flex; gap: 8px; }
+  #ad-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.45); }
+  #ad-dialog { position: fixed; z-index: 21; left: 50%; top: 30%; transform: translateX(-50%); width: 360px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+  #ad-close { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; }
+</style>
+</head>
+<body>
+<header><h1>申请开通服务</h1></header>
+<main>
+  <section aria-label="隐藏层">
+    <h2>隐藏层</h2>
+    <div class="stack">
+      <button type="button" id="green" class="green" data-log="green">绿色按钮</button>
+      <div id="layer" data-log="layer" hidden></div>
+    </div>
+  </section>
+  <section aria-label="申请表">
+    <h2>申请表</h2>
+    <label class="field">姓名 <input id="name" data-log="name"></label>
+    <label class="field">电话 <input id="phone" data-log="phone"></label>
+    <div class="submit-area">
+      <button type="button" id="submit" data-log="submit">提交申请</button>
+      <div id="tour-mask" data-log="tour-mask"></div>
+      <div class="tour-tip" id="tour-tip">新功能：申请进度可在“我的工单”查看。按 Esc 关闭引导。</div>
+    </div>
+    <p id="result" role="status"></p>
+  </section>
+</main>
+<button type="button" id="draft" data-log="draft">保存草稿</button>
+<button type="button" id="next" data-log="next">下一步</button>
+<div id="cookie-banner" data-log="cookie-banner" role="region" aria-label="Cookie 提示">
+  我们使用 Cookie 改善您的浏览体验，继续使用即表示同意。
+  <div class="actions">
+    <button type="button" data-log="cookie-accept">接受全部</button>
+    <button type="button" data-log="cookie-reject">仅必要</button>
+  </div>
+</div>
+<div id="ad" hidden>
+  <div id="ad-backdrop" data-log="ad-backdrop"></div>
+  <div id="ad-dialog" role="dialog" aria-label="限时优惠" data-log="ad-dialog">
+    <h2>限时优惠</h2>
+    <p>开通年付套餐立减 30%，仅限今日。</p>
+    <a href="#promo" data-log="ad-cta">立即抢购</a>
+    <button type="button" id="ad-close" aria-label="关闭广告" data-log="ad-close">×</button>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const seedText = params.get('seed') ?? '1';
+  let h = 2166136261;
+  for (const ch of seedText) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  let a = h >>> 0;
+  const rng = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const $ = (id) => document.getElementById(id);
+  const say = (text) => {
+    $('result').textContent = text;
+  };
+
+  window.__log = [];
+  window.__adShown = 0;
+  let clicks = 0;
+  const mode = params.get('ad') ?? 'off';
+  const plan = { mode, delay: 300 + Math.floor(rng() * 900), after: 2 + Math.floor(rng() * 3) };
+  window.__adPlan = plan;
+  const showAd = () => {
+    window.__adShown++;
+    $('ad').hidden = false;
+  };
+  if (mode === 'timer') setTimeout(showAd, plan.delay);
+  if (params.get('tour') === 'full') $('tour-mask').classList.add('full');
+
+  document.addEventListener(
+    'click',
+    (e) => {
+      const el = e.target.closest('[data-log]');
+      window.__log.push(el ? el.dataset.log : `(${e.target.tagName.toLowerCase()})`);
+      clicks++;
+      if (mode === 'click' && clicks === plan.after && !window.__adShown) setTimeout(showAd, 0);
+    },
+    true,
+  );
+
+  $('green').onclick = () => {
+    $('layer').hidden = false;
+    say('绿色按钮已点击');
+  };
+  $('submit').onclick = () => say(`申请已提交：${$('name').value} ${$('phone').value}`);
+  $('draft').onclick = () => say('草稿已保存');
+  $('next').onclick = () => say('已进入第 2 步');
+  for (const b of document.querySelectorAll('#cookie-banner button')) {
+    b.onclick = () => {
+      $('cookie-banner').remove();
+    };
+  }
+  $('ad-close').onclick = () => {
+    $('ad').hidden = true;
+  };
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !$('tour-mask')) return;
+    $('tour-mask').remove();
+    $('tour-tip').remove();
+    window.__log.push('tour-closed');
+  });
+</script>
+</body>
+</html>

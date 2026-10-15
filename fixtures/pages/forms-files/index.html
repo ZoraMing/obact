@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>表单与文件</title>
+<style>
+  body { margin: 0; padding: 16px 24px; font: 14px/1.6 sans-serif; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 18px 0 6px; }
+  section { border-top: 1px solid #eef; }
+  form { display: grid; grid-template-columns: 7em 240px; gap: 8px 12px; align-items: center; }
+  form .wide { grid-column: 1 / span 2; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  [role=status] { min-height: 1.6em; color: #2a6; }
+</style>
+</head>
+<body>
+  <h1>表单与文件</h1>
+
+  <section>
+    <h2>账号设置</h2>
+    <form id="account">
+      <label for="username">用户名</label><input id="username" name="username" autocomplete="username">
+      <label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password">
+      <label for="api-token">API 令牌</label><input id="api-token" name="api_token">
+      <label for="role">角色</label>
+      <select id="role" name="role">
+        <option value="">请选择</option>
+        <option value="admin">管理员</option>
+        <option value="auditor">审计员</option>
+        <option value="guest">访客</option>
+      </select>
+      <label class="wide"><input type="checkbox" id="remember" name="remember"> 记住登录</label>
+      <label class="wide"><input type="checkbox" id="agree" name="agree"> 同意服务条款</label>
+      <div class="wide"><button type="submit">保存设置</button></div>
+    </form>
+    <p id="account-result" role="status"></p>
+  </section>
+
+  <section>
+    <h2>对话框</h2>
+    <div class="row">
+      <button type="button" id="btn-alert">显示提示</button>
+      <button type="button" id="btn-confirm">删除记录</button>
+      <button type="button" id="btn-prompt">重命名</button>
+    </div>
+    <p id="dialog-result" role="status"></p>
+  </section>
+
+  <section>
+    <h2>上传附件</h2>
+    <div class="row">
+      <label for="attach">选择附件</label><input type="file" id="attach" multiple>
+    </div>
+    <ul id="file-list"></ul>
+    <div class="row">
+      <button type="button" id="avatar-btn">上传头像</button>
+      <input type="file" id="avatar" accept=".png,.jpg,.txt" hidden>
+      <span id="avatar-result" role="status"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>下载</h2>
+    <a id="download" href="/api/forms-files/report.csv?seed=1&amp;rows=10">下载订单报表（CSV）</a>
+  </section>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    // 测试用：页面事件记录（只记是否可信，不记密码）
+    const events = (window.formEvents = []);
+
+    $('account').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!$('agree').checked) {
+        $('account-result').textContent = '请先同意服务条款';
+        return;
+      }
+      const role = $('role');
+      const pwd = $('password').value;
+      const parts = [
+        `用户名 ${$('username').value || '（空）'}`,
+        `角色 ${role.value ? role.options[role.selectedIndex].text : '未选择'}`,
+        `记住登录 ${$('remember').checked ? '是' : '否'}`,
+        `密码 ${pwd ? `${pwd.length} 位` : '未填写'}`,
+        `令牌 ${$('api-token').value ? '已填写' : '未填写'}`,
+      ];
+      $('account-result').textContent = `已保存：${parts.join('，')}`;
+    });
+    for (const id of ['username', 'password', 'api-token']) {
+      $(id).addEventListener('input', (e) => events.push(`input:${id}:${e.isTrusted}`));
+    }
+
+    $('btn-alert').addEventListener('click', () => {
+      alert('操作已完成');
+      $('dialog-result').textContent = '提示已关闭';
+    });
+    $('btn-confirm').addEventListener('click', () => {
+      const yes = confirm('确定删除这条记录吗？');
+      $('dialog-result').textContent = yes ? '确认结果：已删除' : '确认结果：已取消';
+    });
+    $('btn-prompt').addEventListener('click', () => {
+      const name = prompt('请输入新名称', '未命名');
+      $('dialog-result').textContent = name === null ? '重命名已取消' : `新名称：${name}`;
+    });
+
+    const describe = (f) => `${f.name}（${f.size} 字节）`;
+    $('attach').addEventListener('change', (e) => {
+      events.push(`attach:${e.isTrusted}`);
+      const list = $('file-list');
+      list.replaceChildren(
+        ...[...e.target.files].map((f) => {
+          const li = document.createElement('li');
+          li.textContent = describe(f);
+          return li;
+        }),
+      );
+    });
+    $('avatar-btn').addEventListener('click', () => $('avatar').click());
+    $('avatar').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      $('avatar-result').textContent = f ? `头像：${describe(f)}` : '';
+    });
+  </script>
+</body>
+</html>

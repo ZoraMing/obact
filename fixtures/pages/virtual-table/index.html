@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>虚拟滚动大表</title>
+<style>
+  body { margin: 0; padding: 16px 24px; font: 14px/1.5 sans-serif; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  #jump { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  #jump-to { width: 90px; }
+  #grid { width: 760px; border: 1px solid #ccd; }
+  .row { display: grid; grid-template-columns: 90px 120px 90px 140px 90px 1fr; align-items: center; height: 32px; box-sizing: border-box; border-bottom: 1px solid #eef; }
+  .row > div { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head .row { background: #f4f6f8; font-weight: bold; }
+  .num { text-align: right; }
+  #viewport { height: 480px; overflow-y: auto; position: relative; }
+  #spacer { position: relative; }
+  #body .row { position: absolute; left: 0; right: 0; }
+  .loading { color: #999; }
+  #detail { min-height: 1.5em; }
+</style>
+</head>
+<body>
+  <h1>虚拟滚动大表</h1>
+  <p>共 <span id="total">…</span> 行订单，只渲染可见的行；数据按需从接口分块加载。</p>
+  <form id="jump">
+    <label for="jump-to">跳到行号</label><input id="jump-to" type="number" min="1" max="10000">
+    <button type="submit">跳转</button>
+  </form>
+  <p id="detail" role="status"></p>
+  <div id="grid" role="table" aria-label="订单表">
+    <div role="rowgroup" class="head">
+      <div role="row" aria-rowindex="1" class="row">
+        <div role="columnheader">编号</div>
+        <div role="columnheader">客户</div>
+        <div role="columnheader">城市</div>
+        <div role="columnheader" class="num">金额（元）</div>
+        <div role="columnheader">状态</div>
+        <div role="columnheader">操作</div>
+      </div>
+    </div>
+    <div id="viewport" aria-label="订单滚动区">
+      <div id="spacer"><div id="body" role="rowgroup"></div></div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const seed = Number(params.get('seed')) || 1;
+    const ROW_H = 32;
+    const OVERSCAN = 5;
+    const BLOCK = 100;
+    const STATUS = { pending: '待付款', paid: '已付款', shipped: '已发货', done: '已完成', cancelled: '已取消' };
+    const $ = (id) => document.getElementById(id);
+    const vp = $('viewport');
+    const body = $('body');
+    const cache = new Map(); // 块号 → 行数组
+    const loadingBlocks = new Set();
+    const shown = new Map(); // 行号 → 行元素（按行号复用，数据就绪前是“加载中”行）
+    let total = 0;
+
+    function fmtAmount(n) {
+      const [int, frac] = Math.abs(n).toFixed(2).split('.');
+      return `${n < 0 ? '-' : ''}${int.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${frac}`;
+    }
+
+    async function load(b) {
+      if (cache.has(b) || loadingBlocks.has(b)) return;
+      loadingBlocks.add(b);
+      try {
+        const r = await fetch(`/api/virtual-table/rows?offset=${b * BLOCK}&limit=${BLOCK}&seed=${seed}`);
+        const data = await r.json();
+        cache.set(b, data.rows);
+        if (data.total !== total) setTotal(data.total);
+      } finally {
+        loadingBlocks.delete(b);
+      }
+      schedule();
+    }
+
+    function setTotal(n) {
+      total = n;
+      $('total').textContent = String(n);
+      $('grid').setAttribute('aria-rowcount', String(n + 1));
+      $('spacer').style.height = `${n * ROW_H}px`;
+      $('jump-to').max = String(n);
+    }
+
+    function cell(text, cls) {
+      const d = document.createElement('div');
+      d.setAttribute('role', 'cell');
+      if (cls) d.className = cls;
+      d.textContent = text;
+      return d;
+    }
+
+    function rowEl(i) {
+      const el = document.createElement('div');
+      el.className = 'row';
+      el.setAttribute('role', 'row');
+      el.setAttribute('aria-rowindex', String(i + 2));
+      el.style.top = `${i * ROW_H}px`;
+      const data = cache.get(Math.floor(i / BLOCK))?.[i % BLOCK];
+      if (!data) {
+        el.classList.add('loading');
+        el.append(cell(`#${i + 1}`), cell('加载中…'));
+        return el;
+      }
+      el.dataset.id = data.id;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '查看';
+      btn.addEventListener('click', () => {
+        $('detail').textContent = `当前查看：${data.id} ${data.customer} ${data.city}`;
+      });
+      const op = cell('');
+      op.append(btn);
+      el.append(
+        cell(data.id),
+        cell(data.customer),
+        cell(data.city),
+        cell(fmtAmount(data.amount), 'num'),
+        cell(STATUS[data.status] ?? data.status),
+        op,
+      );
+      return el;
+    }
+
+    function render() {
+      if (!total) return;
+      const top = vp.scrollTop;
+      const first = Math.max(0, Math.floor(top / ROW_H) - OVERSCAN);
+      const last = Math.min(total - 1, Math.ceil((top + vp.clientHeight) / ROW_H) - 1 + OVERSCAN);
+      for (const [i, el] of shown) {
+        if (i < first || i > last) {
+          el.remove();
+          shown.delete(i);
+        }
+      }
+      for (let i = first; i <= last; i++) {
+        const b = Math.floor(i / BLOCK);
+        if (!cache.has(b)) load(b);
+        const old = shown.get(i);
+        if (old && !(old.classList.contains('loading') && cache.has(b))) continue;
+        const el = rowEl(i);
+        if (old) old.replaceWith(el);
+        else body.append(el);
+        shown.set(i, el);
+      }
+      // DOM 顺序与行号一致（向上滚动时新行要插到前面）
+      let k = 0;
+      for (const i of [...shown.keys()].sort((a, b) => a - b)) {
+        const el = shown.get(i);
+        if (body.children[k] !== el) body.insertBefore(el, body.children[k] ?? null);
+        k++;
+      }
+      body.dataset.first = String(first);
+      body.dataset.last = String(last);
+    }
+
+    let pending = false;
+    function schedule() {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        render();
+      });
+    }
+    vp.addEventListener('scroll', schedule, { passive: true });
+
+    $('jump').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const n = Math.min(Math.max(1, Number($('jump-to').value) || 1), total || 1);
+      vp.scrollTop = (n - 1) * ROW_H;
+      schedule();
+    });
+
+    load(0);
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>内嵌表单</title>
+<!-- 页面结构夹具的 iframe 内容：?who=same|cross|nested|shadow。“提交”后通过 postMessage 通知顶层页面。 -->
+<style>body { font: 13px/1.5 system-ui, sans-serif; margin: 8px; }</style>
+</head>
+<body>
+<strong id="who"></strong>
+<div><label for="email">邮箱</label> <input id="email" name="email" type="email"></div>
+<button type="button" id="submit">提交</button>
+<p id="result">未提交</p>
+<script>
+  const who = new URLSearchParams(location.search).get('who') || 'same';
+  document.getElementById('who').textContent = `框架：${who}（${location.host}）`;
+  let count = 0;
+  document.getElementById('submit').onclick = () => {
+    count++;
+    const email = document.getElementById('email').value;
+    document.getElementById('result').textContent = `已提交 ${count} 次${email ? `：${email}` : ''}`;
+    window.top.postMessage({ type: 'frame-submit', who, count, email }, '*');
+  };
+</script>
+</body>
+</html>

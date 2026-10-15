@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>常驻请求</title>
+<style>
+  body { margin: 0; padding: 16px 24px; font: 14px/1.6 sans-serif; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 16px 0 6px; }
+  .bar { display: flex; gap: 24px; padding: 8px 12px; background: #f4f6f8; border-radius: 6px; }
+  #feed { list-style: none; padding: 0; margin: 0; font-family: monospace; }
+  form { display: grid; grid-template-columns: 6em 240px; gap: 8px 12px; align-items: center; }
+  form .actions { grid-column: 2; display: flex; gap: 8px; }
+  #result, #echo, #saved { min-height: 1.6em; }
+</style>
+</head>
+<body>
+  <h1>常驻请求</h1>
+  <p>页面每秒轮询一次接口，并保持一个 WebSocket 连接（服务端定时推送）。</p>
+  <div class="bar">
+    <span>轮询：<span id="poll-count">0</span> 次</span>
+    <span>WebSocket：<span id="ws-status">连接中</span></span>
+    <span>推送：<span id="push-count">0</span> 条</span>
+  </div>
+
+  <h2>实时推送</h2>
+  <ul id="feed"></ul>
+
+  <h2>草稿</h2>
+  <button type="button" id="save">保存草稿</button>
+  <p id="saved"></p>
+
+  <h2>工单</h2>
+  <form id="ticket">
+    <label for="title">标题</label><input id="title" name="title">
+    <label for="note">备注</label><textarea id="note" name="note" rows="2"></textarea>
+    <label for="priority">优先级</label>
+    <select id="priority" name="priority">
+      <option value="low">低</option>
+      <option value="mid" selected>中</option>
+      <option value="high">高</option>
+    </select>
+    <div class="actions">
+      <button type="submit">提交</button>
+      <button type="button" id="send">发送到服务器</button>
+    </div>
+  </form>
+  <p id="result" role="status"></p>
+  <p id="echo"></p>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const hold = Number(params.get('hold')) || 0;
+    const pushMs = Number(params.get('push_ms')) || 200;
+    const seed = Number(params.get('seed')) || 1;
+    const $ = (id) => document.getElementById(id);
+    // 测试用的状态：轮询完成次数、正在进行的轮询请求数、收到的推送数、连接是否打开
+    const state = (window.fixtureState = { polls: 0, inflight: 0, pushes: 0, wsOpen: false, saves: 0 });
+
+    async function poll() {
+      state.inflight++;
+      try {
+        const r = await fetch(`/api/polling/tick?hold=${hold}`, { cache: 'no-store' });
+        await r.json();
+        state.polls++;
+        $('poll-count').textContent = String(state.polls);
+      } catch {
+        // 页面关闭时请求被取消
+      } finally {
+        state.inflight--;
+      }
+    }
+    poll();
+    setInterval(poll, 1000);
+
+    let ws;
+    function connect() {
+      ws = new WebSocket(`ws://${location.host}/api/polling/ws?interval=${pushMs}&seed=${seed}`);
+      ws.onopen = () => {
+        state.wsOpen = true;
+        $('ws-status').textContent = '已连接';
+      };
+      ws.onclose = () => {
+        state.wsOpen = false;
+        $('ws-status').textContent = '已断开';
+        setTimeout(connect, 1000);
+      };
+      ws.onmessage = (e) => {
+        const m = JSON.parse(e.data);
+        if (m.type === 'push') {
+          state.pushes++;
+          $('push-count').textContent = String(state.pushes);
+          const li = document.createElement('li');
+          li.textContent = `#${m.seq} 报价 ${m.value.toFixed(1)}`;
+          const feed = $('feed');
+          feed.prepend(li);
+          while (feed.children.length > 5) feed.lastElementChild.remove();
+        } else if (m.type === 'echo') {
+          $('echo').textContent = `服务器回显：${m.text}`;
+        }
+      };
+    }
+    connect();
+
+    $('save').addEventListener('click', () => {
+      state.saves++;
+      $('saved').textContent = `已保存 ${state.saves} 次`;
+    });
+    $('ticket').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const p = $('priority');
+      $('result').textContent =
+        `已提交：标题=${$('title').value}，备注=${$('note').value}，优先级=${p.options[p.selectedIndex].text}`;
+    });
+    $('send').addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'echo', text: $('title').value }));
+      } else {
+        $('echo').textContent = '连接未就绪';
+      }
+    });
+  </script>
+</body>
+</html>
