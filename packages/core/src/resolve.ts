@@ -85,6 +85,13 @@ export async function resolveLocator(s: Session, pageId: string, loc: Locator): 
   const el = (await h.getProperty('el')).asElement() as ElementHandle<Element> | null;
   await h.dispose();
   if (!el || !info.via) {
+    if (info.reason === 'conflict') {
+      throw new ObactError('not_unique', '定位器的 CSS 与 角色+名称 指向不同元素，页面可能已改版', {
+        locator: loc,
+        counts: info.counts,
+        conflict: true,
+      });
+    }
     const code = info.reason === 'not_unique' ? 'not_unique' : 'not_found';
     throw new ObactError(code, `定位器${code === 'not_unique' ? '不唯一' : '找不到元素'}`, {
       locator: loc,

@@ -204,7 +204,9 @@ export function obName(el: Element): string {
 export function obIsInteractive(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === 'input') return (el.getAttribute('type') ?? '').toLowerCase() !== 'hidden';
-  if (['button', 'select', 'textarea', 'summary', 'option'].includes(tag)) return true;
+  // datalist 里的 option 不渲染、不可单独操作，已作为输入框的 options 返回
+  if (tag === 'option') return el.parentElement?.tagName !== 'DATALIST';
+  if (['button', 'select', 'textarea', 'summary'].includes(tag)) return true;
   if ((tag === 'a' || tag === 'area') && el.hasAttribute('href')) return true;
   const role = el.getAttribute('role')?.trim().split(/\s+/)[0]?.toLowerCase();
   if (
@@ -435,7 +437,8 @@ export function obPickUnique(list: Element[]): Element | null {
 }
 
 /**
- * 解析定位器（FR-07）：先 within 容器，再按 CSS，CSS 不唯一或找不到时按 角色+名称。
+ * 解析定位器（FR-07）：先 within 容器，再分别按 CSS 和 角色+名称 解析。
+ * CSS 唯一时用 CSS；CSS 找不到或不唯一时用 角色+名称；两类都唯一却指向不同元素时报 conflict。
  * 返回命中的元素和方式；失败时给出原因与各方式的命中数。
  */
 export function obResolve(loc: {
@@ -447,7 +450,7 @@ export function obResolve(loc: {
 }): {
   el: Element | null;
   via: 'css' | 'role' | null;
-  reason: 'not_found' | 'not_unique' | null;
+  reason: 'not_found' | 'not_unique' | 'conflict' | null;
   counts: { within?: number; css?: number; role?: number };
 } {
   const counts: { within?: number; css?: number; role?: number } = {};
@@ -467,13 +470,14 @@ export function obResolve(loc: {
     scope = c;
   }
   let ambiguous = false;
+  let byCss: Element | null = null;
   if (loc.css) {
     const list = obDeepAll(scope, loc.css);
     counts.css = list.length;
-    const el = obPickUnique(list);
-    if (el) return { el, via: 'css', reason: null, counts };
-    if (list.length > 1) ambiguous = true;
+    byCss = obPickUnique(list);
+    if (!byCss && list.length > 1) ambiguous = true;
   }
+  let byRole: Element | null = null;
   if (loc.role) {
     const want = obNorm(loc.name);
     const exact = loc.exact !== false;
@@ -484,10 +488,15 @@ export function obResolve(loc: {
       return exact ? name === want : name.toLowerCase().includes(want.toLowerCase());
     });
     counts.role = list.length;
-    const el = obPickUnique(list);
-    if (el) return { el, via: 'role', reason: null, counts };
-    if (list.length > 1) ambiguous = true;
+    byRole = obPickUnique(list);
+    if (!byRole && list.length > 1) ambiguous = true;
   }
+  // 两类都唯一却指向不同元素：页面多半改版了，宁可失败转人工也不能误点（BW-6、FR-20）
+  if (byCss && byRole && byCss !== byRole) {
+    return { el: null, via: null, reason: 'conflict', counts };
+  }
+  if (byCss) return { el: byCss, via: 'css', reason: null, counts };
+  if (byRole) return { el: byRole, via: 'role', reason: null, counts };
   return { el: null, via: null, reason: ambiguous ? 'not_unique' : 'not_found', counts };
 }
 
