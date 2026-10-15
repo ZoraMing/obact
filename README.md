@@ -14,10 +14,37 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 | 目录 | 内容 |
 |---|---|
 | `packages/schemas/` | JSON Schema 数据契约、生成的 TS 类型、契约样例 |
+| `packages/core/` | 观察与执行内核：浏览器启动、标签页、编号、定位器、`observe`、`act`、断言 |
 | `python/` | Python 包 `obact`（目前只有契约校验） |
+| `bench/` | 对照与基准：BW-14 组件识别对照、MiniWoB++ 任务 |
 | `spikes/` | M0 预研脚本 |
 
-后续模块（core、server、workflow、recorder、extension、lab、fixtures）按开发计划第 3 节在各里程碑加入。
+后续模块（server、workflow、recorder、extension、lab、fixtures）按开发计划第 3 节在各里程碑加入。
+
+## 试用 observe / act
+
+服务与统一接口在 M4 提供，目前可以直接调用 `packages/core` 的库，或用交互脚本试：
+
+```bash
+CHROME_PATH=/path/to/chrome node packages/core/examples/try.ts https://example.com
+```
+
+脚本先打印页面的两部分：
+
+- **可操作功能**：每行一个元素，`[编号] 角色 "名称" 状态 → 可用操作`，例如 `[3] textbox "账号" value="" type=text → click,fill,type_text,press_key`；下拉框还会列出选项。
+- **纯网页信息**：页面上不可操作的文字，整理成 Markdown（标题、段落、表格），表格里的按钮用 `[编号]` 引用。
+
+然后每行输入一个动作（JSON，格式见 `packages/schemas/schemas/action.json`，`pageId` 可省略），执行后打印结果并重新观察：
+
+```text
+{"op":"fill","target":{"ref":3},"value":"alice"}
+{"op":"click","target":{"role":"button","name":"登录"}}
+{"op":"press_key","key":"Enter"}
+o    重新观察
+q    退出
+```
+
+`HEADED=1` 时有头运行，可以看着浏览器操作。
 
 ## 开发
 

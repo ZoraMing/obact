@@ -17,6 +17,7 @@
   "include": [
     "packages/*/src",
     "packages/*/scripts",
+    "packages/*/examples",
     "packages/*/test",
     "lab/**/*.ts",
     "spikes/**/*.ts",
