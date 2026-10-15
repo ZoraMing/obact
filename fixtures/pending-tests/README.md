@@ -16,3 +16,9 @@ node --test fixtures/pending-tests/*.test.ts   # 目前 13 通过、8 失败
 | forms-files：prompt 默认值 | 不给 prompt_text 时，prompt 应按默认值确认，实际得到空字符串 |
 | overlays：规则里用 act 处理弹窗 | 在 onObscured 回调里用 act 关弹窗后，外层动作的 effects.navigated 被误报为 true |
 | redesign：改版后误点为 0 | 改版 v4（移动位置）上，“关闭通知”的定位器按角色+名称命中了“通知详情”，点错元素；BW-6 要求误点为 0 |
+
+另一个内核问题（CI 上 polling 夹具偶发暴露，夹具已改为固定高度避免无关的布局偏移）：
+
+| 场景 | 内核问题 |
+|---|---|
+| 命中复核之后、按下之前页面发生布局偏移 | 落点核对能发现点错（报 landing_mismatch），但错误的元素已经收到了点击；FR-13 要求连续 3 次不符才报错。应在页面内按落点拦截不符的按下/点击事件（不让它生效），然后重试 |

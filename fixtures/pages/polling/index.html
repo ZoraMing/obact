@@ -8,7 +8,8 @@
   h1 { font-size: 20px; margin: 0 0 8px; }
   h2 { font-size: 16px; margin: 16px 0 6px; }
   .bar { display: flex; gap: 24px; padding: 8px 12px; background: #f4f6f8; border-radius: 6px; }
-  #feed { list-style: none; padding: 0; margin: 0; font-family: monospace; }
+  /* 固定高度（最多 5 条）：推送只改内容，不推动下面的表单（布局偏移由 timing 夹具负责） */
+  #feed { list-style: none; padding: 0; margin: 0; font-family: monospace; height: 8em; overflow: hidden; }
   form { display: grid; grid-template-columns: 6em 240px; gap: 8px 12px; align-items: center; }
   form .actions { grid-column: 2; display: flex; gap: 8px; }
   #result, #echo, #saved { min-height: 1.6em; }
