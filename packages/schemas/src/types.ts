@@ -499,6 +499,16 @@ export interface ObactContracts {
   Observe_ElementStates?: ElementStates;
   Observe_Element?: ObservedElement;
   Observe_Result?: ObserveResult;
+  Observe_ActionName?:
+    | 'click'
+    | 'hover'
+    | 'fill'
+    | 'type_text'
+    | 'press_key'
+    | 'drag'
+    | 'upload_file'
+    | 'scroll';
+  Observe_Option?: Option;
   Params?: ParamsFile;
   Params_Scope?: Scope;
   Params_Value?: Value;
@@ -884,12 +894,15 @@ export interface ObserveResult {
   signature: string | null;
   canvas_warning: boolean;
   /**
-   * 编号元素表（view=text）。
+   * 可操作功能：编号元素表，每行一个元素及其可用操作（view=text）。
    */
   snapshot_text?: string;
+  /**
+   * 可操作功能：与 snapshot_text 是同一批元素。
+   */
   elements: ObservedElement[];
   /**
-   * 页面文本摘要。
+   * 纯网页信息：不可操作的内容（标题、正文、表格、列表、图片说明），Markdown 格式；不重复可操作元素的文字，表格等内容里的可操作元素用 [编号] 引用。
    */
   text_md: string;
   truncated: boolean;
@@ -904,6 +917,9 @@ export interface ObserveResult {
    */
   axtree?: string;
 }
+/**
+ * 可操作功能：一个可交互元素及其可用操作。
+ */
 export interface ObservedElement {
   /**
    * observe 分配的元素编号；会话内递增、不复用（FR-06）。
@@ -911,7 +927,38 @@ export interface ObservedElement {
   ref: number;
   role: string;
   name: string;
+  /**
+   * 可对该元素执行的动作（与 action.json 的 op 同名）；禁用时仍列出，由 states.disabled 表示当前不可用。
+   */
+  actions: (
+    | 'click'
+    | 'hover'
+    | 'fill'
+    | 'type_text'
+    | 'press_key'
+    | 'drag'
+    | 'upload_file'
+    | 'scroll'
+  )[];
   value?: string;
+  /**
+   * input 的 type（text、date、number、password 等），便于按格式填写。
+   */
+  input_type?: string;
+  /**
+   * 链接的目标地址（绝对 URL）。
+   */
+  href?: string;
+  /**
+   * 下拉框、列表框、带 datalist 的输入框的可选项（最多 100 个）。
+   *
+   * @maxItems 100
+   */
+  options?: Option[];
+  /**
+   * 超出 100 个而未列出的选项数。
+   */
+  options_omitted?: number;
   states?: ElementStates;
   bbox: BBox;
   visible_ratio: number;
@@ -924,6 +971,12 @@ export interface ObservedElement {
    * 所在 frame 的 iframe 选择器链；顶层文档省略。
    */
   frame?: string[];
+}
+export interface Option {
+  label: string;
+  value?: string;
+  selected?: boolean;
+  disabled?: boolean;
 }
 export interface ElementStates {
   disabled?: boolean;

@@ -7,46 +7,106 @@ const MARK = bundle(obMark, DOM_LIB);
 
 export type FrameRefs = { frame: Frame; refs: number[]; added: number[] };
 
-type DomNode = {
-  nodeId: number;
-  children?: DomNode[];
-  shadowRoots?: (DomNode & { shadowRootType?: string })[];
-  contentDocument?: DomNode;
+type Snapshot = {
+  documents: {
+    nodes: {
+      parentIndex: number[];
+      backendNodeId: number[];
+      nodeName: number[];
+      attributes: number[][];
+      isClickable?: { index: number[] };
+      shadowRootType?: { index: number[]; value: number[] };
+    };
+  }[];
+  strings: string[];
 };
 
+/** 原生可交互标签：不需要再打点击监听标记。 */
+const NATIVE = new Set([
+  'A',
+  'BUTTON',
+  'INPUT',
+  'SELECT',
+  'TEXTAREA',
+  'OPTION',
+  'SUMMARY',
+  'LABEL',
+  'HTML',
+  'BODY',
+]);
+
+const SET_CLOSED_ROOT =
+  'function () { const r = this.getRootNode(); if (r instanceof ShadowRoot) Object.defineProperty(r.host, "__obactClosedRoot", { value: r, configurable: true }); }';
+const SET_CLICKABLE =
+  'function () { Object.defineProperty(this, "__obactClickable", { value: true, configurable: true }); }';
+
 /**
- * 把封闭的 Shadow Root 挂到宿主元素的不可枚举属性 __obactClosedRoot 上，让页面内助手能遍历到。
- * 只处理与主文档同进程的文档；跨域 iframe（OOPIF）内的封闭 Shadow DOM 暂不支持。
- * 返回挂上的数量。
+ * 编号前用一次 DOMSnapshot 补齐页面脚本看不到的信息（只处理与主文档同进程的文档，OOPIF 内暂不支持）：
+ * - 封闭的 Shadow Root：挂到宿主元素的不可枚举属性 __obactClosedRoot 上，让页面内助手能遍历；
+ * - 绑定了点击类监听（click、mousedown、pointerdown 等）的非原生元素：打上不可枚举标记 __obactClickable，
+ *   让它们算作可交互（Vue、jQuery 等直接绑定事件的自绘控件）。事件委托到根节点的框架（如 React）
+ *   看不到监听，由页面内的 cursor:pointer 推断兜底（obInferredKind）。
  */
-export async function exposeClosedShadowRoots(page: Page): Promise<number> {
+export async function exposeForMarking(
+  page: Page,
+  opts: { closedShadow?: boolean; clickListeners?: boolean } = {},
+): Promise<{ closedRoots: number; clickable: number }> {
   const cdp: CDPSession = await page.createCDPSession();
   try {
-    const { root } = (await cdp.send('DOM.getDocument', { depth: -1, pierce: true })) as {
-      root: DomNode;
-    };
-    const pairs: [number, number][] = [];
-    const walk = (n: DomNode) => {
-      for (const sr of n.shadowRoots ?? []) {
-        if (sr.shadowRootType === 'closed') pairs.push([n.nodeId, sr.nodeId]);
-        walk(sr);
+    const snap = (await cdp.send('DOMSnapshot.captureSnapshot', {
+      computedStyles: [],
+    })) as unknown as Snapshot;
+    const roots: number[] = [];
+    const clickable: number[] = [];
+    for (const doc of snap.documents) {
+      const n = doc.nodes;
+      if (opts.closedShadow !== false) {
+        // DOMSnapshot 不输出影子根节点本身：影子树内的节点直接挂在宿主下，并标注 shadowRootType。
+        // 取每个宿主下第一层的封闭影子节点，到页面里用 getRootNode() 拿到影子根。
+        const sr = n.shadowRootType;
+        const closed = new Set<number>();
+        sr?.index.forEach((i, k) => {
+          if (snap.strings[sr.value[k] as number] === 'closed') closed.add(i);
+        });
+        const hosts = new Set<number>();
+        for (const i of closed) {
+          const parent = n.parentIndex[i] as number;
+          if (parent < 0 || closed.has(parent) || hosts.has(parent)) continue;
+          hosts.add(parent);
+          roots.push(n.backendNodeId[i] as number);
+        }
       }
-      for (const c of n.children ?? []) walk(c);
-      if (n.contentDocument) walk(n.contentDocument);
-    };
-    walk(root);
-    for (const [hostId, rootId] of pairs) {
-      const host = await cdp.send('DOM.resolveNode', { nodeId: hostId });
-      const sr = await cdp.send('DOM.resolveNode', { nodeId: rootId });
-      if (!host.object.objectId || !sr.object.objectId) continue;
-      await cdp.send('Runtime.callFunctionOn', {
-        objectId: host.object.objectId,
-        functionDeclaration:
-          'function (r) { Object.defineProperty(this, "__obactClosedRoot", { value: r, configurable: true }); }',
-        arguments: [{ objectId: sr.object.objectId }],
-      });
+      if (opts.clickListeners !== false) {
+        for (const i of n.isClickable?.index ?? []) {
+          if (NATIVE.has(snap.strings[n.nodeName[i] as number] ?? '')) continue;
+          const attrs = n.attributes[i] ?? [];
+          let hasRole = false;
+          for (let k = 0; k < attrs.length; k += 2) {
+            if (snap.strings[attrs[k] as number] === 'role') hasRole = true;
+          }
+          if (!hasRole) clickable.push(n.backendNodeId[i] as number);
+        }
+      }
     }
-    return pairs.length;
+    const resolve = async (backendNodeId: number) =>
+      (await cdp.send('DOM.resolveNode', { backendNodeId }).catch(() => null))?.object.objectId;
+    for (const id of roots) {
+      const obj = await resolve(id);
+      if (obj)
+        await cdp.send('Runtime.callFunctionOn', {
+          objectId: obj,
+          functionDeclaration: SET_CLOSED_ROOT,
+        });
+    }
+    for (const id of clickable) {
+      const obj = await resolve(id);
+      if (obj)
+        await cdp.send('Runtime.callFunctionOn', {
+          objectId: obj,
+          functionDeclaration: SET_CLICKABLE,
+        });
+    }
+    return { closedRoots: roots.length, clickable: clickable.length };
   } finally {
     await cdp.detach().catch(() => {});
   }
@@ -59,10 +119,12 @@ export async function exposeClosedShadowRoots(page: Page): Promise<number> {
 export async function markPage(
   s: Session,
   pageId: string,
-  opts: { closedShadow?: boolean } = {},
+  opts: { closedShadow?: boolean; clickListeners?: boolean } = {},
 ): Promise<FrameRefs[]> {
   const page = s.pages.get(pageId);
-  if (opts.closedShadow !== false) await exposeClosedShadowRoots(page);
+  if (opts.closedShadow !== false || opts.clickListeners !== false) {
+    await exposeForMarking(page, opts);
+  }
   const out: FrameRefs[] = [];
   for (const frame of page.frames()) {
     if (frame.detached) continue;

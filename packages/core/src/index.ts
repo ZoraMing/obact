@@ -9,7 +9,7 @@ export {
 } from './browser.ts';
 export { asObactError, type ErrorCode, ObactError } from './errors.ts';
 export { generateLocator } from './locator/index.ts';
-export { exposeClosedShadowRoots, type FrameRefs, markPage } from './mark.ts';
+export { exposeForMarking, type FrameRefs, markPage } from './mark.ts';
 export { type ObserveOptions, observe } from './observe/index.ts';
 export { matchSignature } from './observe/signature.ts';
 export { PageRegistry } from './pages.ts';

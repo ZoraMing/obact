@@ -167,7 +167,8 @@ export function obName(el: Element): string {
     'treeitem',
     'tooltip',
   ];
-  if (fromContent.includes(obRole(el))) {
+  const role = obRole(el);
+  if (fromContent.includes(role) || (role === 'generic' && obIsClickableGeneric(el))) {
     const text = obNorm((el as HTMLElement).innerText || el.textContent);
     if (text) return text;
   }
@@ -209,7 +210,124 @@ export function obIsInteractive(el: Element): boolean {
   const tabindex = el.getAttribute('tabindex');
   if (tabindex !== null && tabindex !== '-1') return true;
   if ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) return true;
+  if (el.getAttribute('draggable') === 'true') return true;
+  // Node 侧用 DOMSnapshot 的 isClickable 找到绑定了点击类监听的元素后打上的不可枚举标记（见 mark.ts）
+  if ((el as unknown as { __obactClickable?: boolean }).__obactClickable) return true;
   return el.hasAttribute('onclick');
+}
+
+/**
+ * 推断的可操作元素（需要计算样式，比 obIsInteractive 贵）：
+ * - 自绘控件：cursor 为 pointer 的最外层元素，且不在已有可交互元素之内（常见于事件委托到根节点的框架，如 React）；
+ * - 滚动容器：内容超出且 overflow 为 auto/scroll 的区域（虚拟滚动表格等），可执行 scroll。
+ * 返回推断类型，不是则返回 null。
+ */
+export function obInferredKind(el: Element): 'pointer' | 'scroll' | null {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'html' || tag === 'body' || tag === 'label' || tag === 'svg' || tag === 'path') {
+    return null;
+  }
+  const he = el as HTMLElement;
+  if (
+    (he.scrollHeight > he.clientHeight + 4 || he.scrollWidth > he.clientWidth + 4) &&
+    he.clientHeight >= 40 &&
+    he.clientWidth >= 40
+  ) {
+    const st = getComputedStyle(el);
+    if (/(auto|scroll|overlay)/.test(st.overflowY + st.overflowX)) return 'scroll';
+  }
+  const st = getComputedStyle(el);
+  if (st.cursor !== 'pointer') return null;
+  const parent = el.parentElement;
+  if (parent && getComputedStyle(parent).cursor === 'pointer') return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 4 || r.height < 4) return null;
+  let a: Element | null = parent;
+  while (a) {
+    if (obIsInteractive(a)) return null;
+    a = a.parentElement;
+  }
+  return 'pointer';
+}
+
+/** 角色为 generic 但可点击的元素（onclick、tabindex、点击监听、pointer 推断），名称取自内容。 */
+export function obIsClickableGeneric(el: Element): boolean {
+  const tabindex = el.getAttribute('tabindex');
+  return (
+    el.hasAttribute('onclick') ||
+    (tabindex !== null && tabindex !== '-1') ||
+    Boolean((el as unknown as { __obactClickable?: boolean }).__obactClickable) ||
+    el.getAttribute('data-obact-kind') === 'pointer'
+  );
+}
+
+/**
+ * 可用操作（与 action.json 的 op 同名）：按角色、控件类型、只读、可拖拽、可滚动判定。
+ * hover 只给明确有悬停效果的元素（aria-haspopup、title 提示、菜单项）。
+ */
+export function obActions(el: Element): string[] {
+  const out: string[] = [];
+  const add = (...ops: string[]) => {
+    for (const op of ops) if (!out.includes(op)) out.push(op);
+  };
+  const tag = el.tagName.toLowerCase();
+  const role = obRole(el);
+  const kind = el.getAttribute('data-obact-kind');
+  const type = (el.getAttribute('type') ?? 'text').toLowerCase();
+  const readonly = el.hasAttribute('readonly') || el.getAttribute('aria-readonly') === 'true';
+  if (tag === 'input' && type === 'file') add('upload_file');
+  else if (tag === 'input' && type === 'range') add('fill', 'drag', 'press_key');
+  else if (tag === 'input' && type === 'color') add('click', 'fill');
+  else if (tag === 'select') add('fill');
+  else if (
+    ['textbox', 'searchbox', 'spinbutton'].includes(role) ||
+    (role === 'combobox' && tag === 'input')
+  ) {
+    if (readonly) add('click');
+    else add('click', 'fill', 'type_text', 'press_key');
+  } else if (['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role)) {
+    add('click');
+    if (tag === 'input') add('fill');
+  } else if (role === 'slider') add('drag', 'press_key', 'click');
+  else if (role === 'combobox' || role === 'listbox') add('click', 'press_key');
+  else if (kind === 'scroll') add('scroll');
+  else add('click');
+  if (el.getAttribute('draggable') === 'true') add('drag');
+  if (el.hasAttribute('aria-haspopup') || el.hasAttribute('title') || role === 'menuitem')
+    add('hover');
+  if (kind !== 'scroll') {
+    const he = el as HTMLElement;
+    if (he.scrollHeight > he.clientHeight + 4 && he.clientHeight >= 40) {
+      const st = getComputedStyle(el);
+      if (/(auto|scroll|overlay)/.test(st.overflowY)) add('scroll');
+    }
+  }
+  return out;
+}
+
+/** 下拉框、列表框、带 datalist 的输入框的选项（最多 limit 个），以及未列出的数量。 */
+export function obOptions(
+  el: Element,
+  limit: number,
+): {
+  options: { label: string; value: string; selected?: boolean; disabled?: boolean }[];
+  omitted: number;
+} | null {
+  let list: HTMLOptionElement[] = [];
+  if (el.tagName === 'SELECT') list = [...(el as HTMLSelectElement).options];
+  else if (el.tagName === 'INPUT' && (el as HTMLInputElement).list) {
+    list = [...((el as HTMLInputElement).list as HTMLDataListElement).options];
+  } else return null;
+  const options = list.slice(0, limit).map((o) => {
+    const item: { label: string; value: string; selected?: boolean; disabled?: boolean } = {
+      label: obNorm(o.label || o.text),
+      value: o.value,
+    };
+    if (o.selected && el.tagName === 'SELECT') item.selected = true;
+    if (o.disabled) item.disabled = true;
+    return item;
+  });
+  return { options, omitted: Math.max(0, list.length - limit) };
 }
 
 /** 元素在本 frame 视口内的可见比例（0~1）；不可见（display/visibility/opacity/零尺寸）为 0。 */
@@ -255,7 +373,11 @@ export function obMark(
   const added: number[] = [];
   const refs: number[] = [];
   for (const el of obDeepAll(document, '*')) {
-    if (!obIsInteractive(el)) continue;
+    if (!obIsInteractive(el)) {
+      const kind = obInferredKind(el);
+      if (!kind) continue;
+      if (el.getAttribute('data-obact-kind') !== kind) el.setAttribute('data-obact-kind', kind);
+    }
     const current = Number(el.getAttribute(attr));
     const own = (el as unknown as Record<string, unknown>)[key];
     if (current && own === current) {
@@ -403,6 +525,10 @@ export const DOM_LIB = [
   obRole,
   obName,
   obIsInteractive,
+  obInferredKind,
+  obIsClickableGeneric,
+  obActions,
+  obOptions,
   obVisibleRatio,
   obStates,
   obMark,
