@@ -19,6 +19,7 @@
     "packages/*/scripts",
     "packages/*/test",
     "lab/**/*.ts",
-    "spikes/**/*.ts"
+    "spikes/**/*.ts",
+    "bench/**/*.ts"
   ]
 }

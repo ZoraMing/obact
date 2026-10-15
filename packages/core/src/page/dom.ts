@@ -45,9 +45,15 @@ export function obActiveElement(): Element | null {
 
 /** 角色：显式 role 的第一个值，否则按标签推断（与 Chrome 可访问性树的常用角色对齐）。 */
 export function obRole(el: Element): string {
-  const explicit = el.getAttribute('role')?.trim().split(/\s+/)[0];
-  if (explicit) return explicit.toLowerCase();
+  const explicit = el.getAttribute('role')?.trim().split(/\s+/)[0]?.toLowerCase();
   const tag = el.tagName.toLowerCase();
+  // ARIA 冲突规则：可聚焦或可交互的元素忽略 presentation/none（如 jQuery UI 给 <a href> 设 role=presentation）
+  const focusable =
+    ((tag === 'a' || tag === 'area') && el.hasAttribute('href')) ||
+    ['button', 'input', 'select', 'textarea', 'summary'].includes(tag) ||
+    (el.getAttribute('tabindex') ?? '-1') !== '-1';
+  if (explicit && !((explicit === 'presentation' || explicit === 'none') && focusable))
+    return explicit;
   switch (tag) {
     case 'a':
     case 'area':
@@ -198,6 +204,40 @@ export function obName(el: Element): string {
     if (obNorm(alt)) return obNorm(alt);
   }
   return obNorm(el.getAttribute('title'));
+}
+
+/**
+ * 没有可访问名称时的提示（只作参考，不用于定位）：图标文件名（img src、CSS content / background-image）、
+ * svg <use> 引用的图标 id、稳定且有意义的类名。如 delete.png → "delete"、class="star" → "star"。
+ */
+export function obHint(el: Element): string {
+  const GENERIC =
+    /^(icon|icons|btn|button|fa|fas|far|fab|material-icons|iconfont|svg|img|image|active|clicked|selected|disabled|left|right|small|large|sm|lg|md)$/i;
+  const fileWord = (url: string) => {
+    const m = /([A-Za-z][\w-]*?)(?:[-_.]?\d+)?\.(png|svg|gif|jpe?g|webp)/i.exec(url);
+    return m ? (m[1] as string) : '';
+  };
+  const words: string[] = [];
+  const push = (w: string) => {
+    const t = w
+      .replace(/^(icon|ico|fa|el-icon|ant-icon|mdi)[-_]/i, '')
+      .replace(/[-_]+/g, ' ')
+      .trim();
+    if (t && !GENERIC.test(t) && !words.includes(t)) words.push(t);
+  };
+  const nodes = [el, ...el.querySelectorAll('*')].slice(0, 6);
+  for (const n of nodes) {
+    if (n.tagName === 'IMG') push(fileWord(n.getAttribute('src') ?? ''));
+    const use =
+      n.tagName.toLowerCase() === 'use'
+        ? n.getAttribute('href') || n.getAttribute('xlink:href')
+        : null;
+    if (use) push(use.replace(/^.*#/, ''));
+    const st = getComputedStyle(n);
+    for (const v of [st.content, st.backgroundImage]) if (v?.includes('url(')) push(fileWord(v));
+  }
+  for (const n of nodes) for (const c of n.classList) if (obIsStableToken(c)) push(c);
+  return words.slice(0, 3).join(' ').slice(0, 40);
 }
 
 /** 可交互元素的判定（与 BrowserGym 的可交互角色对齐，另含原生控件、tabindex、contenteditable、onclick）。 */
@@ -560,6 +600,7 @@ export const DOM_LIB = [
   obRole,
   obLabelText,
   obName,
+  obHint,
   obIsInteractive,
   obInferredKind,
   obIsClickableGeneric,

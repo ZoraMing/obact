@@ -46,6 +46,10 @@
         "ref": { "$ref": "common.json#/$defs/Ref" },
         "role": { "type": "string" },
         "name": { "type": "string" },
+        "hint": {
+          "type": "string",
+          "description": "没有可访问名称时，从图标文件名、svg 引用、类名推断的提示（如 delete、star），只作参考，不用于定位。"
+        },
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/ActionName" },

@@ -21,9 +21,8 @@ type Snapshot = {
   strings: string[];
 };
 
-/** 原生可交互标签：不需要再打点击监听标记。 */
+/** 原生可交互标签：不需要再打点击监听标记（<a> 只在有 href 时算原生可交互，单独判断）。 */
 const NATIVE = new Set([
-  'A',
   'BUTTON',
   'INPUT',
   'SELECT',
@@ -78,13 +77,18 @@ export async function exposeForMarking(
       }
       if (opts.clickListeners !== false) {
         for (const i of n.isClickable?.index ?? []) {
-          if (NATIVE.has(snap.strings[n.nodeName[i] as number] ?? '')) continue;
-          const attrs = n.attributes[i] ?? [];
-          let hasRole = false;
-          for (let k = 0; k < attrs.length; k += 2) {
-            if (snap.strings[attrs[k] as number] === 'role') hasRole = true;
+          const name = snap.strings[n.nodeName[i] as number] ?? '';
+          if (NATIVE.has(name)) continue;
+          if (name === 'A') {
+            const attrs = n.attributes[i] ?? [];
+            let hasHref = false;
+            for (let k = 0; k < attrs.length; k += 2) {
+              if (snap.strings[attrs[k] as number] === 'href') hasHref = true;
+            }
+            if (hasHref) continue;
           }
-          if (!hasRole) clickable.push(n.backendNodeId[i] as number);
+          // 带非交互角色的容器（如可拖拽的 dialog、事件委托的 tablist）也算：它们确实响应点击
+          clickable.push(n.backendNodeId[i] as number);
         }
       }
     }

@@ -13,3 +13,4 @@ spikes/out/
 # Claude Code 本机设置与 workflow 的临时 worktree
 .claude/settings.local.json
 .claude/worktrees/
+bench/out/

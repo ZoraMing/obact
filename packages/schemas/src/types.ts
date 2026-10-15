@@ -928,6 +928,10 @@ export interface ObservedElement {
   role: string;
   name: string;
   /**
+   * 没有可访问名称时，从图标文件名、svg 引用、类名推断的提示（如 delete、star），只作参考，不用于定位。
+   */
+  hint?: string;
+  /**
    * 可对该元素执行的动作（与 action.json 的 op 同名）；禁用时仍列出，由 states.disabled 表示当前不可用。
    */
   actions: (

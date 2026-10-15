@@ -9,6 +9,7 @@
     data-x-name     期望名称
     data-x-actions  期望的可用操作（逗号分隔，顺序不限）
     data-x-options  期望的选项数（下拉框、列表框、datalist）
+    data-x-hint     没有可访问名称时期望的提示（obHint）
   data-x-info 容器里是“纯网页信息”，除标注了 data-x-actions 的元素外都不应被编号。
 -->
 <style>
@@ -110,6 +111,8 @@
   </table>
   <ul class="nav"><li class="pointer" data-x-role="listitem" data-x-name="消息中心" data-x-actions="click">消息中心</li></ul>
   <span id="close-x" data-x-role="generic" data-x-name="×" data-x-actions="click">×</span>
+  <span class="icon-delete" id="icon-del" style="display:inline-block;width:12px;height:12px;background:#c00" data-x-role="generic" data-x-name="" data-x-hint="delete" data-x-actions="click"></span>
+  <span id="icon-star" style="display:inline-block;width:12px;height:12px;content:url(/pages/star.svg)" data-x-role="generic" data-x-name="" data-x-hint="star" data-x-actions="click"></span>
 </section>
 
 <section data-c="info" id="info" data-x-info>
@@ -136,6 +139,8 @@
   document.getElementById('more').addEventListener('mousedown', () => {});
   document.getElementById('row-click').addEventListener('click', () => { document.title = '88233'; });
   document.getElementById('close-x').addEventListener('click', (e) => e.target.remove());
+  document.getElementById('icon-del').addEventListener('click', () => {});
+  document.getElementById('icon-star').addEventListener('click', () => {});
   // 事件委托到根节点（React 等框架的做法）：元素本身没有监听，靠 cursor:pointer 推断
   document.addEventListener('click', (e) => {
     if (e.target.closest('.pointer, .card')) document.title = '委托点击';

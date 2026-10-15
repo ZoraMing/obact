@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { markPage } from '../src/index.ts';
 import { bundle } from '../src/page/bundle.ts';
-import { DOM_LIB, obActions, obName, obOptions, obRole } from '../src/page/dom.ts';
+import { DOM_LIB, obActions, obHint, obName, obOptions, obRole } from '../src/page/dom.ts';
 import { SKIP, setup, type TestEnv } from './helpers.ts';
 
 type Got = {
@@ -14,7 +14,14 @@ type Got = {
   name: string;
   actions: string[];
   options: number | null;
-  expect: { role: string; name: string; actions: string[]; options: number | null };
+  hint: string;
+  expect: {
+    role: string;
+    name: string;
+    actions: string[];
+    options: number | null;
+    hint: string | null;
+  };
 };
 
 /** 在页面内收集每个带期望值元素的实际识别结果。 */
@@ -30,10 +37,12 @@ const COLLECT = bundle((attr: string) => {
       name: obName(el),
       actions: obActions(el),
       options: opts ? opts.options.length : null,
+      hint: obHint(el),
       expect: {
         role: el.getAttribute('data-x-role') ?? '',
         name: el.getAttribute('data-x-name') ?? '',
         actions: (el.getAttribute('data-x-actions') ?? '').split(',').filter(Boolean),
+        hint: el.getAttribute('data-x-hint'),
         options: el.hasAttribute('data-x-options')
           ? Number(el.getAttribute('data-x-options'))
           : null,
@@ -91,6 +100,15 @@ describe('组件识别：可操作功能与纯网页信息', { skip: SKIP }, () 
     const wrong = got
       .filter((g) => g.expect.options !== null && g.options !== g.expect.options)
       .map((g) => `${g.label}: ${g.options}（期望 ${g.expect.options}）`);
+    assert.deepEqual(wrong, []);
+  });
+
+  test('没有可访问名称的图标元素给出提示', () => {
+    const icons = got.filter((g) => g.expect.hint !== null);
+    assert.ok(icons.length >= 2);
+    const wrong = icons
+      .filter((g) => g.hint !== g.expect.hint)
+      .map((g) => `${g.label}: "${g.hint}"（期望 "${g.expect.hint}"）`);
     assert.deepEqual(wrong, []);
   });
 
