@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
 
+env:
+  # Chrome for Testing 固定大版本；选定具体版本后改成完整版本号（见 docs/spikes/M0-spikes.md 第 4 节）
+  CFT_VERSION: '141'
+
 jobs:
   node:
     runs-on: ubuntu-latest
@@ -15,9 +19,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-        env:
-          PUPPETEER_SKIP_DOWNLOAD: '1'
-      # lint、类型检查、生成类型一致性、契约测试（T）
+      - name: 安装 Chrome for Testing
+        run: |
+          # Ubuntu 24.04 限制非特权用户命名空间，Chrome 沙箱需要放开
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          npx @puppeteer/browsers install "chrome@${CFT_VERSION}" --path "$HOME/.cache/cft" | tee cft.txt
+          echo "CHROME_PATH=$(tail -1 cft.txt | awk '{print $2}')" >> "$GITHUB_ENV"
+      # lint、类型检查、生成类型一致性、契约测试（T）与浏览器测试（F）
       - run: npm run check
 
   python:
@@ -30,3 +38,25 @@ jobs:
       - run: pip install -e "python[dev]"
       - run: ruff check python && ruff format --check python
       - run: pytest python
+
+  # 在 Chrome for Testing 上复跑 M0 预研（扩展加载、进程模型），回答“CfT 上是否可用”
+  spikes-cft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 安装 Chrome for Testing
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          npx @puppeteer/browsers install "chrome@${CFT_VERSION}" --path "$HOME/.cache/cft" | tee cft.txt
+          echo "CHROME_PATH=$(tail -1 cft.txt | awk '{print $2}')" >> "$GITHUB_ENV"
+      - name: 扩展加载（无头）
+        run: ASSERT=1 node spikes/extension/load.ts
+      - name: 扩展加载（有头，Xvfb）
+        run: ASSERT=1 HEADED=1 xvfb-run -a node spikes/extension/load.ts
+      - name: 进程模型与编号
+        run: node spikes/browser/service.ts

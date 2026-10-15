@@ -33,7 +33,7 @@
   },
   "overrides": [
     {
-      "includes": ["**/fixtures/**"],
+      "includes": ["**/fixtures/**", "**/test/pages/**"],
       "linter": {
         "enabled": false
       }

@@ -16,6 +16,7 @@ const WS_PORT = 47210;
 process.on('unhandledRejection', (e) => log('unhandledRejection', (e as Error).message));
 
 const received: { origin: string | undefined; text: string }[] = [];
+const loaded = new Map<string, boolean>();
 const wsServer = await serveWs(WS_PORT, (m) => {
   received.push({ origin: m.origin, text: m.text });
   m.reply(
@@ -50,6 +51,7 @@ async function tryMethod(name: string, options: LaunchOptions, install?: boolean
     let installedId: string | undefined;
     if (install) installedId = await browser.installExtension(EXT);
     const sw = await extensionWorker(browser);
+    loaded.set(name, Boolean(sw));
     if (!sw) return log(name, { loaded: false, installedId });
     const id = new URL(sw.url()).host;
     log(name, `扩展已加载 ${id}`);
@@ -155,3 +157,9 @@ await tryMethod(
 );
 
 wsServer.close();
+
+// ASSERT=1（CI）：方式 A 是选定方案，加载失败则退出码为 1
+if (process.env.ASSERT === '1' && !loaded.get('A --load-extension')) {
+  console.error('方式 A（--load-extension）在此浏览器上不可用');
+  process.exit(1);
+}
