@@ -75,6 +75,8 @@ export type Ctx = {
   space: Space;
   /** 本空间的路径前缀，如 /s/run1；页面里的链接和接口地址都要带上。 */
   base: string;
+  /** 本 Lab 装配的全部模块（页面外壳据此渲染完整导航，并让每个模块的 shell 钩子在所有页面生效）。 */
+  modules: readonly LabModule[];
   /** 路径参数（:name）。 */
   params: Record<string, string>;
   /** 当前登录用户；未登录或会话过期为 null。 */
@@ -195,7 +197,10 @@ export function esc(s: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
-/** 带空间前缀的公共页面外壳：标题、导航、内容、各模块的外壳钩子。 */
+/**
+ * 带空间前缀的公共页面外壳：标题、导航、内容、各模块的外壳钩子。
+ * 导航与外壳钩子始终取 ctx.modules（全部模块）；modules 参数只在 ctx 没有模块列表时（单元测试）使用。
+ */
 export function page(
   ctx: Ctx,
   modules: readonly LabModule[],
@@ -203,6 +208,7 @@ export function page(
   body: string,
   opts: { head?: string; nav?: boolean } = {},
 ): string {
+  modules = ctx.modules?.length ? ctx.modules : modules;
   const nav =
     opts.nav === false
       ? ''

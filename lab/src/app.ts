@@ -204,6 +204,7 @@ export async function createLab(
       url,
       space,
       base,
+      modules,
       params: {},
       user: userOf(space, cookies[SESSION_COOKIE]),
       body: () => {
