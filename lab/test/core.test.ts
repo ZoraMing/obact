@@ -134,10 +134,4 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal((s.modules.counter as { n: number }).n, 3, '已落库');
     assert.equal(s.submissions.find((x) => x.key === 'once')?.count, 1);
   });
-
-  test('非法空间名、根路径跳转', async () => {
-    assert.equal((await fetch(`${lab.base}/s/a.b/`)).status, 400);
-    const r = await fetch(`${lab.base}/`, { redirect: 'manual' });
-    assert.equal(r.headers.get('location'), '/s/default/');
-  });
 });

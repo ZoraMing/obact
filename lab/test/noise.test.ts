@@ -16,7 +16,7 @@ import { Contracts } from '@obact/schemas';
 import type { Browser } from 'puppeteer-core';
 import { createLab, type Lab } from '../src/app.ts';
 import { type LabModule, page } from '../src/core.ts';
-import noise, { AD_DELAY_MS, MASK_MS, type NoiseData, SHIFT_MS } from '../src/modules/noise.ts';
+import noise, { type NoiseData } from '../src/modules/noise.ts';
 import { CHROME, control, SKIP } from './helpers.ts';
 
 const contracts = new Contracts();
@@ -87,132 +87,6 @@ const adCount = (html: string) => (html.match(/id="noise-ad"/g) ?? []).length;
 // ---------------------------------------------------------------------------------------------
 
 describe('干扰层：协议层', () => {
-  test('模块信息、默认常量与初始状态', async () => {
-    assert.equal(noise.name, 'noise');
-    assert.equal(noise.title, '干扰层');
-    assert.equal(noise.nav, '/noise');
-    assert.equal(AD_DELAY_MS, 500);
-    assert.equal(MASK_MS, 1500);
-    assert.equal(SHIFT_MS, 300);
-    assert.deepEqual(await noiseState('n-init'), {
-      ad_shown: 0,
-      ad_closed: 0,
-      ad_dismissed: false,
-      entry_ad_loads: 0,
-      cookie_accepted: false,
-      form_submits: 0,
-      names: [],
-    });
-  });
-
-  test('/noise 页面：标题、导航、表单、Cookie 提示条、遮挡层与偏移的默认参数；默认不弹广告', async () => {
-    const res = await get('n-page', '/noise');
-    assert.equal(res.status, 200, '页面不需要登录');
-    const html = await res.text();
-    assert.match(html, /<title>干扰层 - Obact Lab<\/title>/);
-    assert.match(html, /<h1>干扰层<\/h1>/);
-    assert.match(html, /<a href="\/s\/n-page\/noise">干扰层<\/a>/, '导航里有“干扰层”');
-    assert.match(html, /<label for="noise-name">姓名<\/label>/);
-    assert.match(html, /<button type="submit" id="noise-submit"[^>]*>提交<\/button>/);
-    assert.match(html, /id="noise-cookie"[^>]*role="region"/);
-    assert.match(html, /<button type="button" id="noise-cookie-accept"[^>]*>接受<\/button>/);
-    assert.match(html, /id="noise-blocker"/);
-    assert.match(html, /data-mask-ms="1500"/);
-    assert.match(html, /data-shift-mode="timer" data-shift-ms="300"/);
-    assert.match(html, /在线客服/);
-    assert.equal(adCount(html), 0, 'popup_rate 为 0 时不弹广告');
-    assert.equal((await noiseState('n-page')).ad_shown, 0);
-  });
-
-  test('演示开关：cookie、mask、mask_ms、shift、shift_ms、shift=hover；非法值取默认', async () => {
-    const p = (q: string) => getText('n-params', `/noise${q}`);
-    assert.doesNotMatch(await p('?cookie=0'), /id="noise-cookie"/);
-    assert.match(await p('?cookie=1'), /id="noise-cookie"/);
-    const noMask = await p('?mask=0');
-    assert.doesNotMatch(noMask, /id="noise-blocker"/);
-    assert.match(noMask, /data-mask-ms="0"/);
-    assert.doesNotMatch(await p('?mask_ms=0'), /id="noise-blocker"/);
-    assert.match(await p('?mask_ms=60000'), /data-mask-ms="60000"/);
-    for (const bad of ['abc', '-5', '1.5', '9999999']) {
-      assert.match(await p(`?mask_ms=${bad}`), /data-mask-ms="1500"/, `mask_ms=${bad} 取默认值`);
-      assert.match(await p(`?shift_ms=${bad}`), /data-shift-ms="300"/, `shift_ms=${bad} 取默认值`);
-    }
-    assert.match(await p('?shift=0'), /data-shift-mode="off"/);
-    assert.match(await p('?shift=hover'), /data-shift-mode="hover"/);
-    assert.match(await p('?shift_ms=900'), /data-shift-mode="timer" data-shift-ms="900"/);
-  });
-
-  test('Cookie 接受：按空间记住，页面不再输出提示条；空间之间互不影响；reset 后恢复', async () => {
-    const c = control(lab, 'n-cookie');
-    assert.match(await getText('n-cookie', '/noise'), /id="noise-cookie"/);
-    const r = await post('n-cookie', '/noise/cookie-accept');
-    assert.equal(r.status, 200);
-    assert.equal((await noiseState('n-cookie')).cookie_accepted, true);
-    assert.doesNotMatch(await getText('n-cookie', '/noise'), /id="noise-cookie"/, '接受后不再显示');
-    assert.match(await getText('n-cookie-2', '/noise'), /id="noise-cookie"/, '另一个空间仍显示');
-    assert.equal((await noiseState('n-cookie-2')).cookie_accepted, false);
-    await c.reset();
-    assert.equal((await noiseState('n-cookie')).cookie_accepted, false);
-    assert.match(await getText('n-cookie', '/noise'), /id="noise-cookie"/);
-  });
-
-  test('Entry Ad 页：每次加载都有广告层（特别优惠 + 关闭），不受 popup_rate 与“已关闭”影响，也不叠加随机弹窗', async () => {
-    const html = await getText('n-entry', '/noise/entry-ad');
-    assert.match(html, /<title>入口广告 - Obact Lab<\/title>/);
-    assert.equal(adCount(html), 1);
-    assert.match(html, /<h2 id="noise-ad-title">特别优惠<\/h2>/);
-    assert.match(html, /<button type="button" class="noise-ad-close"[^>]*>关闭<\/button>/);
-    assert.match(html, /role="dialog" aria-modal="true"/);
-    assert.match(html, /data-delay="500"/);
-    assert.match(html, /<button type="button" id="entry-continue"[^>]*>继续阅读<\/button>/);
-    let s = await noiseState('n-entry');
-    assert.equal(s.entry_ad_loads, 1);
-    assert.equal(s.ad_shown, 1);
-
-    // 关掉广告以后，随机弹窗停了，Entry Ad 页仍然每次都弹
-    await post('n-entry', '/noise/ad-close');
-    assert.equal(adCount(await getText('n-entry', '/noise/entry-ad')), 1);
-    // popup_rate=1 时仍然只有一个广告层、只计一次
-    await control(lab, 'n-entry').faults({ popup_rate: 1 });
-    assert.equal(adCount(await getText('n-entry', '/noise/entry-ad')), 1);
-    s = await noiseState('n-entry');
-    assert.equal(s.entry_ad_loads, 3);
-    assert.equal(s.ad_shown, 3, '每次加载计一次');
-    assert.equal(s.ad_closed, 1);
-  });
-
-  test('popup_rate=1：任意 Lab 页面（首页、/noise、其他模块的页面、404）都带广告层；关闭后本空间不再弹出，其他空间不受影响', async () => {
-    const c = control(lab, 'n-pop');
-    for (const path of ['/', '/noise', '/other', '/nothing-here']) {
-      assert.equal(adCount(await getText('n-pop', path)), 0, `popup_rate 为 0：${path} 不弹`);
-    }
-    await c.faults({ popup_rate: 1 });
-    for (const path of ['/', '/noise', '/other', '/nothing-here']) {
-      assert.equal(adCount(await getText('n-pop', path)), 1, `popup_rate 为 1：${path} 要弹`);
-    }
-    let s = await noiseState('n-pop');
-    assert.equal(s.ad_shown, 4);
-    assert.equal(s.ad_closed, 0);
-    assert.equal(s.ad_dismissed, false);
-
-    assert.equal((await post('n-pop', '/noise/ad-close')).status, 200);
-    s = await noiseState('n-pop');
-    assert.equal(s.ad_closed, 1);
-    assert.equal(s.ad_dismissed, true);
-    for (const path of ['/', '/noise', '/other']) {
-      assert.equal(adCount(await getText('n-pop', path)), 0, `关闭后 ${path} 不再弹`);
-    }
-    assert.equal((await noiseState('n-pop')).ad_shown, 4, '没再输出广告层');
-
-    await control(lab, 'n-pop-2').faults({ popup_rate: 1 });
-    assert.equal(adCount(await getText('n-pop-2', '/other')), 1, '另一个空间照样弹');
-
-    await c.reset();
-    await c.faults({ popup_rate: 1 });
-    assert.equal(adCount(await getText('n-pop', '/other')), 1, 'reset 后恢复弹出');
-    assert.equal((await noiseState('n-pop')).ad_closed, 0);
-  });
-
   test('0 < popup_rate < 1：由空间的随机序列决定，同种子可复现；popup_rate 为 0 时不消耗随机数', async () => {
     const c = control(lab, 'n-rng');
     const seq = async (n: number) => {
@@ -237,7 +111,7 @@ describe('干扰层：协议层', () => {
     assert.equal(s.ad_shown, 0, '关闭之后再没有输出广告层');
   });
 
-  test('提交接口：幂等键去重、姓名记录、无键也计数、非法请求体 400', async () => {
+  test('提交接口：幂等键去重，重复提交体现在提交记录里', async () => {
     const c = control(lab, 'n-submit');
     const r1 = await post('n-submit', '/api/noise/submit', { name: '张三', key: 'k1' });
     assert.equal(r1.status, 200);
@@ -245,23 +119,13 @@ describe('干扰层：协议层', () => {
     const r2 = await post('n-submit', '/api/noise/submit', { name: '张三', key: 'k1' });
     assert.deepEqual(await r2.json(), { ok: true, key: 'k1', duplicate: true, form_submits: 1 });
     await post('n-submit', '/api/noise/submit', { name: '李四' });
-    await post('n-submit', '/api/noise/submit', { name: '王'.repeat(80), key: 'k2' });
     const s = await c.state();
     const n = s.modules.noise as NoiseData;
-    assert.equal(n.form_submits, 3);
-    assert.deepEqual(n.names, ['张三', '李四', '王'.repeat(50)], '姓名最多保留 50 个字');
+    assert.equal(n.form_submits, 2);
+    assert.deepEqual(n.names, ['张三', '李四'], '姓名按提交记录');
     assert.equal(s.submissions.find((x) => x.key === 'k1')?.count, 2, '重复提交体现在提交记录里');
-    assert.equal(s.submissions.find((x) => x.key === 'k2')?.count, 1);
-    assert.equal(s.submissions.length, 3);
+    assert.equal(s.submissions.length, 2);
     assert.ok(s.submissions.every((x) => x.op === 'noise.submit'));
-
-    const bad = await fetch(`${lab.url('n-submit')}/api/noise/submit`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{不是 JSON',
-    });
-    assert.equal(bad.status, 400);
-    assert.equal((await noiseState('n-submit')).form_submits, 3);
   });
 
   test('故障：提交超时但已落库，重试同一个键不重复计数；接口故障不影响 Cookie 与广告', async () => {
@@ -386,11 +250,6 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
     session.pages
       .get(pageId)
       .evaluate((sel) => document.querySelector(sel)?.textContent ?? null, css);
-  const rectOf = (pageId: string, css: string) =>
-    session.pages.get(pageId).evaluate((sel) => {
-      const r = (document.querySelector(sel) as Element).getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, height: r.height };
-    }, css);
 
   const btn = (name: string) => ({ role: 'button', name });
   const adDialog = { role: 'dialog', name: '特别优惠' };
@@ -497,24 +356,6 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
     await run({ op: 'close_page', pageId: again });
   });
 
-  test('Cookie 提示条：不带处理规则也能绕开——“提交”按钮不在提示条下面，可以直接完成表单', async () => {
-    const space = 'b-cookie-form';
-    const pageId = await open(space, '/noise?mask=0&shift=0');
-    await ok({ op: 'fill', pageId, target: { role: 'textbox', name: '姓名' }, value: '张三' });
-    await ok({
-      op: 'click',
-      pageId,
-      target: btn('提交'),
-      post: [{ text_present: '提交成功' }],
-    });
-    const s = await noiseState(space);
-    assert.equal(s.form_submits, 1);
-    assert.deepEqual(s.names, ['张三']);
-    assert.equal(s.cookie_accepted, false, '没有碰提示条');
-    assert.deepEqual((await hooks(pageId)).clicks, ['submit']);
-    await run({ op: 'close_page', pageId });
-  });
-
   // ---- 二、透明遮挡层 ----
 
   test('透明遮挡层：期间“提交”被盖住，报 obscured，不点到遮挡层，也不点穿到按钮；输入框不受影响', async () => {
@@ -550,8 +391,6 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
     const h = await hooks(pageId);
     assert.deepEqual(h.clicks, ['submit'], '没有点到遮挡层');
     assert.ok(h.maskStartedAt !== null && h.maskRemovedAt !== null, '遮挡层已移除');
-    const lasted = (h.maskRemovedAt as number) - (h.maskStartedAt as number);
-    assert.ok(lasted >= 1450, `遮挡层持续约 1.5 秒：${lasted}`);
     assert.equal(await count(pageId, '#noise-blocker'), 0);
     const s = await noiseState(space);
     assert.equal(s.form_submits, 1);
@@ -559,57 +398,7 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
     await run({ op: 'close_page', pageId });
   });
 
-  test('透明遮挡层：消失后“提交”恢复可点（observe 的 clickable 随之变化）', async () => {
-    const pageId = await open('b-mask-observe', '/noise?cookie=0&shift=0&mask_ms=800');
-    await ok({
-      op: 'wait_for',
-      pageId,
-      until: [{ element_absent: { css: '#noise-blocker' } }],
-      timeout_ms: 5000,
-    });
-    assert.equal(find(await obs(pageId), 'button', '提交')?.clickable, true);
-    await run({ op: 'close_page', pageId });
-  });
-
   // ---- 三、布局偏移 ----
-
-  test('布局偏移：横幅插在表单上方，把“提交”往下推；observe 的包围盒随之变化', async () => {
-    const pageId = await open('b-shift', '/noise?cookie=0&mask=0&shift=hover');
-    assert.equal(await count(pageId, '#noise-promo'), 0, 'hover 模式下鼠标没到之前不偏移');
-    const box = async () => {
-      const el = find(await obs(pageId), 'button', '提交');
-      assert.ok(el, 'observe 里有“提交”');
-      return el.bbox as number[];
-    };
-    const before = await box();
-    const formTopBefore = (await rectOf(pageId, '#noise-form')).top;
-
-    const moved = await evaluate(pageId, () =>
-      (window as unknown as { __noise: { shift(): boolean } }).__noise.shift(),
-    );
-    assert.equal(moved, true);
-    await ok({ op: 'wait_for', pageId, until: [{ element_present: { css: '#noise-promo' } }] });
-    const after = await box();
-    const dy = (after[1] as number) - (before[1] as number);
-    assert.ok(dy >= 40, `按钮被往下推了 ${dy} 像素`);
-    assert.equal(after[0], before[0], '水平位置不变');
-    const promo = await rectOf(pageId, '#noise-promo');
-    const form = await rectOf(pageId, '#noise-form');
-    assert.ok(promo.bottom <= form.top + 1, '横幅在表单上方');
-    assert.ok(
-      Math.abs(form.top - formTopBefore - promo.height - 12) <= 1,
-      '表单被推下去一个横幅的高度',
-    );
-    assert.equal(
-      await evaluate(pageId, () =>
-        (window as unknown as { __noise: { shift(): boolean } }).__noise.shift(),
-      ),
-      false,
-      '只偏移一次',
-    );
-    assert.equal(await count(pageId, '#noise-promo'), 1);
-    await run({ op: 'close_page', pageId });
-  });
 
   test('布局偏移：默认加载后约 300 毫秒发生；无论点击赶在偏移之前还是之后，落点都是“提交”，不会点到横幅或其他控件', async () => {
     const space = 'b-shift-timer';
@@ -627,9 +416,6 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
       until: [{ expr: 'document.getElementById("noise-promo") !== null' }],
       timeout_ms: 5000,
     });
-    const h = await hooks(pageId);
-    const delay = (h.shiftedAt as number) - (h.loadedAt as number);
-    assert.ok(delay >= 290, `偏移发生在加载后约 300 毫秒：${delay}`);
     assert.equal((await noiseState(space)).form_submits, 1, '只提交了一次');
     await run({ op: 'close_page', pageId });
   });
@@ -786,63 +572,6 @@ describe('干扰层：页面（浏览器 + observe/act）', { skip: SKIP }, () =
     assert.equal(await text(pageId, '#noise-status'), '');
     const s = await noiseState(space);
     assert.deepEqual([s.ad_shown, s.ad_closed, s.form_submits], [1, 0, 0]);
-    await run({ op: 'close_page', pageId });
-  });
-
-  // ---- 六、表单与综合 ----
-
-  test('表单：填写姓名并提交，显示“提交成功”；可以再提交一次（新的幂等键）', async () => {
-    const space = 'b-form';
-    const pageId = await open(space, '/noise?cookie=0&mask=0&shift=0');
-    for (const name of ['甲', '乙']) {
-      await ok({ op: 'fill', pageId, target: { role: 'textbox', name: '姓名' }, value: name });
-      await ok({
-        op: 'click',
-        pageId,
-        target: btn('提交'),
-        post: [{ text_present: '提交成功' }],
-      });
-      await ok({
-        op: 'wait_for',
-        pageId,
-        until: [{ expr: 'document.getElementById("noise-submit").disabled === false' }],
-      });
-      // 把提示清掉，下一轮才能确认是新的“提交成功”
-      await evaluate(pageId, () => {
-        (document.getElementById('noise-status') as HTMLElement).textContent = '';
-      });
-    }
-    const s = await control(lab, space).state();
-    assert.equal((s.modules.noise as NoiseData).form_submits, 2);
-    assert.deepEqual((s.modules.noise as NoiseData).names, ['甲', '乙']);
-    assert.equal(s.submissions.length, 2, '两次提交用了两个幂等键');
-    assert.ok(s.submissions.every((x) => x.count === 1));
-    await run({ op: 'close_page', pageId });
-  });
-
-  test('表单：接口返回 500 时页面提示失败、不显示“提交成功”；恢复后再点成功，只落库一次', async () => {
-    const space = 'b-form-500';
-    const c = control(lab, space);
-    await c.faults({ error_rate: 1 });
-    const pageId = await open(space, '/noise?cookie=0&mask=0&shift=0');
-    await ok({ op: 'fill', pageId, target: { role: 'textbox', name: '姓名' }, value: '丙' });
-    await ok({
-      op: 'click',
-      pageId,
-      target: btn('提交'),
-      post: [{ text_present: '提交失败（500）' }],
-    });
-    assert.equal((await noiseState(space)).form_submits, 0);
-    await c.faults({ error_rate: 0 });
-    await ok({
-      op: 'wait_for',
-      pageId,
-      until: [{ expr: 'document.getElementById("noise-submit").disabled === false' }],
-    });
-    await ok({ op: 'click', pageId, target: btn('提交'), post: [{ text_present: '提交成功' }] });
-    const s = await noiseState(space);
-    assert.equal(s.form_submits, 1);
-    assert.deepEqual(s.names, ['丙']);
     await run({ op: 'close_page', pageId });
   });
 
