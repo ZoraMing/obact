@@ -90,6 +90,17 @@ workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓
 
 M1 需要承接的预研结论：编号表以 backendNodeId 为准、克隆节点重新编号、`<option>` 编号、observe 只取视口内元素的可访问性信息、OOPIF 用它自己的 target 会话、扩展的 service worker 用 CDP 会话调用。
 
+### 暂停时的状态（2026-10-16）
+
+**已完成并推送**：M0 全部；M1 的 observe、act、定位器、浏览器池、12 类夹具、Lab 四个模块（auth、orders、structure、noise）及三个控制接口、BW-3 与 BW-7 本地基准脚本。MiniWoB++ 10 个任务 50/50；BW-14 召回 591/591。M1 过程中测试发现并修复了 15 个内核问题。
+
+**没做完**
+1. CI 上 `lab/test/auth.test.ts` 的浏览器流程偶发失败（`landing_mismatch`，页面收不到任何鼠标事件）。已用 CI 同款 Chrome for Testing 141 在本机复现：点击引起整页导航后，Node 进程只要被卡住约 100 毫秒（如 observe 解析大结果、垃圾回收），该标签页的鼠标事件就全部收不到；刷新、重连、切前台都无效，只有跳到 about:blank 再后退才恢复。普通 Puppeteer 加静态页面复现不了，根因未找到。不建议自动用 about:blank 恢复（会丢 JS 状态，POST 结果页可能重复提交）。待决定：绕开（改测试流程）还是继续深挖。**容器自带的 Chromium 复现不了，本机验证请用 CfT。**
+2. BW-6、BW-12 基准脚本（`bench/bw6.ts`、`bw12.ts`、`bench/test/bw6-12.test.ts`）：已提交的是 agent 被中断时的版本，未经评审，测试未跑通确认。
+3. `bench/test` 还没纳入 `npm test`（约 60 秒以上）；BW-3、BW-7 的 `--live` 公开站点版本只在本地桩站点验证过，真站未实测（容器访问不了），需要在能联网的 CI 里跑。
+4. M1 整体评审与修复（评审脚本已备好）。
+5. 之后的 M2 至 M5 都未开始。
+
 ### M1 观察与执行内核
 
 | 组 | 任务 | FR | 验收 | 状态 |
