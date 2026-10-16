@@ -143,21 +143,23 @@ export function obRole(el: Element): string {
   return 'generic';
 }
 
-/** label 的文字：不含其中表单控件（下拉框选项、文本框内容等）的文字。 */
+/** label 的文字：不含其中表单控件（下拉框选项、文本框内容等）的文字；<slot> 展开成投影进来的内容。 */
 export function obLabelText(label: Element): string {
   let text = '';
-  const walk = (n: Node) => {
-    for (const c of n.childNodes) {
-      if (c.nodeType === Node.TEXT_NODE) text += c.textContent ?? '';
-      else if (c.nodeType === Node.ELEMENT_NODE) {
-        const tag = (c as Element).tagName;
-        if (['SELECT', 'TEXTAREA', 'INPUT', 'DATALIST', 'BUTTON', 'SCRIPT', 'STYLE'].includes(tag))
-          continue;
-        walk(c);
+  const SKIP = ['SELECT', 'TEXTAREA', 'INPUT', 'DATALIST', 'BUTTON', 'SCRIPT', 'STYLE'];
+  const visit = (c: Node) => {
+    if (c.nodeType === Node.TEXT_NODE) text += c.textContent ?? '';
+    else if (c.nodeType === Node.ELEMENT_NODE) {
+      const el = c as Element;
+      if (SKIP.includes(el.tagName)) return;
+      if (el.tagName === 'SLOT') {
+        for (const a of (el as HTMLSlotElement).assignedNodes({ flatten: true })) visit(a);
+        return;
       }
+      for (const k of el.childNodes) visit(k);
     }
   };
-  walk(label);
+  for (const k of label.childNodes) visit(k);
   return obNorm(text);
 }
 
@@ -220,7 +222,11 @@ export function obName(el: Element): string {
     const raw =
       el.childElementCount === 0
         ? el.textContent
-        : el.querySelector('[aria-hidden="true"]')
+        : // 带角色的控件才展开 <slot>；只是带点击监听的泛容器（如组件库的外层容器）不展开，
+          // 否则它的名称会变成整块面板的文字，把面板正文从纯网页信息里吞掉
+          el.querySelector(
+              fromContent.includes(role) ? '[aria-hidden="true"], slot' : '[aria-hidden="true"]',
+            )
           ? obContentText(el)
           : (el as HTMLElement).innerText;
     const text = obNorm(raw || el.textContent);
@@ -238,27 +244,30 @@ export function obName(el: Element): string {
 /**
  * 内容文字，按 accname 规范排除 aria-hidden 的后代（如表头排序箭头、链接后的“›”图标）：
  * 否则名称会随排序状态变化（“下单时间 ▼”），角色+名称定位器和同名消歧都会失效。
- * 隐藏（display:none 等）的后代同样不计；块级与元素之间补空格。
+ * 隐藏（display:none 等）的后代同样不计；元素之间补空格；<slot> 展开成投影进来的内容
+ * （Web Component 的按钮文字写在宿主的子节点里，由 Shadow DOM 里的 slot 投影到原生按钮上）。
  */
 export function obContentText(el: Element): string {
   const parts: string[] = [];
-  const walk = (node: Node) => {
-    for (const c of node.childNodes) {
-      if (c.nodeType === 3) {
-        parts.push(c.nodeValue ?? '');
-      } else if (c.nodeType === 1) {
-        const child = c as Element;
-        if (child.getAttribute('aria-hidden') === 'true') continue;
-        const st = getComputedStyle(child);
-        if (st.display === 'none' || st.visibility === 'hidden') continue;
-        parts.push(' ');
-        const sr = obShadow(child);
-        walk(sr ?? child);
-        parts.push(' ');
+  const visit = (c: Node) => {
+    if (c.nodeType === 3) {
+      parts.push(c.nodeValue ?? '');
+    } else if (c.nodeType === 1) {
+      const child = c as Element;
+      if (child.getAttribute('aria-hidden') === 'true') return;
+      if (child.tagName === 'SLOT') {
+        // 投影进来的内容（没有投影时是 slot 自己的后备内容）
+        for (const a of (child as HTMLSlotElement).assignedNodes({ flatten: true })) visit(a);
+        return;
       }
+      const st = getComputedStyle(child);
+      if (st.display === 'none' || st.visibility === 'hidden') return;
+      parts.push(' ');
+      for (const k of (obShadow(child) ?? child).childNodes) visit(k);
+      parts.push(' ');
     }
   };
-  walk(el);
+  for (const k of el.childNodes) visit(k);
   return parts.join('');
 }
 

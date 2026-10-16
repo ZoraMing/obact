@@ -102,6 +102,68 @@ export function obsIntersect(a: Rect, b: Rect | null): Rect {
   return [x, y, Math.max(0, right - x), Math.max(0, bottom - y)];
 }
 
+/** 渲染树上的子元素：Shadow Root 的子元素（宿主）、slot 投影进来的元素、普通子元素。 */
+export function obsFlatChildren(el: Element): Element[] {
+  const sr = (el as Element & { shadowRoot: ShadowRoot | null }).shadowRoot;
+  if (sr) return [...sr.children];
+  if (el.tagName === 'SLOT') return (el as HTMLSlotElement).assignedElements({ flatten: true });
+  return [...el.children];
+}
+
+/**
+ * 折叠重复项：组件库（Web Component）里，宿主或内部元素因为带点击监听被列成没有角色的 generic，
+ * 而同一个控件已经有带角色的元素（内部原生按钮、宿主上的 tab 等）。generic 在渲染树上与带角色元素是
+ * 祖孙关系、位置大小几乎重合、且没有名称（或与它同名）时，只保留带角色的那个。
+ */
+export function obsFoldDuplicates(listed: Map<Element, RawElement>): Set<RawElement> {
+  const drop = new Set<RawElement>();
+  const area = (r: Rect) => r[2] * r[3];
+  /** g 被 c 盖住的比例、c 被 g 盖住的比例。 */
+  const cover = (g: Rect, c: Rect): [number, number] => {
+    const ov = area(obsIntersect(g, c));
+    return [area(g) > 0 ? ov / area(g) : 0, area(c) > 0 ? ov / area(c) : 0];
+  };
+  const sameName = (g: RawElement, c: RawElement) => !g.name || g.name === c.name;
+  // 向上（g 在带角色元素 c 的内部）：几乎重合，或 g 整个落在 c 的范围内（如 sl-radio 里的标签文字）
+  const dupInside = (g: RawElement, c: RawElement | undefined) => {
+    if (!c || c.role === 'generic' || !sameName(g, c)) return false;
+    const [a, b] = cover(g.rect, c.rect);
+    return (a >= 0.6 && b >= 0.6) || a >= 0.9;
+  };
+  // 向下（g 是包着真控件 c 的宿主或外壳）：几乎重合；或 g 没有名称，c 占了它的大半（如 sl-select 外面的表单项容器）
+  const dupWrap = (g: RawElement, c: RawElement | undefined) => {
+    if (!c || c.role === 'generic' || !sameName(g, c)) return false;
+    const [a, b] = cover(g.rect, c.rect);
+    return (a >= 0.6 && b >= 0.6) || (!g.name && b >= 0.9 && a >= 0.4);
+  };
+  for (const [el, info] of listed) {
+    if (info.role !== 'generic') continue;
+    // 向上：generic 在带角色元素的内部（如 sl-tab 里的 div.tab）
+    let up: Element | null = obsParent(el);
+    let hit = false;
+    for (let i = 0; i < 6 && up && !hit; i++, up = obsParent(up))
+      hit = dupInside(info, listed.get(up));
+    // 向下：generic 是包着真控件的宿主或外壳（如 sl-button 宿主包着内部的 button）
+    if (!hit) {
+      let level = obsFlatChildren(el);
+      for (let depth = 0, seen = 0; depth < 4 && level.length && !hit && seen < 60; depth++) {
+        const next: Element[] = [];
+        for (const k of level) {
+          if (++seen > 60) break;
+          if (dupWrap(info, listed.get(k))) {
+            hit = true;
+            break;
+          }
+          next.push(...obsFlatChildren(k));
+        }
+        level = next;
+      }
+    }
+    if (hit) drop.add(info);
+  }
+  return drop;
+}
+
 /** 渲染树上的父元素：插槽分配 > 父元素 > Shadow Root 的宿主。 */
 export function obsParent(el: Element): Element | null {
   if (el.assignedSlot) return el.assignedSlot;
@@ -175,6 +237,20 @@ export function obsVisuallyHidden(el: Element, r: DOMRect): boolean {
   if (r.right + scrollX <= 0 || r.bottom + scrollY <= 0) return true;
   const st = getComputedStyle(el);
   return st.clipPath !== 'none' || (st.clip !== 'auto' && st.clip !== '');
+}
+
+/**
+ * 组件库为表单提交放的“值镜像”输入框：aria-hidden 且不可 Tab 聚焦（tabindex=-1）的文本类输入。
+ * 它不是用户能操作的功能，值也是内部取值（如 sl-select 里选项的 value），不列出、不泄露。
+ */
+export function obsIsMirrorField(el: Element): boolean {
+  if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1')
+    return false;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName !== 'INPUT') return false;
+  return ['text', 'search', 'email', 'tel', 'url', 'number', 'password'].includes(
+    (el as HTMLInputElement).type,
+  );
 }
 
 /** 当前值：输入框、下拉框、可编辑区、自绘滑块等；密码与敏感字段显示为 ***；不适用时返回 undefined。 */
@@ -412,6 +488,7 @@ export function obsCollect(o: CollectOptions): FrameCollect {
     const ref = Number(el.getAttribute(o.attr));
     // 只认本会话写入的编号（克隆节点带来的旧属性在 markPage 中已被覆盖）
     if (!want.has(ref) || (el as unknown as Record<string, unknown>)[o.key] !== ref) continue;
+    if (obsIsMirrorField(el)) continue;
     const info = obsElement(el, ref, o, want, clipCache, withinMemo, withinIdx);
     if (!info) continue;
     elements.push(info);
@@ -426,6 +503,22 @@ export function obsCollect(o: CollectOptions): FrameCollect {
         if (t) skip.add(t);
       }
     }
+  }
+  // 折叠组件库里与带角色元素重复的 generic；iframe 位置要跟着重新计数
+  const dropped = obsFoldDuplicates(listed);
+  if (dropped.size) {
+    const before: number[] = [];
+    let kept = 0;
+    for (let i = 0; i <= elements.length; i++) {
+      before[i] = kept;
+      const e = elements[i];
+      if (e && !dropped.has(e)) kept++;
+    }
+    for (let k = 0; k < slots.length; k++) slots[k] = before[slots[k] as number] ?? kept;
+    for (const [el, info] of listed) if (dropped.has(info)) listed.delete(el);
+    const left = elements.filter((e) => !dropped.has(e));
+    elements.length = 0;
+    elements.push(...left);
   }
   let canvasArea = 0;
   for (const c of canvases) {
@@ -588,11 +681,14 @@ export function obsCountLocator(loc: {
 export const OBS_LIB = [
   obsIntersect,
   obsParent,
+  obsFlatChildren,
+  obsFoldDuplicates,
   obsShown,
   obsClipFor,
   obsHit,
   obsContains,
   obsVisuallyHidden,
+  obsIsMirrorField,
   obsValue,
   obsWithinCount,
   obsWithin,

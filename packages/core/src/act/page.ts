@@ -62,6 +62,14 @@ export function obActHits(el: Element, hit: Element | null): boolean {
     if (root.host === hit) return true;
     node = root.host;
   }
+  // 命中点在目标自己的 Shadow 树里（Web Component 宿主带角色，点到内部的 slot、div 等）：
+  // 沿扁平树（assignedSlot → parentNode → ShadowRoot.host）往上能走到目标，就是点中了目标
+  let up: Node | null = hit;
+  for (let i = 0; i < 64 && up; i++) {
+    if (up === el) return true;
+    const next: Node | null = (up as Element).assignedSlot ?? up.parentNode;
+    up = next instanceof ShadowRoot ? next.host : next;
+  }
   return false;
 }
 
