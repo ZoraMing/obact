@@ -105,7 +105,7 @@ export type Modifiers = ('Alt' | 'Control' | 'Meta' | 'Shift')[];
  * @minItems 2
  * @maxItems 2
  */
-export type Point = [unknown, unknown];
+export type Point = [number, number];
 /**
  * 检查项的公共部分（不限制额外字段）。
  */
@@ -121,7 +121,7 @@ export type AssertionResult = {
  * @minItems 4
  * @maxItems 4
  */
-export type BBox = [unknown, unknown, unknown, unknown];
+export type BBox = [number, number, number, number];
 /**
  * 检查项的公共部分（不限制额外字段）。
  */

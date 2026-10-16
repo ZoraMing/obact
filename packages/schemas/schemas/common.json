@@ -19,7 +19,8 @@
       "type": "array",
       "prefixItems": [{ "type": "number" }, { "type": "number" }],
       "minItems": 2,
-      "maxItems": 2
+      "maxItems": 2,
+      "tsType": "[number, number]"
     },
     "BBox": {
       "description": "包围盒 [x, y, width, height]，视口像素。",
@@ -31,7 +32,8 @@
         { "type": "number", "minimum": 0 }
       ],
       "minItems": 4,
-      "maxItems": 4
+      "maxItems": 4,
+      "tsType": "[number, number, number, number]"
     },
     "Mode": { "type": "string", "enum": ["headed", "headless"] },
     "Timestamp": { "type": "string", "format": "date-time" },
