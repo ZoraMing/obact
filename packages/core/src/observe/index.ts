@@ -352,6 +352,7 @@ export async function observe(
         s.attr,
         new Set(result.elements.map((e) => e.ref)),
         maxChars,
+        new Set(result.elements.filter((e) => e.value === '***').map((e) => e.ref)),
       );
       result.axtree = ax.text;
       if (ax.truncated) result.truncated = true;

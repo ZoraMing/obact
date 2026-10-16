@@ -5,7 +5,7 @@ import { after, before, describe, test } from 'node:test';
 import { act, generateLocator, observe, resolveLocator, resolveRef } from '@obact/core';
 import type { Action, ActResult, Locator } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { type FixtureEnv, SKIP, setup } from '../test/helpers.ts';
+import { type FixtureEnv, SKIP, setup } from './helpers.ts';
 
 const contracts = new Contracts();
 type Outcome = 'hit' | 'manual' | 'wrong';

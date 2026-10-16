@@ -5,7 +5,7 @@ import { after, before, describe, test } from 'node:test';
 import { type ActOptions, act, observe } from '@obact/core';
 import type { Action, ActResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { type FixtureEnv, SKIP, setup } from '../test/helpers.ts';
+import { type FixtureEnv, SKIP, setup } from './helpers.ts';
 
 const contracts = new Contracts();
 /** 遮挡物的 data-log：点击记录里出现它们就是点到了遮挡物。 */

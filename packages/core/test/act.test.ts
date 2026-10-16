@@ -142,6 +142,38 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.ok(r.duration_ms < 4000);
   });
 
+  test('落点防护：最后一次复核之后布局又变了，点击被拦截，不会落到别的元素上；重试后点中目标', async () => {
+    const pageId = await env.open('/pages/act-shift.html');
+    let calls = 0;
+    const r = await ok(
+      { op: 'click', pageId, target: { css: '#target' } },
+      {
+        onObscured: async (info) => {
+          calls++;
+          assert.match(info.hit, /横幅/);
+          return true;
+        },
+      },
+    );
+    assert.equal(calls, 1, '第一次落在横幅上被拦截，回调一次');
+    assert.deepEqual(await events(pageId), ['target'], '横幅没有收到点击；目标只点了一次');
+    assert.equal(r.status, 'ok');
+  });
+
+  test('落点防护：布局一直在变，连续 3 次不符报 landing_mismatch，页面没有收到任何误点', async () => {
+    const pageId = await env.open('/pages/act-shift.html?mode=always');
+    let calls = 0;
+    const r = await err({ op: 'click', pageId, target: { css: '#target' } }, 'landing_mismatch', {
+      onObscured: async () => {
+        calls++;
+        return false;
+      },
+    });
+    assert.equal(calls, 3);
+    assert.deepEqual(await events(pageId), [], '横幅、别的按钮、目标都没有收到点击');
+    assert.match(r.error?.message ?? '', /已拦截/);
+  });
+
   test('移动中的按钮等位置稳定后再点；禁用按钮报 not_actionable', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);

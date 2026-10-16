@@ -563,7 +563,11 @@ export function obResolve(loc: {
     return { el: null, via: null, reason: 'conflict', counts };
   }
   if (byCss) return { el: byCss, via: 'css', reason: null, counts };
-  if (byRole) return { el: byRole, via: 'role', reason: null, counts };
+  // 没有名称的角色只能说明“这一类元素”（如无名图标按钮）：有 CSS 时只用来核对，CSS 失效后不能退而求其次，
+  // 否则容器里恰好只剩一个同角色的别的按钮时会被误点
+  if (byRole && !(loc.css && loc.name === undefined)) {
+    return { el: byRole, via: 'role', reason: null, counts };
+  }
   return { el: null, via: null, reason: ambiguous ? 'not_unique' : 'not_found', counts };
 }
 

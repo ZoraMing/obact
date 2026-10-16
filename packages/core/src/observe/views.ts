@@ -113,6 +113,8 @@ export async function axtreeText(
   attr: string,
   listed: Set<number>,
   cap: number,
+  /** 值已打码的元素编号：可访问性树里它的值（StaticText 子节点）同样不输出。 */
+  masked: Set<number> = new Set(),
 ): Promise<{ text: string; truncated: boolean }> {
   type FrameTree = { nodes: AXNode[]; refs: Map<number, number>; owner?: number };
   const snapshots = new Map<CDPSession, Promise<Map<number, number>>>();
@@ -192,6 +194,7 @@ export async function axtreeText(
         );
       }
       const next = show ? d + 1 : d;
+      if (isListed && masked.has(ref)) return;
       for (const c of n.childIds ?? []) rec(c, next, show ? name : parentName);
       const sub = n.backendDOMNodeId === undefined ? undefined : kids.get(n.backendDOMNodeId);
       for (const f of sub ?? []) render(f, next);

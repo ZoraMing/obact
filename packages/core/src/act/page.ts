@@ -480,40 +480,61 @@ export function obActTrackRead(
   return out;
 }
 
-/** 落点核对：记录下一次 pointerdown 的真实目标（composedPath 的第一个元素）。 */
-export function obActLandStart(key: string): void {
-  const rec = { target: null as Element | null, fired: false };
+/**
+ * 落点防护（FR-13）：在 window 上以捕获方式监听这一次点击的 pointerdown 等事件。
+ * 按下事件的真实目标（composedPath 的第一个元素）不是目标元素时，记录下来并拦截这一次点击的整个事件序列
+ * （stopImmediatePropagation + preventDefault），页面脚本看不到它：布局在最后一次命中测试之后又移动时，
+ * 点击不会落到别的元素上。已经在本监听之前注册了捕获监听的页面脚本拦不住（极少见）。
+ */
+export function obActLandStart(key: string, el: Element, subject: Element | null): void {
+  const rec = { target: null as Element | null, fired: false, ok: true };
+  const TYPES = [
+    'pointerdown',
+    'mousedown',
+    'pointerup',
+    'mouseup',
+    'click',
+    'dblclick',
+    'auxclick',
+    'contextmenu',
+  ];
   const h = (e: Event) => {
-    if (rec.fired) return;
-    rec.fired = true;
-    const first = e.composedPath()[0];
-    rec.target = first instanceof Element ? first : (e.target as Element | null);
+    if (e.type === 'pointerdown' && !rec.fired) {
+      rec.fired = true;
+      const first = e.composedPath()[0];
+      rec.target = first instanceof Element ? first : (e.target as Element | null);
+      rec.ok = obActHits(subject ?? el, rec.target) || obActHits(el, rec.target);
+    }
+    if (!rec.ok) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
   };
-  addEventListener('pointerdown', h, true);
+  for (const t of TYPES) addEventListener(t, h, true);
   Object.defineProperty(window, key, {
-    value: { rec, stop: () => removeEventListener('pointerdown', h, true) },
+    value: {
+      rec,
+      stop: () => {
+        for (const t of TYPES) removeEventListener(t, h, true);
+      },
+    },
     configurable: true,
   });
 }
 
-/** 读取落点记录并撤掉监听：fired 为 false 表示本 frame 没收到按下事件。 */
-export function obActLandRead(
-  key: string,
-  el: Element,
-  subject: Element | null,
-): { fired: boolean; ok: boolean; desc: string } {
+/** 读取落点记录并撤掉监听：fired 为 false 表示本 frame 没收到按下事件；ok 为 false 时这次点击已被拦截。 */
+export function obActLandRead(key: string): { fired: boolean; ok: boolean; desc: string } {
   const w = window as unknown as Record<
     string,
-    { rec: { target: Element | null; fired: boolean }; stop: () => void } | undefined
+    { rec: { target: Element | null; fired: boolean; ok: boolean }; stop: () => void } | undefined
   >;
   const land = w[key];
   if (!land) return { fired: false, ok: true, desc: '' };
   land.stop();
   delete (window as unknown as Record<string, unknown>)[key];
-  const t = land.rec.target;
-  if (!land.rec.fired) return { fired: false, ok: false, desc: '' };
-  const ok = obActHits(subject ?? el, t) || obActHits(el, t);
-  return { fired: true, ok, desc: ok ? '' : obActDescribe(t) };
+  const { fired, ok, target } = land.rec;
+  if (!fired) return { fired: false, ok: false, desc: '' };
+  return { fired: true, ok, desc: ok ? '' : obActDescribe(target) };
 }
 
 /** 本 frame 的可见文本：body.innerText 加上 Shadow DOM 内的文本（innerText 不进入 Shadow 树）。 */

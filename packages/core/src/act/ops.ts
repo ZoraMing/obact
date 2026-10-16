@@ -25,7 +25,14 @@ import type { ElementHandle, HTTPResponse, KeyInput, MouseButton, Page } from 'p
 import { ObactError } from '../errors.ts';
 import { bundle } from '../page/bundle.ts';
 import { type Ctx, type Effects, fail } from './ctx.ts';
-import { actionable, checkInViewport, type Located, locate, type Subject } from './locate.ts';
+import {
+  actionable,
+  checkInViewport,
+  type Located,
+  locate,
+  notifyObscured,
+  type Subject,
+} from './locate.ts';
 import {
   ACT_DEPS,
   obActDatalistInput,
@@ -54,11 +61,11 @@ const FOCUS = bundle((el: Element) => {
   return obActIsFocused(el);
 }, ACT_DEPS);
 const LABEL_PROXY = bundle(obActLabelProxy, ACT_DEPS);
-const LAND_START = bundle((_el: Element, key: string) => obActLandStart(key), ACT_DEPS);
-const LAND_READ = bundle(
-  (el: Element, key: string, subject: Element | null) => obActLandRead(key, el, subject),
+const LAND_START = bundle(
+  (el: Element, key: string, subject: Element | null) => obActLandStart(key, el, subject),
   ACT_DEPS,
 );
+const LAND_READ = bundle((_el: Element, key: string) => obActLandRead(key), ACT_DEPS);
 const SET_NATIVE = bundle(obActSetNativeValue, ACT_DEPS);
 const SELECT_PLAN = bundle(obActSelectPlan, ACT_DEPS);
 const SELECT_APPLY = bundle(obActSelectApply, ACT_DEPS);
@@ -130,8 +137,9 @@ async function withModifiers(
 }
 
 /**
- * 可信点击（CDP Input.dispatchMouseEvent）：可操作性检查 → 移动 → 复核命中 → 按下/抬起，
- * 并用按下事件的真实目标核对落点（FR-13），落在别处报 landing_mismatch。
+ * 可信点击（CDP Input.dispatchMouseEvent）：可操作性检查 → 移动 → 复核命中 → 按下/抬起（FR-13）。
+ * 按下前在页面里装落点防护：按下事件的真实目标不是目标元素（布局在最后一次命中测试之后又移动了）时，
+ * 页面拦截这次点击，页面脚本看不到；随后回调 onObscured 并重试，连续 3 次不符报 landing_mismatch。
  */
 async function clickElement(
   ctx: Ctx,
@@ -139,34 +147,46 @@ async function clickElement(
   o: { button?: MouseButton; count?: number; modifiers?: readonly string[]; who?: Subject } = {},
 ): Promise<Located> {
   const p = page(ctx);
-  const ready = await actionable(ctx, loc, { move: true, who: o.who });
-  const el = o.who?.el ?? ready.loc.handle;
-  const subject = o.who?.subject ?? null;
-  const key = `__obactLand_${ctx.s.key}`;
-  await el.evaluate(LAND_START, key).catch(() => {});
-  ctx.alive();
-  ctx.dispatched = true;
-  await withModifiers(p, o.modifiers, () =>
-    mouseSafe(p, () =>
-      p.mouse.click(ready.point.x, ready.point.y, {
-        button: o.button ?? 'left',
-        count: o.count ?? 1,
-      }),
-    ),
-  );
-  ctx.alive();
-  const land = await within(el.evaluate(LAND_READ, key, subject), 1500, null).catch(() => null);
-  // 读不到（导航、文档替换）时不判定
-  if (land && !land.ok) {
-    fail(
-      'landing_mismatch',
-      land.fired
-        ? `点击落在了 ${land.desc} 上，而不是目标元素`
-        : '按下事件没有到达目标所在的文档（可能落在了其他 frame）',
-      { hit: land.desc, point: [ready.point.x, ready.point.y] },
+  const streak = { n: 0 };
+  for (;;) {
+    const ready = await actionable(ctx, loc, { move: true, who: o.who, streak });
+    loc = ready.loc;
+    const el = o.who?.el ?? loc.handle;
+    const subject = o.who?.subject ?? null;
+    const key = `__obactLand_${ctx.s.key}`;
+    await el.evaluate(LAND_START, key, subject).catch(() => {});
+    ctx.alive();
+    ctx.dispatched = true;
+    await withModifiers(p, o.modifiers, () =>
+      mouseSafe(p, () =>
+        p.mouse.click(ready.point.x, ready.point.y, {
+          button: o.button ?? 'left',
+          count: o.count ?? 1,
+        }),
+      ),
     );
+    ctx.alive();
+    const land = await within(el.evaluate(LAND_READ, key), 1500, null).catch(() => null);
+    // 读不到（导航、文档替换）或落点正确时不再判定
+    if (!land || land.ok) return loc;
+    const at: [number, number] = [ready.point.x, ready.point.y];
+    if (!land.fired) {
+      // 按下事件去了别的文档：这里没有防护，已经点出去了
+      fail('landing_mismatch', '按下事件没有到达目标所在的文档（可能落在了其他 frame）', {
+        hit: '',
+        point: at,
+      });
+    }
+    streak.n++;
+    await notifyObscured(ctx, loc, at, land.desc, streak.n);
+    if (streak.n >= 3) {
+      fail(
+        'landing_mismatch',
+        `点击落在了 ${land.desc} 上，而不是目标元素（连续 ${streak.n} 次，已拦截，页面没有收到点击）`,
+        { hit: land.desc, point: at },
+      );
+    }
   }
-  return ready.loc;
 }
 
 /** 隐藏的原生复选/单选：改点可见的 label；否则点元素本身。 */
@@ -657,7 +677,7 @@ const mouseMove: Handler = async (ctx) => {
 
 // ---------------------------------------------------------------- 页面动作
 
-const handleDialog: Handler = async (ctx) => {
+const handleDialog: Handler = async (ctx, fx) => {
   const a = ctx.action as Action & HandleDialog;
   const p = page(ctx);
   ctx.wait = 'action';
@@ -666,7 +686,8 @@ const handleDialog: Handler = async (ctx) => {
   dropPending(ctx.st, d);
   ctx.dispatched = true;
   try {
-    if (a.action === 'accept') await d.dialog.accept(a.prompt_text);
+    // prompt 不给文本时与用户直接点“确定”一致：采用页面给的默认值
+    if (a.action === 'accept') await d.dialog.accept(a.prompt_text ?? d.dialog.defaultValue());
     else await d.dialog.dismiss();
   } catch (e) {
     fail('invalid_params', `对话框已关闭：${(e as Error).message}`);
@@ -678,6 +699,9 @@ const handleDialog: Handler = async (ctx) => {
     ctx.st.inflight.delete(p);
     await within(inflight, 1000, null);
   }
+  // 对话框关闭后页面脚本才继续运行：从这里开始记录页面变化，并把这一步算作页面有变化
+  if (!p.isClosed()) await fx.track(p.mainFrame());
+  ctx.changed = true;
 };
 
 async function navError(e: unknown, what: string): Promise<never> {

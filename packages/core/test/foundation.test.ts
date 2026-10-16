@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import {
   asObactError,
+  browserEnv,
   markPage,
   ObactError,
   resolveLocator,
@@ -214,6 +215,22 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
     assert.equal(asObactError('x').code, 'internal');
     const e = new ObactError('not_found', 'x', { a: 1 });
     assert.deepEqual(e.toJSON(), { code: 'not_found', message: 'x', details: { a: 1 } });
+  });
+});
+
+describe('浏览器进程环境', () => {
+  test('Linux 上缺 UTF-8 locale 时补 C.UTF-8（否则中文文件名的上传与下载失效）', {
+    skip: process.platform !== 'linux' && '只在 Linux 上处理',
+  }, () => {
+    assert.equal(browserEnv({ PATH: '/bin' }).LC_ALL, 'C.UTF-8');
+    assert.equal(browserEnv({ LANG: 'C' }).LC_ALL, 'C.UTF-8');
+    assert.equal(browserEnv({ LANG: 'zh_CN.UTF-8' }).LC_ALL, undefined, '已有 UTF-8 locale 不改');
+    assert.equal(browserEnv({ LC_ALL: 'en_US.utf8' }).LC_ALL, 'en_US.utf8');
+    assert.equal(
+      browserEnv({ LC_ALL: 'POSIX', LANG: 'zh_CN.UTF-8' }).LC_ALL,
+      'C.UTF-8',
+      'LC_ALL 优先',
+    );
   });
 });
 

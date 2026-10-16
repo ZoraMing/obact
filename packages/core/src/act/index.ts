@@ -155,8 +155,11 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
         );
       }
       fx = new Effects(ctx, page);
-      await fx.track(page.mainFrame());
-      if (action.diff) await fx.captureTextBefore();
+      // 有待处理的对话框时页面脚本被挂起，在页面里取值会一直等到超时；handle_dialog 关闭对话框后再开始记录
+      if (!pend) {
+        await fx.track(page.mainFrame());
+        if (action.diff) await fx.captureTextBefore();
+      }
 
       const run = runOp(ctx, fx);
       const first = await Promise.race([

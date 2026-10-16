@@ -1,6 +1,7 @@
 export { checkAssertions } from './act/assert.ts';
 export { type ActOptions, act, currentActionSeq, type ObscuredInfo } from './act/index.ts';
 export {
+  browserEnv,
   connectBrowser,
   type LaunchOptions,
   launchBrowser,

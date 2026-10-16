@@ -14,7 +14,7 @@ import {
   reportCsv,
   reportRows,
 } from '../api/forms-files.ts';
-import { type FixtureEnv, SKIP, setup } from '../test/helpers.ts';
+import { type FixtureEnv, SKIP, setup } from './helpers.ts';
 
 const contracts = new Contracts();
 const PASSWORD = 'S3cret!pw';

@@ -76,6 +76,8 @@ export type Ctx = {
   assertions?: AssertionResult[];
   /** 导航类动作直接声明发生了导航。 */
   navigated: boolean;
+  /** 动作本身已知会改变页面（如 handle_dialog 让被挂起的页面脚本继续）。 */
+  changed: boolean;
   newPages: string[];
   dialogs: DialogInfo[];
   /** 需要记录变化的 frame（主 frame 与目标所在 frame）。 */
@@ -108,6 +110,7 @@ export function makeCtx(
     aborted: false,
     screenshot: null,
     navigated: false,
+    changed: false,
     newPages: [],
     dialogs: [],
     tracked: new Set(),
@@ -118,9 +121,9 @@ export function makeCtx(
   return ctx;
 }
 
-/** 页面内记录变化用的键名（含会话随机串与动作序号）。 */
+/** 页面内记录变化用的键名（含会话随机串与动作序号：规则里嵌套的 act 不会清掉外层动作的记录）。 */
 function trackKey(ctx: Ctx): string {
-  return `__obactTrack_${ctx.s.key}`;
+  return `__obactTrack_${ctx.s.key}_${ctx.seq}`;
 }
 
 /**
@@ -284,7 +287,7 @@ export class Effects {
     for (const id of ctx.s.pages.createdSince(this.#mark)) newPages.add(id);
 
     let navigated = ctx.navigated;
-    let changed = navigated;
+    let changed = navigated || ctx.changed;
     const blocked = this.blocked;
     if (!this.page.isClosed() && !blocked) {
       const key = trackKey(ctx);

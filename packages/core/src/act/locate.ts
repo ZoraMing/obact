@@ -56,11 +56,18 @@ export type Subject = { el: ElementHandle<Element>; subject: ElementHandle<Eleme
 export async function actionable(
   ctx: Ctx,
   loc: Located,
-  opts: { hitTest?: boolean; stable?: boolean; move?: boolean; who?: Subject } = {},
+  opts: {
+    hitTest?: boolean;
+    stable?: boolean;
+    move?: boolean;
+    who?: Subject;
+    /** 连续不符的计数（与派发后的落点防护共用，合计 3 次报错）；省略时本次检查自己计数。 */
+    streak?: { n: number };
+  } = {},
 ): Promise<{ point: Point; loc: Located }> {
   const hitTest = opts.hitTest !== false;
   const stable = opts.stable !== false;
-  let streak = 0;
+  const streak = opts.streak ?? { n: 0 };
   let scrolls = 0;
   let lastState = '';
   const page = ctx.page;
@@ -138,10 +145,10 @@ export async function actionable(
       }
       await top?.owner?.dispose().catch(() => {});
       if (!hit.ok || !top?.ok) {
-        streak++;
+        streak.n++;
         const desc = hit.ok ? (top?.desc ?? '') : hit.desc;
         const at: [number, number] = top ? [top.x, top.y] : [hit.x, hit.y];
-        await obscured(ctx, loc, at, desc, streak);
+        await obscured(ctx, loc, at, desc, streak.n);
         continue;
       }
       point = { x: top.x, y: top.y, fx: hit.x, fy: hit.y };
@@ -156,14 +163,34 @@ export async function actionable(
       if (hitTest) {
         const re = await el.evaluate(RECHECK, subject, point.fx, point.fy).catch(() => null);
         if (!re?.ok) {
-          streak++;
-          await obscured(ctx, loc, [point.x, point.y], re?.desc ?? '（节点已变化）', streak);
+          streak.n++;
+          await obscured(ctx, loc, [point.x, point.y], re?.desc ?? '（节点已变化）', streak.n);
           continue;
         }
       }
     }
     return { point, loc };
   }
+}
+
+/** 命中不符：调 onObscured（让调用方处理弹窗等遮挡物）；不抛错。 */
+export async function notifyObscured(
+  ctx: Ctx,
+  loc: Located,
+  point: [number, number],
+  desc: string,
+  attempt: number,
+): Promise<void> {
+  if (!ctx.opts.onObscured) return;
+  const round = (n: number) => Math.round(n * 10) / 10;
+  await ctx.opts.onObscured({
+    pageId: ctx.pageId,
+    op: ctx.action.op,
+    target: loc.target,
+    point: [round(point[0]), round(point[1])],
+    hit: desc,
+    attempt,
+  });
 }
 
 /** 命中不符：调 onObscured；连续 3 次不符报 obscured。 */
@@ -174,18 +201,9 @@ async function obscured(
   desc: string,
   attempt: number,
 ): Promise<void> {
-  const round = (n: number) => Math.round(n * 10) / 10;
-  if (ctx.opts.onObscured) {
-    await ctx.opts.onObscured({
-      pageId: ctx.pageId,
-      op: ctx.action.op,
-      target: loc.target,
-      point: [round(point[0]), round(point[1])],
-      hit: desc,
-      attempt,
-    });
-  }
+  await notifyObscured(ctx, loc, point, desc, attempt);
   if (attempt >= 3) {
+    const round = (n: number) => Math.round(n * 10) / 10;
     fail('obscured', `目标被遮挡：点击点上是 ${desc}（连续 ${attempt} 次）`, {
       hit: desc,
       point: [round(point[0]), round(point[1])],

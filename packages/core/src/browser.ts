@@ -22,6 +22,17 @@ export function sandboxArgs(): string[] {
   return process.getuid?.() === 0 ? ['--no-sandbox'] : [];
 }
 
+/**
+ * Linux 上 Chrome 按进程的 locale 解释文件路径：没有设置 UTF-8 locale（常见于容器、systemd 服务）时，
+ * 中文文件名的上传会被静默丢弃，下载的文件名也退化成 download。浏览器进程缺 UTF-8 locale 时补 C.UTF-8。
+ */
+export function browserEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (process.platform !== 'linux') return env;
+  const loc = env.LC_ALL || env.LC_CTYPE || env.LANG || '';
+  if (/utf-?8/i.test(loc)) return env;
+  return { ...env, LC_ALL: 'C.UTF-8' };
+}
+
 export function resolveChromePath(explicit?: string): string {
   const path = explicit ?? process.env.CHROME_PATH;
   if (!path) {
@@ -49,6 +60,7 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
     executablePath: resolveChromePath(opts.chromePath),
     headless: opts.mode === 'headless',
     userDataDir: opts.profileDir,
+    env: browserEnv() as Record<string, string | undefined>,
     defaultViewport: null,
     enableExtensions: extArgs.length > 0,
     args: [
