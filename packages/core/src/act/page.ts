@@ -510,16 +510,16 @@ export function obActLandStart(key: string, el: Element, subject: Element | null
       e.preventDefault();
     }
   };
+  // 上一次没读回的防护（读取超时、页面被对话框挂起）先撤掉，否则它的“拦截”状态会一直留在页面上
+  const prev = (window as unknown as Record<string, { stop?: () => void } | undefined>)[key];
+  prev?.stop?.();
   for (const t of TYPES) addEventListener(t, h, true);
-  Object.defineProperty(window, key, {
-    value: {
-      rec,
-      stop: () => {
-        for (const t of TYPES) removeEventListener(t, h, true);
-      },
-    },
-    configurable: true,
-  });
+  const stop = () => {
+    for (const t of TYPES) removeEventListener(t, h, true);
+  };
+  // 兜底：动作被打断、没人来读时也不让防护永远留在页面上
+  setTimeout(stop, 5000);
+  Object.defineProperty(window, key, { value: { rec, stop }, configurable: true });
 }
 
 /** 读取落点记录并撤掉监听：fired 为 false 表示本 frame 没收到按下事件；ok 为 false 时这次点击已被拦截。 */
