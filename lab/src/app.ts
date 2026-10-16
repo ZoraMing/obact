@@ -182,6 +182,10 @@ export async function createLab(
       res.writeHead(200, { 'content-type': 'application/json' });
       return void res.end('{"ok":true}');
     }
+    if (url.pathname === '/favicon.ico') {
+      res.writeHead(204);
+      return void res.end();
+    }
     const m = /^\/s\/([^/]+)(\/.*)?$/.exec(url.pathname);
     if (!m) {
       res.writeHead(302, { location: '/s/default/' });
