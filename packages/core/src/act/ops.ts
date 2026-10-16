@@ -66,7 +66,8 @@ const LAND_START = bundle(
   ACT_DEPS,
 );
 const LAND_READ = bundle(
-  (_el: Element, key: string, final: boolean) => obActLandRead(key, final),
+  (_el: Element, key: string, final: boolean, fx: number, fy: number) =>
+    obActLandRead(key, final, fx, fy),
   ACT_DEPS,
 );
 const SET_NATIVE = bundle(obActSetNativeValue, ACT_DEPS);
@@ -171,14 +172,26 @@ async function clickElement(
     ctx.alive();
     // 按下事件可能稍晚才到：没收到时先等一会（最多 600 毫秒），读到记录或超时再定论
     const readBy = Date.now() + 600;
-    let land = await within(el.evaluate(LAND_READ, key, false), 1500, null).catch(() => null);
+    let land = await within(
+      el.evaluate(LAND_READ, key, false, ready.point.fx, ready.point.fy),
+      1500,
+      null,
+    ).catch(() => null);
     while (land?.pending) {
       if (Date.now() >= readBy) {
-        land = await within(el.evaluate(LAND_READ, key, true), 1500, null).catch(() => null);
+        land = await within(
+          el.evaluate(LAND_READ, key, true, ready.point.fx, ready.point.fy),
+          1500,
+          null,
+        ).catch(() => null);
         break;
       }
       await sleep(25);
-      land = await within(el.evaluate(LAND_READ, key, false), 1500, null).catch(() => null);
+      land = await within(
+        el.evaluate(LAND_READ, key, false, ready.point.fx, ready.point.fy),
+        1500,
+        null,
+      ).catch(() => null);
     }
     // 读不到（导航、文档替换）或落点正确时不再判定
     if (!land || land.ok) return loc;

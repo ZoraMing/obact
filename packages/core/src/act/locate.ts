@@ -4,10 +4,25 @@ import { ObactError } from '../errors.ts';
 import { bundle } from '../page/bundle.ts';
 import { resolveTarget } from '../resolve.ts';
 import { type Ctx, type Effects, fail } from './ctx.ts';
-import { ACT_DEPS, obActFrameHit, obActProbe, obActRecheck, obActScrollIntoView } from './page.ts';
+import {
+  ACT_DEPS,
+  obActFrameHit,
+  obActFrames,
+  obActProbe,
+  obActRecheck,
+  obActScrollIntoView,
+} from './page.ts';
 import { sleep } from './util.ts';
 
 const PROBE = bundle(obActProbe, ACT_DEPS);
+/** 先等两帧再采样：稳定性判断的第二次采样要反映动画推进后的位置。 */
+const PROBE_AFTER_FRAMES = bundle(
+  async (el: Element, subject: Element | null, withHit: boolean) => {
+    await obActFrames(2);
+    return obActProbe(el, subject, withHit);
+  },
+  ACT_DEPS,
+);
 const RECHECK = bundle(obActRecheck, ACT_DEPS);
 const SCROLL_INTO_VIEW = bundle(obActScrollIntoView, ACT_DEPS);
 const FRAME_HIT = bundle(obActFrameHit, ACT_DEPS);
@@ -110,11 +125,11 @@ export async function actionable(
     if (stable) {
       await sleep(50);
       ctx.alive();
-      const again = await el.evaluate(PROBE, subject, hitTest).catch(() => null);
+      const again = await el.evaluate(PROBE_AFTER_FRAMES, subject, hitTest).catch(() => null);
       if (!again?.connected) continue;
       p2 = again;
       const moved = p1.rect.some((v, i) => Math.abs(v - (p2.rect[i] as number)) >= 1);
-      if (moved || !p2.visible || !p2.inView) {
+      if (moved || p2.animating || !p2.visible || !p2.inView) {
         if (Date.now() >= ctx.deadline) {
           fail('not_actionable', `元素位置不稳定（等待 ${ctx.timeout} 毫秒）`, {
             reason: 'unstable',

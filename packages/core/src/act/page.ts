@@ -146,6 +146,40 @@ export function obActPoints(el: Element): { points: [number, number][]; inView: 
 }
 
 /**
+ * 目标（或它的祖先）上是否有正在运行的、会改变位置或大小的动画（CSS 动画、过渡、Web Animations）。
+ * 渲染慢的机器上两次采样之间位置可能恰好相同，但这类元素本来就不该算稳定；
+ * 只算改变几何的属性（transform、位置、外边距、尺寸），闪烁、颜色、透明度之类的装饰动画不影响点击。
+ */
+export function obActAnimating(el: Element): boolean {
+  const GEOM =
+    /^(transform|translate|rotate|scale|left|right|top|bottom|inset|margin|width|height)/i;
+  const chain = new Set<Node>();
+  let n: Node | null = el;
+  for (let i = 0; i < 64 && n; i++) {
+    chain.add(n);
+    const next: Node | null = (n as Element).assignedSlot ?? n.parentNode;
+    n = next instanceof ShadowRoot ? next.host : next;
+  }
+  for (const a of document.getAnimations()) {
+    if (a.playState !== 'running') continue;
+    const eff = a.effect as KeyframeEffect | null;
+    const target = eff?.target;
+    if (!eff || !target || !chain.has(target)) continue;
+    if (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) {
+      if (GEOM.test(a.transitionProperty)) return true;
+      continue;
+    }
+    for (const k of eff.getKeyframes()) {
+      for (const name of Object.keys(k)) {
+        if (['offset', 'computedOffset', 'easing', 'composite'].includes(name)) continue;
+        if (GEOM.test(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * 可操作性探测（FR-13）：subject 决定是否启用（label 代点时 subject 是控件本身），el 决定位置与命中。
  * withHit 为 true 时同时做命中测试：依次尝试候选点，返回第一个落在目标上的点。
  */
@@ -160,6 +194,7 @@ export function obActProbe(
   inView: boolean;
   rect: Rect;
   hit: Hit | null;
+  animating: boolean;
 } {
   const subj = subject ?? el;
   const connected = el.isConnected && subj.isConnected;
@@ -172,6 +207,7 @@ export function obActProbe(
     inView: false,
     rect,
     hit: null as Hit | null,
+    animating: connected && obActAnimating(el),
   };
   if (!out.visible) return out;
   const { points, inView } = obActPoints(el);
@@ -489,6 +525,24 @@ export function obActTrackRead(
 }
 
 /**
+ * 等页面渲染 n 帧（requestAnimationFrame）。动画时间只在渲染帧上推进：渲染慢的机器上两次采样之间
+ * 可能一帧都没过，读到的位置相同，把一直在动的元素误判为稳定。标签页不可见时 rAF 不触发，150 毫秒后放行。
+ */
+export function obActFrames(n: number): Promise<void> {
+  return new Promise((resolve) => {
+    let left = n;
+    const timer = setTimeout(resolve, 150);
+    const step = () => {
+      if (--left <= 0) {
+        clearTimeout(timer);
+        resolve();
+      } else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/**
  * 落点防护（FR-13）：在 window 上以捕获方式监听这一次点击的 pointerdown 等事件。
  * 按下事件的真实目标（composedPath 的第一个元素）不是目标元素时，记录下来并拦截这一次点击的整个事件序列
  * （stopImmediatePropagation + preventDefault），页面脚本看不到它：布局在最后一次命中测试之后又移动时，
@@ -496,6 +550,13 @@ export function obActTrackRead(
  */
 export function obActLandStart(key: string, el: Element, subject: Element | null): void {
   const rec = { target: null as Element | null, fired: false, ok: true };
+  // 只计数不拦截：没收到按下事件时，用来判断鼠标移动事件到没到、到了几次
+  const counts: Record<string, number> = {};
+  const SEEN = ['mousemove', 'pointermove', 'pointerover', 'mouseover', 'pointerdown', 'mousedown'];
+  const count = (e: Event) => {
+    counts[e.type] = (counts[e.type] ?? 0) + 1;
+  };
+  for (const t of SEEN) addEventListener(t, count, true);
   const TYPES = [
     'pointerdown',
     'mousedown',
@@ -524,10 +585,11 @@ export function obActLandStart(key: string, el: Element, subject: Element | null
   for (const t of TYPES) addEventListener(t, h, true);
   const stop = () => {
     for (const t of TYPES) removeEventListener(t, h, true);
+    for (const t of SEEN) removeEventListener(t, count, true);
   };
   // 兜底：动作被打断、没人来读时也不让防护永远留在页面上
   setTimeout(stop, 5000);
-  Object.defineProperty(window, key, { value: { rec, stop }, configurable: true });
+  Object.defineProperty(window, key, { value: { rec, stop, counts }, configurable: true });
 }
 
 /**
@@ -538,10 +600,17 @@ export function obActLandStart(key: string, el: Element, subject: Element | null
 export function obActLandRead(
   key: string,
   final: boolean,
+  fx: number,
+  fy: number,
 ): { fired: boolean; ok: boolean; pending: boolean; desc: string; info?: string } {
   const w = window as unknown as Record<
     string,
-    { rec: { target: Element | null; fired: boolean; ok: boolean }; stop: () => void } | undefined
+    | {
+        rec: { target: Element | null; fired: boolean; ok: boolean };
+        stop: () => void;
+        counts: Record<string, number>;
+      }
+    | undefined
   >;
   const land = w[key];
   if (!land) return { fired: false, ok: true, pending: false, desc: '' };
@@ -550,7 +619,16 @@ export function obActLandRead(
   land.stop();
   delete (window as unknown as Record<string, unknown>)[key];
   if (!fired) {
-    const info = `visibility=${document.visibilityState} focus=${document.hasFocus()} readyState=${document.readyState}`;
+    const under = document.elementFromPoint(fx, fy);
+    const info = [
+      `visibility=${document.visibilityState}`,
+      `focus=${document.hasFocus()}`,
+      `readyState=${document.readyState}`,
+      `events=${JSON.stringify(land.counts)}`,
+      `point=${Math.round(fx)},${Math.round(fy)}`,
+      `under=${under ? obActDescribe(under) : 'null'}`,
+      `viewport=${innerWidth}x${innerHeight}@${devicePixelRatio} scroll=${Math.round(scrollX)},${Math.round(scrollY)}`,
+    ].join(' ');
     return { fired: false, ok: false, pending: false, desc: '', info };
   }
   return { fired: true, ok, pending: false, desc: ok ? '' : obActDescribe(target) };
@@ -683,6 +761,8 @@ export const ACT_DEPS = [
   obActDatalistInput,
   obActTrack,
   obActTrackRead,
+  obActAnimating,
+  obActFrames,
   obActLandStart,
   obActLandRead,
   obActText,
