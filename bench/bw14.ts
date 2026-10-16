@@ -18,11 +18,12 @@ import {
   obRole,
   obVisibleRatio,
 } from '../packages/core/src/page/dom.ts';
+import { testChrome } from '../tools/browser.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
 const BG_PYTHON = process.env.BG_PYTHON ?? join(ROOT, 'spikes/.cache/venv-bg/bin/python');
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = (await testChrome()) as string;
 const VIEW = { width: 800, height: 600 };
 const SETTLE_MS = 300;
 const IOU = 0.6;

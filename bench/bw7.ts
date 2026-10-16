@@ -19,15 +19,7 @@
 // --live 说明（未实测）：本文件的公开站点部分按站点公开的页面结构编写（选择器、文案取自站点页面），
 // 写作时所在的容器访问不了公开站点，所以只做过类型检查，以及在 bench/test/bw3-7.test.ts 里对一套按同样结构
 // 复刻的本地桩页跑通了脚本逻辑；没有对真实站点跑过。真实站点改版后以实际运行为准。
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -41,9 +33,9 @@ import auth from '../lab/src/modules/auth.ts';
 import noise from '../lab/src/modules/noise.ts';
 import orders from '../lab/src/modules/orders.ts';
 import structure from '../lab/src/modules/structure.ts';
+import { testChrome } from '../tools/browser.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 /** BENCH_TRACE=1：把每个动作的耗时打印到标准错误（定位慢步骤用）。 */
 const TRACE = process.env.BENCH_TRACE === '1';
 const SUITE = 'BW-7';
@@ -102,7 +94,7 @@ type Env = {
 };
 
 async function startEnv(local: boolean): Promise<Env> {
-  const chromePath = process.env.CHROME_PATH ?? (existsSync(DEFAULT_CHROME) ? DEFAULT_CHROME : '');
+  const chromePath = (await testChrome()) ?? '';
   if (!chromePath) throw new Error('未找到浏览器：请设置 CHROME_PATH');
   const profileDir = mkdtempSync(join(tmpdir(), 'obact-bench-'));
   let fx: FixtureServer | undefined;

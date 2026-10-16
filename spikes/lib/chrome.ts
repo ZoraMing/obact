@@ -1,6 +1,7 @@
-// 预研用浏览器路径：环境变量 CHROME_PATH，否则用本容器预装的 Chromium。
-export const CHROME_PATH =
-  process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+import { testChrome } from '../../tools/browser.ts';
+
+// 预研用浏览器路径：CHROME_PATH，否则 npm run browser:install 装的基准版本。
+export const CHROME_PATH = (await testChrome()) as string;
 
 export const HEADLESS = process.env.HEADED !== '1';
 

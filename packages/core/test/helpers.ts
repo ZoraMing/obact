@@ -1,21 +1,21 @@
 // 浏览器测试助手：本机静态服务 + 无头浏览器 + 会话。各模块的测试共用。
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+
+import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Browser } from 'puppeteer-core';
+import { MISSING, testChrome } from '../../../tools/browser.ts';
 import { launchBrowser, Session } from '../src/index.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO = join(here, '..', '..', '..');
 
-const CONTAINER_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-export const CHROME =
-  process.env.CHROME_PATH ?? (existsSync(CONTAINER_CHROME) ? CONTAINER_CHROME : undefined);
+export const CHROME = await testChrome();
 /** 传给 describe/test 的 skip 选项：没有浏览器时跳过并说明原因。 */
-export const SKIP: false | string = CHROME ? false : '未找到浏览器：请设置 CHROME_PATH';
+export const SKIP: false | string = CHROME ? false : MISSING;
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

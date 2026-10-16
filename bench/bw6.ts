@@ -26,7 +26,7 @@
 //   node bench/bw6.ts --live     只跑公开站点（未实测）
 //   node bench/bw6.ts --all      两者都跑
 // 结果表打印到终端，同时写到 bench/out/bw6-report.md 与 bw6-results.json。
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -47,10 +47,10 @@ import { createLab, type Lab } from '../lab/src/app.ts';
 import auth from '../lab/src/modules/auth.ts';
 import { viewOf } from '../lab/src/modules/orders/view.ts';
 import orders from '../lab/src/modules/orders.ts';
+import { testChrome } from '../tools/browser.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT = join(HERE, 'out');
-const CONTAINER_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 /** UI Testing Playground 的地址（--live 用）。 */
 export const LIVE_BASE = 'http://www.uitestingplayground.com';
@@ -155,10 +155,7 @@ type Env = {
 const contracts = new Contracts();
 
 async function startEnv(o: { local: boolean; chromePath?: string }): Promise<Env> {
-  const chromePath =
-    o.chromePath ??
-    process.env.CHROME_PATH ??
-    (existsSync(CONTAINER_CHROME) ? CONTAINER_CHROME : undefined);
+  const chromePath = o.chromePath ?? process.env.CHROME_PATH ?? (await testChrome());
   const fixtures = o.local ? await startFixtures() : null;
   const lab = o.local ? await createLab({ modules: [auth, orders] }) : null;
   const profileDir = mkdtempSync(join(tmpdir(), 'obact-bw6-'));

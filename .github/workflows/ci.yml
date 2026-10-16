@@ -7,7 +7,7 @@ on:
 
 env:
   # Chrome for Testing 固定版本（docs/spikes/M0-spikes.md 第 5 节）；升级时 spikes-cft 会复核扩展加载
-  CFT_VERSION: '141.0.7390.122'
+  CFT_VERSION: '141.0.7390.122' # 须与 tools/browser.ts 的 BASELINE_VERSION 一致
 
 jobs:
   node:
@@ -23,8 +23,7 @@ jobs:
         run: |
           # Ubuntu 24.04 限制非特权用户命名空间，Chrome 沙箱需要放开
           echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
-          npx @puppeteer/browsers install "chrome@${CFT_VERSION}" --path "$HOME/.cache/cft" | tee cft.txt
-          echo "CHROME_PATH=$(tail -1 cft.txt | awk '{print $2}')" >> "$GITHUB_ENV"
+          npm run browser:install
       # lint、类型检查、生成类型一致性、契约测试（T）与浏览器测试（F）
       - run: npm run check
 

@@ -1,17 +1,17 @@
 // Lab 测试助手：Lab 服务 + 无头浏览器 + 会话，以及三个控制接口的封装。
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchBrowser, Session } from '@obact/core';
 import type { Browser } from 'puppeteer-core';
+import { MISSING, testChrome } from '../../tools/browser.ts';
 import { createLab, type Lab } from '../src/app.ts';
 import type { Faults } from '../src/core.ts';
 
-const CONTAINER_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-export const CHROME =
-  process.env.CHROME_PATH ?? (existsSync(CONTAINER_CHROME) ? CONTAINER_CHROME : undefined);
+export const CHROME = await testChrome();
 /** 传给 describe 的 skip 选项：没有浏览器时跳过并说明原因。 */
-export const SKIP: false | string = CHROME ? false : '未找到浏览器：请设置 CHROME_PATH';
+export const SKIP: false | string = CHROME ? false : MISSING;
 
 export type LabState = {
   space: string;

@@ -9,10 +9,11 @@ import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Action, ActResult, ObservedElement } from '@obact/schemas';
 import { act, launchBrowser, observe, Session } from '../packages/core/src/index.ts';
+import { testChrome } from '../tools/browser.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
-const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const CHROME = (await testChrome()) as string;
 const epArg = process.argv.indexOf('--episodes');
 const EPISODES = epArg > 0 ? Number(process.argv[epArg + 1]) : 5;
 

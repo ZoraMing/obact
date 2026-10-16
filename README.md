@@ -52,6 +52,8 @@ q    退出
 
 需要 Node ≥ 22.18（直接运行 `.ts`）和 Python ≥ 3.11。
 
+测试和基准用同一份固定版本的 Chrome for Testing（开发容器、本机、CI 一致，结果可复现）：先运行 `npm run browser:install`，装到 `.cache/chrome`。想在别的 Chrome 上抽测，设 `CHROME_PATH`。没装也没设时浏览器测试会跳过并提示，不会悄悄换成别的浏览器。
+
 ```bash
 npm install
 npm run check            # lint、类型检查、生成类型一致性、契约测试

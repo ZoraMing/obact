@@ -22,6 +22,7 @@
     "lab/**/*.ts",
     "fixtures/**/*.ts",
     "spikes/**/*.ts",
-    "bench/**/*.ts"
+    "bench/**/*.ts",
+    "tools/**/*.ts"
   ]
 }

@@ -1,16 +1,16 @@
 // 夹具测试助手：夹具服务 + 无头浏览器 + 会话。每个测试文件 setup 一次。
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchBrowser, Session } from '@obact/core';
 import type { Browser } from 'puppeteer-core';
+import { MISSING, testChrome } from '../../tools/browser.ts';
 import { type FixtureServer, startFixtures } from '../server.ts';
 
-const CONTAINER_CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-export const CHROME =
-  process.env.CHROME_PATH ?? (existsSync(CONTAINER_CHROME) ? CONTAINER_CHROME : undefined);
+export const CHROME = await testChrome();
 /** 传给 describe 的 skip 选项：没有浏览器时跳过并说明原因。 */
-export const SKIP: false | string = CHROME ? false : '未找到浏览器：请设置 CHROME_PATH';
+export const SKIP: false | string = CHROME ? false : MISSING;
 
 export type FixtureEnv = {
   server: FixtureServer;
