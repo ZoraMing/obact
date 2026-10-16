@@ -65,7 +65,10 @@ const LAND_START = bundle(
   (el: Element, key: string, subject: Element | null) => obActLandStart(key, el, subject),
   ACT_DEPS,
 );
-const LAND_READ = bundle((_el: Element, key: string) => obActLandRead(key), ACT_DEPS);
+const LAND_READ = bundle(
+  (_el: Element, key: string, final: boolean) => obActLandRead(key, final),
+  ACT_DEPS,
+);
 const SET_NATIVE = bundle(obActSetNativeValue, ACT_DEPS);
 const SELECT_PLAN = bundle(obActSelectPlan, ACT_DEPS);
 const SELECT_APPLY = bundle(obActSelectApply, ACT_DEPS);
@@ -166,16 +169,32 @@ async function clickElement(
       ),
     );
     ctx.alive();
-    const land = await within(el.evaluate(LAND_READ, key), 1500, null).catch(() => null);
+    // 按下事件可能稍晚才到：没收到时先等一会（最多 600 毫秒），读到记录或超时再定论
+    const readBy = Date.now() + 600;
+    let land = await within(el.evaluate(LAND_READ, key, false), 1500, null).catch(() => null);
+    while (land?.pending) {
+      if (Date.now() >= readBy) {
+        land = await within(el.evaluate(LAND_READ, key, true), 1500, null).catch(() => null);
+        break;
+      }
+      await sleep(25);
+      land = await within(el.evaluate(LAND_READ, key, false), 1500, null).catch(() => null);
+    }
     // 读不到（导航、文档替换）或落点正确时不再判定
     if (!land || land.ok) return loc;
     const at: [number, number] = [ready.point.x, ready.point.y];
     if (!land.fired) {
-      // 按下事件去了别的文档：这里没有防护，已经点出去了
-      fail('landing_mismatch', '按下事件没有到达目标所在的文档（可能落在了其他 frame）', {
-        hit: '',
-        point: at,
-      });
+      // 按下事件始终没有到达目标所在的文档：点击没有被页面收到，可以安全重试（连续 3 次报错）
+      streak.n++;
+      await notifyObscured(ctx, loc, at, '（按下事件未送达）', streak.n);
+      if (streak.n >= 3) {
+        fail(
+          'landing_mismatch',
+          `按下事件没有到达目标所在的文档（连续 ${streak.n} 次；${land.info ?? ''}）`,
+          { hit: '', point: at, page: land.info ?? '' },
+        );
+      }
+      continue;
     }
     streak.n++;
     await notifyObscured(ctx, loc, at, land.desc, streak.n);

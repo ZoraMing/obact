@@ -530,19 +530,30 @@ export function obActLandStart(key: string, el: Element, subject: Element | null
   Object.defineProperty(window, key, { value: { rec, stop }, configurable: true });
 }
 
-/** 读取落点记录并撤掉监听：fired 为 false 表示本 frame 没收到按下事件；ok 为 false 时这次点击已被拦截。 */
-export function obActLandRead(key: string): { fired: boolean; ok: boolean; desc: string } {
+/**
+ * 读取落点记录。final 为 false 且还没收到按下事件时不撤监听（返回 pending），让调用方稍等再读；
+ * final 为 true 才撤掉监听并清掉记录。fired 为 false 表示本 frame 始终没收到按下事件；ok 为 false 时这次点击已被拦截。
+ * info 在没收到按下事件时带上页面状态，方便排查（标签页是否可见、是否有焦点、加载到哪一步）。
+ */
+export function obActLandRead(
+  key: string,
+  final: boolean,
+): { fired: boolean; ok: boolean; pending: boolean; desc: string; info?: string } {
   const w = window as unknown as Record<
     string,
     { rec: { target: Element | null; fired: boolean; ok: boolean }; stop: () => void } | undefined
   >;
   const land = w[key];
-  if (!land) return { fired: false, ok: true, desc: '' };
+  if (!land) return { fired: false, ok: true, pending: false, desc: '' };
+  const { fired, ok, target } = land.rec;
+  if (!fired && !final) return { fired: false, ok: false, pending: true, desc: '' };
   land.stop();
   delete (window as unknown as Record<string, unknown>)[key];
-  const { fired, ok, target } = land.rec;
-  if (!fired) return { fired: false, ok: false, desc: '' };
-  return { fired: true, ok, desc: ok ? '' : obActDescribe(target) };
+  if (!fired) {
+    const info = `visibility=${document.visibilityState} focus=${document.hasFocus()} readyState=${document.readyState}`;
+    return { fired: false, ok: false, pending: false, desc: '', info };
+  }
+  return { fired: true, ok, pending: false, desc: ok ? '' : obActDescribe(target) };
 }
 
 /** 本 frame 的可见文本：body.innerText 加上 Shadow DOM 内的文本（innerText 不进入 Shadow 树）。 */
