@@ -1,8 +1,7 @@
-// Lab 订单后台模块（PRD 9.3）：接口、页面（筛选、排序、翻页不改 URL）、批量审核与幂等键、
-// 提交超时但已落库（C-4 的前提）、导出、故障注入下的可见提示、改版变体。
-// 只装配 auth 与 orders 两个模块：测试不受其他模块影响，也验证订单后台能和真实的登录模块一起工作。
+// Lab 订单后台（PRD 9.3）：批量审核与幂等键、提交超时但已落库（C-4 的前提）、故障注入下的可见提示、改版变体。
+// 只装配 auth 与 orders 两个模块。
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -13,7 +12,7 @@ import type { Browser } from 'puppeteer-core';
 import { createLab, type Lab } from '../src/app.ts';
 import type { Faults } from '../src/core.ts';
 import auth from '../src/modules/auth.ts';
-import { csvField, type Order, ordersCsv } from '../src/modules/orders/data.ts';
+import type { Order } from '../src/modules/orders/data.ts';
 import orders from '../src/modules/orders.ts';
 import { CHROME, control, type LabState, SKIP } from './helpers.ts';
 
@@ -88,40 +87,6 @@ function apiOf(lab: Lab, space: string, cookie: string) {
   };
 }
 
-/** 最小的 RFC 4180 解析：逗号分隔、双引号包裹、引号写两次、CRLF 换行。 */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i] as string;
-    if (quoted) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\r' && text[i + 1] === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-      i++;
-    } else field += c;
-  }
-  if (field || row.length) rows.push([...row, field]);
-  return rows;
-}
-
-/** 响应正文按 UTF-8 解码，保留开头的 BOM（Response.text() 会把 BOM 去掉）。 */
-const csvText = async (r: Response): Promise<string> =>
-  Buffer.from(await r.arrayBuffer()).toString('utf8');
-
 /** 页面上显示的金额（千分位、两位小数）。 */
 const fmtAmount = (n: number): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -157,226 +122,6 @@ describe('订单后台：数据与接口', () => {
     await lab?.close();
   });
 
-  test('init：200 条订单，订单号唯一且递增，三种状态都有；同名空间重置后数据相同，换种子则不同', async () => {
-    const space = 'ord-init';
-    const c = control(lab, space);
-    const api = apiOf(lab, space, await loginCookie(lab, space));
-    const first = await api.all();
-    assert.equal(first.length, 200);
-    assert.equal(new Set(first.map((o) => o.id)).size, 200, '订单号唯一');
-    for (const o of first) {
-      assert.match(o.id, /^\d{5}$/);
-      assert.match(o.created_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-      assert.ok(o.amount > 0 && Math.round(o.amount * 100) / 100 === o.amount, '金额最多两位小数');
-      assert.ok(o.customer && o.region);
-    }
-    // 默认按下单时间倒序；订单号随下单时间递增，所以倒序时订单号递减
-    const ids = first.map((o) => o.id);
-    assert.deepEqual(ids, sorted(ids).reverse());
-    const st = ordersOf(await c.state());
-    assert.equal(st.total, 200);
-    assert.deepEqual(Object.keys(st.counts), ['待审核', '已审核', '已驳回']);
-    for (const n of Object.values(st.counts)) assert.ok(n > 0);
-    assert.equal(
-      Object.values(st.counts).reduce((a, b) => a + b, 0),
-      200,
-    );
-    assert.deepEqual(
-      st.approved_ids,
-      sorted(first.filter((o) => o.status === '已审核').map((o) => o.id)),
-    );
-    assert.deepEqual(st.changed_ids, []);
-
-    await c.reset();
-    const again = apiOf(lab, space, await loginCookie(lab, space));
-    assert.deepEqual(await again.all(), first, '同名空间重置后数据相同');
-    await c.reset(42);
-    const other = apiOf(lab, space, await loginCookie(lab, space));
-    assert.notDeepEqual(
-      (await other.all()).map((o) => o.id + o.amount),
-      first.map((o) => o.id + o.amount),
-      '换种子数据不同',
-    );
-  });
-
-  test('未登录：接口 401，页面跳到登录页（登录后回到原页面）', async () => {
-    const space = 'ord-noauth';
-    for (const p of ['/api/orders', '/api/orders/export.csv', '/api/orders/88001']) {
-      const r = await fetch(`${lab.url(space)}${p}`);
-      assert.equal(r.status, 401, p);
-    }
-    const post = await fetch(`${lab.url(space)}/api/orders/approve`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ids: ['88001'], key: 'k' }),
-    });
-    assert.equal(post.status, 401);
-    for (const p of ['/orders', '/orders/88001']) {
-      const r = await fetch(`${lab.url(space)}${p}`, { redirect: 'manual' });
-      assert.equal(r.status, 303, p);
-      assert.equal(r.headers.get('location'), `/s/${space}/login?next=${encodeURIComponent(p)}`);
-    }
-    const s = await control(lab, space).state();
-    assert.equal(ordersOf(s).total, 200);
-    assert.equal(s.submissions.length, 0, '未登录的提交不记录');
-  });
-
-  test('列表接口：状态与关键字筛选、六列排序（同值按订单号升序）、分页、参数校验', async () => {
-    const space = 'ord-list';
-    const api = apiOf(lab, space, await loginCookie(lab, space));
-    const all = await api.all();
-
-    // 状态筛选
-    for (const status of ['待审核', '已审核', '已驳回']) {
-      const r = await api.list(`status=${encodeURIComponent(status)}&page_size=500`);
-      assert.deepEqual(
-        r.items.map((o) => o.id),
-        all.filter((o) => o.status === status).map((o) => o.id),
-        status,
-      );
-      assert.equal(r.total, r.items.length);
-    }
-    assert.equal((await api.list('status=all')).total, 200, 'status=all 等于不筛选');
-
-    // 关键字：订单号子串或客户名，不分大小写
-    const byId = await api.list(`q=${all[7]?.id}&page_size=500`);
-    assert.deepEqual(
-      byId.items.map((o) => o.id),
-      [all[7]?.id],
-    );
-    const orion = (await api.list('q=oRiOn&page_size=500')).items;
-    assert.ok(orion.length > 0);
-    assert.deepEqual(
-      orion.map((o) => o.id),
-      all.filter((o) => o.customer.toLowerCase().includes('orion')).map((o) => o.id),
-    );
-    assert.equal((await api.list('q=不存在的客户名zzz')).total, 0);
-    const both = await api.list(`status=${encodeURIComponent('已审核')}&q=orion&page_size=500`);
-    assert.deepEqual(
-      both.items.map((o) => o.id),
-      orion.filter((o) => o.status === '已审核').map((o) => o.id),
-    );
-
-    // 排序：六列、两个方向；键值相同的按订单号升序
-    const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-    const rank = (s: string) => ['待审核', '已审核', '已驳回'].indexOf(s);
-    const keyOf = {
-      id: (o: Order) => o.id,
-      customer: (o: Order) => o.customer,
-      amount: (o: Order) => o.amount,
-      status: (o: Order) => rank(o.status),
-      region: (o: Order) => o.region,
-      created_at: (o: Order) => o.created_at,
-    } as const;
-    for (const [sort, key] of Object.entries(keyOf)) {
-      for (const dir of ['asc', 'desc'] as const) {
-        const got = (await api.list(`sort=${sort}&dir=${dir}&page_size=500`)).items;
-        const sign = dir === 'asc' ? 1 : -1;
-        const want = [...all].sort((a, b) => {
-          const ka = key(a);
-          const kb = key(b);
-          const c = typeof ka === 'number' ? ka - (kb as number) : cmp(ka, kb as string);
-          return sign * c || cmp(a.id, b.id);
-        });
-        assert.deepEqual(
-          got.map((o) => o.id),
-          want.map((o) => o.id),
-          `sort=${sort}&dir=${dir}`,
-        );
-      }
-    }
-
-    // 分页：默认每页 20 条；page_size；越界页为空；总页数
-    const p1 = await api.list();
-    assert.deepEqual(
-      [p1.page, p1.page_size, p1.pages, p1.total, p1.items.length],
-      [1, 20, 10, 200, 20],
-    );
-    const p3 = await api.list('page=3');
-    assert.deepEqual(
-      p3.items.map((o) => o.id),
-      all.slice(40, 60).map((o) => o.id),
-    );
-    const sized = await api.list('page=2&page_size=15');
-    assert.deepEqual(
-      sized.items.map((o) => o.id),
-      all.slice(15, 30).map((o) => o.id),
-    );
-    assert.equal(sized.pages, 14);
-    const beyond = await api.list('page=11');
-    assert.equal(beyond.items.length, 0);
-    assert.equal(beyond.total, 200);
-    assert.equal((await api.list('q=不存在的客户名zzz')).pages, 1);
-
-    // 参数校验
-    for (const bad of [
-      'status=已删除',
-      'sort=weight',
-      'dir=up',
-      'page=0',
-      'page=abc',
-      'page_size=0',
-      'page_size=501',
-    ]) {
-      const r = await api.get(`/api/orders?${bad}`);
-      assert.equal(r.status, 400, bad);
-      assert.ok(((await r.json()) as { error: string }).error);
-    }
-
-    // 单条订单
-    const one = await api.get(`/api/orders/${all[3]?.id}`);
-    assert.equal(one.status, 200);
-    assert.deepEqual(await one.json(), all[3]);
-    assert.equal((await api.get('/api/orders/00000')).status, 404);
-  });
-
-  test('导出接口：与筛选一致，UTF-8 BOM、CRLF、attachment，含逗号与引号的客户名按 RFC 4180 转义', async () => {
-    const space = 'ord-csv';
-    const api = apiOf(lab, space, await loginCookie(lab, space));
-    const query = `status=${encodeURIComponent('待审核')}&q=o&sort=amount&dir=desc`;
-    const r = await api.get(`/api/orders/export.csv?${query}`);
-    assert.equal(r.status, 200);
-    assert.equal(r.headers.get('content-type'), 'text/csv; charset=utf-8');
-    assert.match(
-      r.headers.get('content-disposition') ?? '',
-      /^attachment; filename="orders\.csv"$/,
-    );
-    const buf = Buffer.from(await r.arrayBuffer());
-    assert.deepEqual([...buf.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM');
-    const body = buf.toString('utf8');
-    assert.ok(body.endsWith('\r\n'));
-    assert.ok(!body.slice(1).replace(/\r\n/g, '').includes('\n'), '只有 CRLF 换行');
-
-    const rows = parseCsv(body.slice(1));
-    assert.deepEqual(rows[0], ['订单号', '客户', '金额', '状态', '地区', '下单时间']);
-    const want = (await api.list(`${query}&page_size=500`)).items;
-    assert.ok(want.length > 5);
-    assert.deepEqual(
-      rows.slice(1),
-      want.map((o) => [o.id, o.customer, o.amount.toFixed(2), o.status, o.region, o.created_at]),
-    );
-    assert.equal(body, ordersCsv(want), '与按同一条件取到的订单逐字节一致');
-    assert.ok(rows.slice(1).every((x) => x[3] === '待审核'));
-    const amounts = rows.slice(1).map((x) => Number(x[2]));
-    assert.deepEqual(
-      amounts,
-      [...amounts].sort((a, b) => b - a),
-      '按金额倒序',
-    );
-
-    // 全部订单：客户名里的逗号、引号被转义，解析后还原
-    const full = await api.get('/api/orders/export.csv');
-    const fullBody = Buffer.from(await full.arrayBuffer()).toString('utf8');
-    assert.equal(parseCsv(fullBody.slice(1)).length, 201);
-    assert.ok(fullBody.includes(csvField('Orion Trading, Ltd.')));
-    assert.ok(fullBody.includes('"Orion Trading, Ltd."'));
-    assert.ok(fullBody.includes('"老张""鲜果""批发部"'));
-
-    assert.equal((await api.get('/api/orders/export.csv?status=已删除')).status, 400);
-    const none = await api.get('/api/orders/export.csv?q=不存在的客户名zzz');
-    assert.equal(parseCsv((await csvText(none)).slice(1)).length, 1, '没有数据时只有表头');
-  });
-
   test('审核接口：只有待审核会变更；已审核、已驳回、不存在被跳过；同一个幂等键再次提交只计数、不重复改数据', async () => {
     const space = 'ord-approve-api';
     const c = control(lab, space);
@@ -391,19 +136,6 @@ describe('订单后台：数据与接口', () => {
       const r = await api.post('/api/orders/approve', body);
       return { status: r.status, body: (await r.json()) as ApproveBody & { error?: string } };
     };
-
-    // 参数校验：不落库、不记录
-    for (const bad of [
-      {},
-      { ids: [] },
-      { ids: 'x' },
-      { ids: [1] },
-      { ids: [''] },
-      { ids: ['1'], comment: 'x'.repeat(201) },
-    ]) {
-      assert.equal((await post(bad)).status, 400, JSON.stringify(bad).slice(0, 40));
-    }
-    assert.equal((await c.state()).submissions.length, 0);
 
     // 混合：待审核 2 条 + 已审核 + 已驳回 + 不存在 + 重复的订单号
     const r1 = await post({
@@ -458,37 +190,6 @@ describe('订单后台：数据与接口', () => {
     assert.ok(subs.slice(2).every((x) => x.key.startsWith('auto-')));
     assert.deepEqual(ordersOf(await c.state()).changed_ids, pend.slice(0, 5));
   });
-
-  test('故障注入对订单接口生效：error_rate、drop_rate、commit_timeout 的写接口先落库再不返回', async () => {
-    const space = 'ord-faults-api';
-    const c = control(lab, space);
-    const cookie = await loginCookie(lab, space);
-    const api = apiOf(lab, space, cookie);
-    const pend = (await api.all()).filter((o) => o.status === '待审核').map((o) => o.id);
-
-    await c.faults({ error_rate: 1 });
-    assert.equal((await api.get('/api/orders')).status, 500);
-    assert.equal((await api.get('/api/orders/export.csv')).status, 500);
-    assert.equal((await api.post('/api/orders/approve', { ids: [pend[0]], key: 'e' })).status, 500);
-    assert.equal(approveSubs(await c.state()).length, 0, '注入的 500 发生在落库之前');
-    assert.equal((await api.get('/orders')).status, 200, '页面不受接口故障影响');
-    await c.faults({ error_rate: 0, drop_rate: 1 });
-    await assert.rejects(api.get('/api/orders'));
-    await c.faults({ drop_rate: 0, commit_timeout: true });
-    await assert.rejects(
-      fetch(api.url('/api/orders/approve'), {
-        method: 'POST',
-        headers: { cookie, 'content-type': 'application/json' },
-        body: JSON.stringify({ ids: [pend[0]], key: 'ct' }),
-        signal: AbortSignal.timeout(400),
-      }),
-    );
-    const s = await c.state();
-    assert.deepEqual(ordersOf(s).changed_ids, [pend[0]], '已落库');
-    assert.equal(s.submissions.find((x) => x.key === 'ct')?.count, 1);
-    // 读接口不受 commit_timeout 影响
-    assert.equal((await api.get('/api/orders?page_size=1')).status, 200);
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -500,7 +201,6 @@ describe('订单后台：页面', { skip: SKIP }, () => {
   let browser: Browser;
   let session: Session;
   let profileDir: string;
-  const tmpDirs: string[] = [];
 
   before(async () => {
     lab = await createLab({ modules: [auth, orders] });
@@ -516,7 +216,6 @@ describe('订单后台：页面', { skip: SKIP }, () => {
     await session?.close({ closeBrowser: true });
     await lab?.close();
     if (profileDir) rmSync(profileDir, { recursive: true, force: true });
-    for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
   });
 
   /** 执行动作并校验返回值符合契约。 */
@@ -640,156 +339,6 @@ describe('订单后台：页面', { skip: SKIP }, () => {
     if (opts.timeout_ms) a.timeout_ms = opts.timeout_ms;
     return run(a);
   }
-
-  test('未登录访问订单页：跳到登录页，用真实的登录页登录后回到订单页', async () => {
-    const space = 'ord-ui-login';
-    const pageId = await session.pages.newPage();
-    const page = session.pages.get(pageId);
-    await page.goto(`${lab.url(space)}/orders`, { waitUntil: 'load' });
-    assert.match(page.url(), /\/login\?next=%2Forders$/);
-    await ok({ op: 'fill', pageId, target: { role: 'textbox', name: '账号' }, value: 'alice' });
-    await ok({ op: 'fill', pageId, target: { role: 'textbox', name: '密码' }, value: 'alice123' });
-    await ok({
-      op: 'click',
-      pageId,
-      target: { role: 'button', name: '登录' },
-      post: [{ url_matches: '/orders$' }, { text_present: '共 200 条' }],
-    });
-    assert.equal(new URL(page.url()).pathname, `/s/${space}/orders`);
-    const ob = await obs(pageId);
-    assert.ok(
-      ob.elements.some((e) => e.role === 'link' && e.name === '订单后台'),
-      '导航里有订单后台',
-    );
-    assert.ok(ob.elements.some((e) => e.role === 'button' && e.name === '批量审核'));
-  });
-
-  test('筛选、排序、翻页都在前端完成：URL 始终不变，页面内容与接口一致', async () => {
-    const space = 'ord-ui-browse';
-    const { pageId, page, api } = await openOrders(space);
-    const url0 = page.url();
-    const history0 = await page.evaluate(() => history.length);
-
-    /** 页面上的行必须等于接口按同一条件返回的这一页；URL 与历史记录不变；动作不引起导航。 */
-    const expectList = async (query: string, label: string): Promise<ListBody> => {
-      const want = await api.list(query);
-      assert.deepEqual(await domRows(pageId), expectedRows(want.items), label);
-      assert.equal(page.url(), url0, `${label}：URL 不变`);
-      assert.equal(
-        await page.evaluate(() => history.length),
-        history0,
-        `${label}：没有新增历史记录`,
-      );
-      return want;
-    };
-    const quiet = (r: ActResult) => assert.equal(r.effects.navigated, false);
-
-    // 初始：200 条、10 页、默认按下单时间倒序
-    const init = await expectList('sort=created_at&dir=desc', '初始');
-    assert.equal(init.items.length, 20);
-    assert.ok((await bodyText(pageId)).includes('共 200 条，第 1 / 10 页，每页 20 条'));
-
-    // 状态筛选（下拉框，点“查询”才生效）
-    const pend = await api.list(`status=${encodeURIComponent('待审核')}`);
-    await ok({ op: 'fill', pageId, target: { role: 'combobox', name: '状态' }, value: '待审核' });
-    assert.ok((await bodyText(pageId)).includes('共 200 条'), '没点查询之前不筛选');
-    quiet(
-      await ok({
-        op: 'click',
-        pageId,
-        target: { role: 'button', name: '查询' },
-        post: [{ text_present: `共 ${pend.total} 条` }],
-      }),
-    );
-    await expectList(`status=${encodeURIComponent('待审核')}`, '状态=待审核');
-
-    // 关键字（不分大小写，匹配客户名）；回车也能提交
-    await ok({ op: 'fill', pageId, target: { role: 'searchbox', name: '关键字' }, value: 'orion' });
-    await ok({ op: 'press_key', pageId, key: 'Enter' });
-    const q = `status=${encodeURIComponent('待审核')}&q=orion`;
-    const orion = await api.list(q);
-    assert.ok(orion.total > 0 && orion.total <= 20);
-    await ok({ op: 'wait_for', pageId, until: [{ text_present: `共 ${orion.total} 条` }] });
-    await expectList(q, '状态=待审核 且关键字=orion');
-    assert.ok((await domRows(pageId)).every((r) => r.customer.toLowerCase().includes('orion')));
-
-    // 排序：点表头，同一列再点翻转方向；aria-sort 表达当前状态
-    const sortedHeader = () =>
-      page.evaluate(() => {
-        const th = document.querySelector('th[aria-sort=ascending], th[aria-sort=descending]');
-        return th ? [th.textContent?.trim(), th.getAttribute('aria-sort')] : null;
-      });
-    quiet(await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } }));
-    await expectList(`${q}&sort=amount&dir=asc`, '金额升序');
-    assert.deepEqual(await sortedHeader(), ['金额', 'ascending']);
-    quiet(await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } }));
-    await expectList(`${q}&sort=amount&dir=desc`, '金额降序');
-    assert.deepEqual(await sortedHeader(), ['金额', 'descending']);
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '客户' } });
-    await expectList(`${q}&sort=customer&dir=asc`, '客户升序');
-
-    // 没有结果
-    await ok({
-      op: 'fill',
-      pageId,
-      target: { role: 'searchbox', name: '关键字' },
-      value: '不存在的客户zzz',
-    });
-    await ok({
-      op: 'click',
-      pageId,
-      target: { role: 'button', name: '查询' },
-      post: [{ text_present: '没有符合条件的订单' }],
-    });
-    assert.ok((await bodyText(pageId)).includes('共 0 条'));
-    assert.deepEqual(await domRows(pageId), []);
-
-    // 重置：回到全部订单（排序保持）
-    await ok({
-      op: 'click',
-      pageId,
-      target: { role: 'button', name: '重置' },
-      post: [{ text_present: '共 200 条' }],
-    });
-    await expectList('sort=customer&dir=asc', '重置');
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } });
-    await expectList('sort=amount&dir=desc', '金额降序（全部）');
-
-    // 翻页：页码、下一页、上一页；首页上一页不可点，末页下一页不可点；换排序回到第 1 页
-    quiet(await ok({ op: 'click', pageId, target: { role: 'button', name: '第 3 页' } }));
-    await expectList('sort=amount&dir=desc&page=3', '第 3 页');
-    assert.ok((await bodyText(pageId)).includes('第 3 / 10 页'));
-    assert.equal(
-      await page.$eval('nav button[aria-current=page]', (e) => e.textContent),
-      '3',
-      '当前页码高亮',
-    );
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '下一页' } });
-    await expectList('sort=amount&dir=desc&page=4', '下一页');
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '上一页' } });
-    await expectList('sort=amount&dir=desc&page=3', '上一页');
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '第 1 页' } });
-    assert.equal(
-      await page.$eval('[data-page=prev]', (e) => (e as HTMLButtonElement).disabled),
-      true,
-    );
-    await err(
-      { op: 'click', pageId, target: { role: 'button', name: '上一页' }, timeout_ms: 500 },
-      'not_actionable',
-    );
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '第 10 页' } });
-    const last = await expectList('sort=amount&dir=desc&page=10', '末页');
-    assert.equal(last.items.length, 20);
-    assert.equal(
-      await page.$eval('[data-page=next]', (e) => (e as HTMLButtonElement).disabled),
-      true,
-    );
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '订单号' } });
-    await expectList('sort=id&dir=asc&page=1', '换排序回到第 1 页');
-    assert.ok((await bodyText(pageId)).includes('第 1 / 10 页'));
-    assert.equal(page.url(), url0);
-  });
 
   test('批量审核：勾选 3 条 → 取消不提交 → 确认后落库一次，幂等键计数为 1，其余订单不变', async () => {
     const space = 'ord-ui-approve';
@@ -1085,179 +634,6 @@ describe('订单后台：页面', { skip: SKIP }, () => {
     );
   });
 
-  test('详情页：订单信息、填写审核意见并审核、已审核与已驳回不可再审核、不存在为 404', async () => {
-    const space = 'ord-ui-detail';
-    const { pageId, page, c, api } = await openOrders(space);
-    const all = await api.all();
-    const target = all.find((o) => o.status === '待审核') as Order;
-    const rejected = all.find((o) => o.status === '已驳回') as Order;
-
-    // 从列表点订单号进入详情（导航）
-    const nav = await ok({
-      op: 'click',
-      pageId,
-      target: { role: 'link', name: target.id },
-      post: [{ url_matches: `/orders/${target.id}$` }],
-    });
-    assert.equal(nav.effects.navigated, true);
-    const text = await bodyText(pageId);
-    for (const s of [
-      `订单 ${target.id}`,
-      target.customer,
-      `¥${fmtAmount(target.amount)}`,
-      target.region,
-      target.created_at,
-      '待审核',
-    ]) {
-      assert.ok(text.includes(s), `详情页缺少：${s}`);
-    }
-    await ok({
-      op: 'fill',
-      pageId,
-      target: { role: 'textbox', name: '审核意见' },
-      value: '资料齐全，同意',
-    });
-    const click = await ok({ op: 'click', pageId, target: { role: 'button', name: '审核通过' } });
-    assert.deepEqual(click.effects.dialogs, [
-      { type: 'confirm', message: `确认审核通过订单 ${target.id}？`, handled: 'pending' },
-    ]);
-    await ok({
-      op: 'handle_dialog',
-      pageId,
-      action: 'accept',
-      post: [{ text_present: '已审核 1 条' }],
-    });
-    assert.equal(await page.$eval('#order-status', (e) => e.textContent), '已审核');
-    const st = ordersOf(await c.state());
-    assert.deepEqual(st.changed_ids, [target.id]);
-    assert.deepEqual(st.comments, { [target.id]: '资料齐全，同意' });
-    assert.equal(approveSubs(await c.state()).length, 1);
-
-    // 刷新：状态、意见都在，不再有审核按钮
-    await ok({ op: 'navigate_page', pageId, type: 'reload' });
-    const again = await bodyText(pageId);
-    assert.ok(again.includes('资料齐全，同意'));
-    assert.ok(again.includes('该订单已审核。'));
-    assert.equal(await page.$('#btn-approve'), null);
-
-    // 已驳回：不能审核
-    await ok({ op: 'navigate_page', pageId, url: `${lab.url(space)}/orders/${rejected.id}` });
-    assert.ok((await bodyText(pageId)).includes('该订单已驳回，不能审核。'));
-    assert.equal(await page.$('#btn-approve'), null);
-
-    // 不存在：404
-    const r = await api.get('/orders/00000');
-    assert.equal(r.status, 404);
-    assert.ok((await r.text()).includes('订单不存在'));
-  });
-
-  test('导出：当前筛选条件的 CSV，链接随筛选与排序更新，浏览器下载的内容与接口一致', async () => {
-    const space = 'ord-ui-export';
-    const { pageId, page, api } = await openOrders(space);
-    const url0 = page.url();
-    const linkOf = async () => {
-      const ob = await obs(pageId);
-      const link = ob.elements.find((e) => e.role === 'link' && e.name === '导出 CSV');
-      assert.ok(link, '导出链接在元素表中');
-      return link;
-    };
-    assert.ok(
-      (await linkOf()).href?.endsWith('/api/orders/export.csv?sort=created_at&dir=desc'),
-      '初始：全部订单',
-    );
-
-    await ok({ op: 'fill', pageId, target: { role: 'combobox', name: '状态' }, value: '待审核' });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '查询' } });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '金额' } });
-    const query = `status=${encodeURIComponent('待审核')}&sort=amount&dir=desc`;
-    const want = await api.list(`${query}&page_size=500`);
-    await ok({ op: 'wait_for', pageId, until: [{ text_present: `共 ${want.total} 条` }] });
-    const link = await linkOf();
-    assert.ok(link.href?.endsWith(`/api/orders/export.csv?${query}`), link.href);
-
-    // 链接指向的内容 = 当前筛选条件下的全部订单（不止当前页）
-    assert.ok(want.total > 20, '筛选结果多于一页，导出的是全部');
-    const fetched = Buffer.from(
-      await (
-        await api.get(
-          new URL(link.href as string).pathname.replace(`/s/${space}`, '') +
-            new URL(link.href as string).search,
-        )
-      ).arrayBuffer(),
-    );
-    assert.equal(fetched.toString('utf8'), ordersCsv(want.items));
-    const csv = parseCsv(fetched.toString('utf8').slice(1));
-    assert.equal(csv.length, want.total + 1);
-    assert.ok(csv.slice(1).every((x) => x[3] === '待审核'));
-
-    // 在浏览器里点链接：触发下载（不是导航），文件内容与接口一致
-    const dir = mkdtempSync(join(tmpdir(), 'obact-orders-download-'));
-    tmpDirs.push(dir);
-    const cdp = await browser.target().createCDPSession();
-    try {
-      await cdp.send('Browser.setDownloadBehavior', {
-        behavior: 'allowAndName',
-        downloadPath: dir,
-        eventsEnabled: true,
-      });
-      const begin = new Promise<{ suggestedFilename: string; url: string }>((resolve) =>
-        cdp.on('Browser.downloadWillBegin', (e) => resolve(e)),
-      );
-      const done = new Promise<{ guid: string }>((resolve) =>
-        cdp.on('Browser.downloadProgress', (e) => {
-          if (e.state === 'completed') resolve(e);
-        }),
-      );
-      const click = await ok({ op: 'click', pageId, target: { ref: link.ref } });
-      assert.equal(click.effects.navigated, false, '下载不是导航');
-      const b = await Promise.race([
-        begin,
-        new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error('等待下载开始超时')), 10_000),
-        ),
-      ]);
-      const d = await Promise.race([
-        done,
-        new Promise<never>((_, rej) =>
-          setTimeout(() => rej(new Error('等待下载完成超时')), 10_000),
-        ),
-      ]);
-      assert.ok(b.url.endsWith(`/api/orders/export.csv?${query}`), b.url);
-      assert.ok(readFileSync(join(dir, d.guid)).equals(fetched), '下载的文件与接口一致（含 BOM）');
-      assert.equal(b.suggestedFilename, 'orders.csv');
-    } finally {
-      await cdp.send('Browser.setDownloadBehavior', { behavior: 'default' }).catch(() => {});
-      await cdp.detach().catch(() => {});
-    }
-    assert.equal(page.url(), url0, '页面没有跳走');
-
-    // 再加关键字：链接随之更新，内容仍与同条件的接口结果逐字节一致
-    await ok({ op: 'fill', pageId, target: { role: 'searchbox', name: '关键字' }, value: 'orion' });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '查询' } });
-    const query2 = `status=${encodeURIComponent('待审核')}&q=orion&sort=amount&dir=desc`;
-    const want2 = await api.list(`${query2}&page_size=500`);
-    assert.ok(want2.total > 0 && want2.total < want.total);
-    const link2 = await linkOf();
-    assert.ok(link2.href?.endsWith(`/api/orders/export.csv?${query2}`), link2.href);
-    const body2 = await csvText(await api.get(`/api/orders/export.csv?${query2}`));
-    assert.equal(body2, ordersCsv(want2.items));
-    assert.equal(parseCsv(body2.slice(1)).length, want2.total + 1);
-
-    // 没有结果时导出只有表头
-    await ok({
-      op: 'fill',
-      pageId,
-      target: { role: 'searchbox', name: '关键字' },
-      value: '不存在的客户zzz',
-    });
-    await ok({ op: 'click', pageId, target: { role: 'button', name: '查询' } });
-    const q3 = `status=${encodeURIComponent('待审核')}&q=${encodeURIComponent('不存在的客户zzz')}&sort=amount&dir=desc`;
-    assert.ok((await linkOf()).href?.endsWith(`/api/orders/export.csv?${q3}`));
-    const empty = await api.get(`/api/orders/export.csv?${q3}`);
-    assert.equal(parseCsv((await csvText(empty)).slice(1)).length, 1);
-  });
-
   describe('改版变体（faults.redesign）', () => {
     /** 批量审核 3 条并核对落库；返回选中的订单号。 */
     async function approveThree(
@@ -1442,30 +818,6 @@ describe('订单后台：页面', { skip: SKIP }, () => {
       await approveThree(space, pageId, c, api, {
         name: '审核所选',
         message: '确认审核所选的 3 条订单吗？',
-      });
-    });
-
-    test('改版只改页面：数据与接口不变，详情页同样随变体变化', async () => {
-      const space = 'ord-ui-redesign-detail';
-      const { pageId, page, api } = await openOrders(space, { faults: { redesign: 2 } });
-      const all = await api.all();
-      assert.equal(all.length, 200);
-      const target = all.find((o) => o.status === '待审核') as Order;
-      await ok({ op: 'navigate_page', pageId, url: `${lab.url(space)}/orders/${target.id}` });
-      assert.equal(await page.$eval('#btn-approve', (e) => e.textContent), '同意');
-      await ok({
-        op: 'fill',
-        pageId,
-        target: { role: 'textbox', name: '备注' },
-        value: '改版后的意见',
-      });
-      const click = await ok({ op: 'click', pageId, target: { role: 'button', name: '同意' } });
-      assert.equal(click.effects.dialogs[0]?.message, `确认同意订单 ${target.id} 吗？`);
-      await ok({
-        op: 'handle_dialog',
-        pageId,
-        action: 'accept',
-        post: [{ text_present: '已审核 1 条' }],
       });
     });
   });

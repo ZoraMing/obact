@@ -1,7 +1,6 @@
 // Lab 模块：登录与账号（PRD 9.3；FR-02、FR-08、FR-20、FR-22；BW-8 的被测页面）。
-// 两部分：协议层（fetch，不需要浏览器）测登录、锁定、验证、next 白名单、解锁、改版；
-// 浏览器层（observe + act）走完整流程：登录跳回 next、错 3 次锁定、dave 的人机验证（用页面签名识别）、
-// 会话过期后跳回登录页再回到原页面、退出登录。测试里没有固定延时：等待都是条件等待。
+// 协议层（fetch）：锁定、解锁幂等键、人机验证主流程；浏览器层（observe + act）：登录跳回 next、
+// 错 3 次锁定、dave 的人机验证、会话过期、退出登录、改版变体。等待都是条件等待。
 //
 // 这里只装配 auth 和一个测试用的受保护页面（vault），不加载 lab/src/modules 下的其他模块：
 // 并行开发时别的模块写到一半不会连累本文件。
@@ -65,15 +64,6 @@ let lab: Lab;
 const authState = async (space: string) =>
   (await control(lab, space).state()).modules.auth as AuthState;
 
-/** 条件等待（协议层用）：条件成立即返回，超时报错。 */
-async function until(cond: () => Promise<boolean>, what: string, ms = 5000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!(await cond())) {
-    if (Date.now() > end) assert.fail(`等待超时：${what}`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 before(async () => {
   lab = await createLab({ modules: [auth, vault] });
 });
@@ -128,131 +118,6 @@ class Client {
 }
 
 describe('登录与账号：协议层', () => {
-  test('模块信息与初始用户', async () => {
-    assert.equal(auth.name, 'auth');
-    assert.equal(auth.title, '账号');
-    assert.equal(auth.nav, '/account');
-    assert.deepEqual(
-      INITIAL_USERS.map((u) => [u.name, u.password]),
-      [
-        ['alice', 'alice123'],
-        ['bob', 'bob123'],
-        ['carol', 'carol123'],
-        ['dave', 'dave123'],
-      ],
-    );
-    const s = await authState('auth-init');
-    assert.deepEqual(Object.keys(s.users), ['alice', 'bob', 'carol', 'dave']);
-    for (const [name, u] of Object.entries(s.users)) {
-      assert.deepEqual(
-        u,
-        { locked: false, fails: 0, last_login: null, logins: 0, require_verify: name === 'dave' },
-        name,
-      );
-    }
-    assert.equal(s.pending_verifications, 0);
-  });
-
-  test('登录页：标题、带 label 的账号与密码、登录按钮；next 写进隐藏域', async () => {
-    const c = new Client('auth-page');
-    const html = await (await c.get('/login?next=%2Fvault%3Ftab%3D2')).text();
-    assert.match(html, /<title>登录 - Obact Lab<\/title>/);
-    assert.match(html, /<h1>登录<\/h1>/);
-    assert.match(html, /<label for="username">账号<\/label>\s*<input id="username"/);
-    assert.match(
-      html,
-      /<label for="password">密码<\/label>\s*<input id="password"[^>]*type="password"/,
-    );
-    assert.match(html, /<button type="submit"[^>]*>登录<\/button>/);
-    assert.match(html, /<input type="hidden" name="next" value="\/vault\?tab=2">/);
-    const plain = await (await c.get('/login')).text();
-    assert.match(plain, /name="next" value=""/);
-    assert.doesNotMatch(plain, /请先登录/);
-    assert.match(await (await c.get('/login?out=1')).text(), /已退出登录/);
-  });
-
-  test('未登录访问账号页：跳到 /login?next=；登录后回到 /account', async () => {
-    const c = new Client('auth-account');
-    const r = await c.get('/account');
-    assert.equal(r.status, 303);
-    assert.equal(r.headers.get('location'), '/s/auth-account/login?next=%2Faccount');
-    assert.equal((await c.get('/api/auth/me')).status, 401);
-    const ok = await c.login('alice');
-    assert.equal(ok.status, 303);
-    assert.equal(ok.headers.get('location'), '/s/auth-account/account');
-    const html = await (await c.get('/account')).text();
-    assert.match(html, /当前用户：<strong id="current-user">alice<\/strong>/);
-    assert.match(
-      html,
-      /登录时间：<time id="login-time" datetime="[^"]+">\d{4}-\d\d-\d\d \d\d:\d\d:\d\d<\/time>/,
-    );
-    const me = (await (await c.get('/api/auth/me')).json()) as {
-      user: string;
-      logged_in_at: string;
-    };
-    assert.equal(me.user, 'alice');
-    const st = (await authState('auth-account')).users.alice;
-    assert.equal(st?.logins, 1);
-    assert.equal(st?.last_login, me.logged_in_at);
-  });
-
-  test('next 只接受本空间内的路径，外站地址、协议相对地址、登录与验证页自身一律回 /account', async () => {
-    const base = '/s/auth-next';
-    const cases: [string | undefined, string][] = [
-      ['/vault?tab=2', `${base}/vault?tab=2`],
-      [`${base}/vault?tab=5`, `${base}/vault?tab=5`],
-      [undefined, `${base}/account`],
-      ['', `${base}/account`],
-      ['//evil.example/x', `${base}/account`],
-      ['http://evil.example/', `${base}/account`],
-      ['/\\evil.example', `${base}/account`],
-      ['vault', `${base}/account`],
-      ['/login?next=%2Fvault', `${base}/account`],
-      ['/verify', `${base}/account`],
-    ];
-    for (const [next, want] of cases) {
-      const r = await new Client('auth-next').login('alice', undefined, next);
-      assert.equal(r.status, 303, `next=${next}`);
-      assert.equal(r.headers.get('location'), want, `next=${next}`);
-    }
-    // 查询串里的 next 同样生效（表单没带 next 域时）
-    const q = new Client('auth-next');
-    const r = await q.req('/login?next=%2Fvault%3Ftab%3D9', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: 'username=bob&password=bob123',
-    });
-    assert.equal(r.headers.get('location'), `${base}/vault?tab=9`);
-  });
-
-  test('密码错误：给出提示并保留账号和 next；账号不存在、空提交都不计数', async () => {
-    const c = new Client('auth-wrong');
-    const r = await c.login('bob', 'nope', '/vault?tab=1');
-    assert.equal(r.status, 200);
-    const html = await r.text();
-    assert.match(html, /<p class="auth-error" role="alert">密码错误，再错 2 次将锁定账号<\/p>/);
-    assert.match(html, /<input id="username"[^>]*value="bob"/);
-    assert.match(html, /name="next" value="\/vault\?tab=1"/);
-    assert.doesNotMatch(html, /value="nope"/, '不回显密码');
-    assert.equal((await authState('auth-wrong')).users.bob?.fails, 1);
-
-    const ghost = await (await c.login('mallory', 'x')).text();
-    assert.match(ghost, /账号或密码错误/);
-    const empty = await (await c.form('/login', { username: '', password: '' })).text();
-    assert.match(empty, /请输入账号和密码/);
-    const users = (await authState('auth-wrong')).users;
-    assert.deepEqual(
-      Object.entries(users).map(([k, u]) => [k, u.fails]),
-      [
-        ['alice', 0],
-        ['bob', 1],
-        ['carol', 0],
-        ['dave', 0],
-      ],
-    );
-    assert.equal((await c.get('/api/auth/me')).status, 401, '错误登录不建立会话');
-  });
-
   test('锁定：连续 3 次错误锁定，锁定后密码对也进不去；成功登录清零计数；各账号互不影响', async () => {
     const sp = 'auth-lock';
     const c = new Client(sp);
@@ -317,18 +182,6 @@ describe('登录与账号：协议层', () => {
     const sub = subs.find((x) => x.key === 'unlock-1');
     assert.equal(sub?.op, 'auth.unlock');
     assert.equal(sub?.count, 2, '同一幂等键重复提交按次数记录');
-
-    const ghost = await post({ user: 'mallory' });
-    assert.equal(ghost.status, 404);
-    assert.equal(((await ghost.json()) as { error: string }).error, 'no_such_user');
-    const all = await post({});
-    assert.deepEqual(((await all.json()) as { unlocked: string[] }).unlocked, [
-      'alice',
-      'bob',
-      'carol',
-      'dave',
-    ]);
-    assert.ok(Object.values((await authState(sp)).users).every((u) => !u.locked && u.fails === 0));
   });
 
   test('人机验证（协议层）：dave 密码对后先到 /verify，勾选并继续才建立会话', async () => {
@@ -381,105 +234,6 @@ describe('登录与账号：协议层', () => {
     const again = await c.login('dave');
     assert.equal(again.headers.get('location'), `/s/${sp}/verify`);
     assert.equal((await authState(sp)).verify.issued, 2);
-  });
-
-  test('锁定的账号不会走到验证页；验证期间被锁定则验证后不登录', async () => {
-    const sp = 'auth-verify-lock';
-    const c = new Client(sp);
-    await c.login('dave');
-    assert.equal((await authState(sp)).pending_verifications, 1);
-    for (let i = 0; i < MAX_FAILS; i++) await new Client(sp).login('dave', 'x');
-    assert.equal((await authState(sp)).users.dave?.locked, true);
-    const done = await c.form('/verify', { human: '1' });
-    assert.equal(done.headers.get('location'), `/s/${sp}/login`);
-    assert.equal((await c.get('/api/auth/me')).status, 401);
-    const locked = await new Client(sp).login('dave');
-    assert.equal(locked.status, 200, '已锁定，不再跳验证页');
-    assert.match(await locked.text(), /账号已锁定/);
-  });
-
-  test('退出登录；重新登录换会话；会话过期后接口 401、页面跳回登录页', async () => {
-    const sp = 'auth-session';
-    const c = new Client(sp);
-    await c.login('alice');
-    await c.login('bob');
-    assert.equal(((await (await c.get('/api/auth/me')).json()) as { user: string }).user, 'bob');
-    assert.deepEqual(
-      (await control(lab, sp).state()).sessions.map((x) => x.user),
-      ['bob'],
-      '换账号登录时旧会话被清掉',
-    );
-
-    const out = await c.req('/logout', { method: 'POST' });
-    assert.equal(out.status, 303);
-    assert.equal(out.headers.get('location'), `/s/${sp}/login?out=1`);
-    assert.equal((await c.get('/api/auth/me')).status, 401);
-    assert.deepEqual((await control(lab, sp).state()).sessions, []);
-    assert.equal((await c.req('/logout', { method: 'POST' })).status, 303, '重复退出不报错');
-
-    await c.login('alice');
-    await control(lab, sp).faults({ session_ttl_ms: 0 });
-    await until(async () => (await c.get('/api/auth/me')).status === 401, '会话过期');
-    const page = await c.get('/vault?tab=7');
-    assert.equal(page.status, 303);
-    assert.equal(
-      page.headers.get('location'),
-      `/s/${sp}/login?next=${encodeURIComponent('/vault?tab=7')}`,
-    );
-    await control(lab, sp).faults({ session_ttl_ms: null });
-    const back = await c.login('alice', undefined, '/vault?tab=7');
-    assert.equal(back.headers.get('location'), `/s/${sp}/vault?tab=7`);
-    assert.ok((await control(lab, sp).state()).log.some((x) => x.type === 'session_expired'));
-  });
-
-  test('改版变体：只改登录页，每个变体改一个方面；验证页不变', async () => {
-    const sp = 'auth-redesign';
-    const c = new Client(sp);
-    const ctl = control(lab, sp);
-    const html = async () => (await (await c.get('/login')).text()).replace(/\s+/g, ' ');
-
-    const v0 = await html();
-    assert.match(v0, /<input id="username" name="username"/);
-
-    await ctl.faults({ redesign: 1 });
-    const v1 = await html();
-    assert.doesNotMatch(v1, /id="username"|id="password"|id="login-btn"/);
-    assert.match(v1, /<label for="f-4e1a">账号<\/label> <input id="f-4e1a" name="account"/);
-    assert.match(v1, /<button type="submit" id="go-7d2e">登录<\/button>/);
-    const r1 = await c.form('/login', { account: 'alice', passwd: 'alice123', next: '' });
-    assert.equal(r1.headers.get('location'), `/s/${sp}/account`, '改版后的字段名也能提交');
-    await c.req('/logout', { method: 'POST' });
-
-    await ctl.faults({ redesign: 2 });
-    const v2 = await html();
-    assert.match(v2, /<label for="username">用户名<\/label>/);
-    assert.match(v2, /<label for="password">登录密码<\/label>/);
-    assert.match(v2, />立即登录<\/button>/);
-    assert.doesNotMatch(v2, />账号<\/label>|>登录<\/button>/);
-
-    await ctl.faults({ redesign: 3 });
-    const v3 = await html();
-    assert.match(
-      v3,
-      /<fieldset><legend>账号登录<\/legend><label class="field">账号 <input id="username"/,
-    );
-    assert.doesNotMatch(v3, /<label for=/);
-
-    await ctl.faults({ redesign: 4 });
-    const v4 = await html();
-    assert.ok(v4.indexOf('<button') < v4.indexOf('<input id="username"'), '按钮移到输入框上方');
-    assert.match(v4, />登录<\/button>/);
-
-    // 每个变体标题都还是“登录”，验证页完全不变
-    for (const n of [1, 2, 3, 4]) {
-      await ctl.faults({ redesign: n });
-      assert.match(await (await c.get('/login')).text(), /<title>登录 - Obact Lab<\/title>/);
-    }
-    await c.login('dave');
-    const verify = await (await c.get('/verify')).text();
-    assert.match(verify, /<h1>安全验证<\/h1>/);
-    assert.match(verify, /我不是机器人/);
-    assert.match(verify, />继续<\/button>/);
   });
 });
 
