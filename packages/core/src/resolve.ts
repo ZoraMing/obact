@@ -1,6 +1,7 @@
 import type { Locator, Target } from '@obact/schemas';
 import type { ElementHandle, Frame, Page } from 'puppeteer-core';
 import { ObactError } from './errors.ts';
+import { exposeForMarking } from './mark.ts';
 import { bundle } from './page/bundle.ts';
 import { DOM_LIB, obDeepAll, obFindRef, obPickUnique, obResolve } from './page/dom.ts';
 import type { Session } from './session.ts';
@@ -75,15 +76,33 @@ export async function frameFor(page: Page, chain: string[] = []): Promise<Frame>
   return frame;
 }
 
+/** 各标签页上次挂出封闭影子根的时间：找不到元素的轮询里不要每次都做一次 DOMSnapshot。 */
+const exposedAt = new WeakMap<Page, number>();
+const EXPOSE_GAP_MS = 500;
+
 /** 按定位器找元素（FR-07）：不唯一报 not_unique，找不到报 not_found。 */
 export async function resolveLocator(s: Session, pageId: string, loc: Locator): Promise<Resolved> {
   const page = s.pages.get(pageId);
   const frame = await frameFor(page, loc.frame);
   const { frame: _f, ...inFrame } = loc;
-  const h = await frame.evaluateHandle(RESOLVE, inFrame);
-  const info = await h.evaluate((r) => ({ via: r.via, reason: r.reason, counts: r.counts }));
-  const el = (await h.getProperty('el')).asElement() as ElementHandle<Element> | null;
-  await h.dispose();
+  const run = async () => {
+    const h = await frame.evaluateHandle(RESOLVE, inFrame);
+    const info = await h.evaluate((r) => ({ via: r.via, reason: r.reason, counts: r.counts }));
+    const el = (await h.getProperty('el')).asElement() as ElementHandle<Element> | null;
+    await h.dispose();
+    return { el, info };
+  };
+  let { el, info } = await run();
+  // 封闭的 Shadow Root 页面脚本看不到，只有挂出来才能被遍历（编号前会做一次）。回放定位器时页面不一定观察过，
+  // 找不到就先挂出来再试一次
+  if (!el && info.reason === 'not_found') {
+    const last = exposedAt.get(page) ?? 0;
+    if (Date.now() - last >= EXPOSE_GAP_MS) {
+      exposedAt.set(page, Date.now());
+      const n = await exposeForMarking(page, { clickListeners: false }).catch(() => null);
+      if (n?.closedRoots) ({ el, info } = await run());
+    }
+  }
   if (!el || !info.via) {
     if (info.reason === 'conflict') {
       throw new ObactError('not_unique', '定位器的 CSS 与 角色+名称 指向不同元素，页面可能已改版', {

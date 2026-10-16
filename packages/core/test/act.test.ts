@@ -174,6 +174,36 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.match(r.error?.message ?? '', /已拦截/);
   });
 
+  test('后台标签页：点击先切到前台，不多等；iframe 里的可编辑区 fill 真正写入', async () => {
+    const a = await open();
+    const b = await ok({ op: 'new_page', url: `${env.server.base}/pages/basic.html` });
+    assert.ok(b.effects.new_pages.length >= 0);
+    // a 现在是后台标签页（新开的标签页在前台）
+    const t = Date.now();
+    await ok({ op: 'click', pageId: a, target: { css: '#btn' } });
+    assert.ok(Date.now() - t < 2500, `对后台标签页点击耗时 ${Date.now() - t} 毫秒`);
+    assert.deepEqual(await events(a), ['click:true']);
+
+    const c = await env.open('/pages/act-main.html');
+    const page = env.session.pages.get(c);
+    await page.setContent(
+      '<iframe id="ed" srcdoc="<body contenteditable>初始内容</body>" style="width:300px;height:100px"></iframe>',
+    );
+    await page.waitForFunction(
+      () => !!(document.querySelector('#ed') as HTMLIFrameElement | null)?.contentDocument?.body,
+    );
+    await ok({
+      op: 'fill',
+      pageId: c,
+      target: { css: 'body', frame: ['iframe#ed'] },
+      value: '新的内容',
+    });
+    const text = await page.evaluate(
+      () => (document.querySelector('#ed') as HTMLIFrameElement).contentDocument?.body.innerText,
+    );
+    assert.equal(text, '新的内容');
+  });
+
   test('移动中的按钮等位置稳定后再点；禁用按钮报 not_actionable', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);

@@ -107,6 +107,26 @@ describe('定位器生成（FR-07、FR-32）', { skip: SKIP }, () => {
     assert.match(chain[0] as string, /^iframe\[(id="xo"|title="内嵌表单")\]$/);
   });
 
+  test('封闭 Shadow DOM：没先 observe 也能按角色+名称、CSS 定位（回放定位器时页面不一定观察过）', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    await env.session.pages
+      .get(pageId)
+      .waitForFunction(() => !!customElements.get('closed-widget'));
+    for (const loc of [
+      { role: 'button', name: '封闭按钮' },
+      { css: 'button.sh-closed' },
+    ] as Locator[]) {
+      const r = await resolveLocator(env.session, pageId, loc);
+      assert.equal(await r.handle.evaluate((el) => el.textContent), '封闭按钮');
+      await r.handle.dispose();
+    }
+    // 真的不存在的元素照样报 not_found
+    await rejectsWithCode(
+      resolveLocator(env.session, pageId, { role: 'button', name: '不存在' }),
+      'not_found',
+    );
+  });
+
   test('无法唯一时 unique=false', async () => {
     const pageId = await env.open('/pages/locator-dynamic.html');
     const refs = await refsByKey(env.session, pageId);

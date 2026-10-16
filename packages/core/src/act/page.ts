@@ -328,11 +328,22 @@ export function obActInfo(el: Element): {
   };
 }
 
+/**
+ * 聚焦元素并返回是否成功。元素已经是 activeElement、但所在文档（如 iframe 里的可编辑 body，它默认就是
+ * activeElement）并没有真实焦点时，键盘输入仍会发给别的 frame：这种情况也要补一次 focus。
+ */
+export function obActFocus(el: Element): boolean {
+  if (obActiveElement() !== el || !document.hasFocus()) {
+    if (!document.hasFocus()) window.focus();
+    (el as HTMLElement).focus({ preventScroll: true });
+  }
+  return obActiveElement() === el;
+}
+
 /** 聚焦并全选文本类控件的内容；返回聚焦是否成功、原内容是否非空。 */
 export function obActFocusSelectAll(el: Element): { focused: boolean; hadContent: boolean } {
   const he = el as HTMLElement;
-  if (obActiveElement() !== el) he.focus({ preventScroll: true });
-  const focused = obActiveElement() === el;
+  const focused = obActFocus(el);
   if (!focused) return { focused, hadContent: false };
   if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
     const input = el as HTMLInputElement;
@@ -751,6 +762,7 @@ export const ACT_DEPS = [
   obActScrollIntoView,
   obActFrameHit,
   obActInfo,
+  obActFocus,
   obActFocusSelectAll,
   obActIsFocused,
   obActSetNativeValue,

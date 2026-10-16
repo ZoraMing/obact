@@ -1,12 +1,13 @@
 import type { Action, ActResult, Assert, AssertionResult, WaitFor } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
+import type { Page } from 'puppeteer-core';
 import { asObactError, ObactError } from '../errors.ts';
 import type { Session } from '../session.ts';
 import { checkAssertions } from './assert.ts';
 import { Aborted, type ActOptions, type Ctx, Effects, fail, makeCtx } from './ctx.ts';
 import { HANDLERS, newPage, shotPath } from './ops.ts';
 import { pendingOf, stateOf, watchPage } from './state.ts';
-import { sleep } from './util.ts';
+import { sleep, within } from './util.ts';
 
 export type { ActOptions, ObscuredInfo } from './ctx.ts';
 export { currentActionSeq } from './state.ts';
@@ -15,6 +16,33 @@ export { currentActionSeq } from './state.ts';
 const SETTLE_CAP_MS = 5000;
 /** 后置检查、wait_for 的轮询间隔。 */
 const POLL_MS = 50;
+
+/** 需要把鼠标事件送进页面的动作：后台标签页收不到鼠标事件，要先切到前台。 */
+const POINTER_OPS = new Set([
+  'click',
+  'hover',
+  'drag',
+  'click_at',
+  'mouse_move',
+  'scroll',
+  'upload_file',
+]);
+
+/** 标签页在后台（document 不可见）时切到前台，等到可见。键盘与脚本类动作不需要。 */
+async function ensureForeground(page: Page): Promise<void> {
+  const vis = await within(
+    page.evaluate(() => document.visibilityState),
+    1000,
+    'visible',
+  ).catch(() => 'visible');
+  if (vis === 'visible') return;
+  await page.bringToFront().catch(() => {});
+  await within(
+    page.waitForFunction(() => document.visibilityState === 'visible', { timeout: 1000 }),
+    1200,
+    null,
+  ).catch(() => {});
+}
 
 let contracts: Contracts | null = null;
 
@@ -154,6 +182,7 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
           },
         );
       }
+      if (!pend && POINTER_OPS.has(action.op)) await ensureForeground(page);
       fx = new Effects(ctx, page);
       // 有待处理的对话框时页面脚本被挂起，在页面里取值会一直等到超时；handle_dialog 关闭对话框后再开始记录
       if (!pend) {

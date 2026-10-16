@@ -36,6 +36,7 @@ import {
 import {
   ACT_DEPS,
   obActDatalistInput,
+  obActFocus,
   obActFocusSelectAll,
   obActInfo,
   obActIsFocused,
@@ -56,10 +57,7 @@ import { parseKeyCombo, pressCombo, resolveInside, sleep, within } from './util.
 const INFO = bundle(obActInfo, ACT_DEPS);
 const FOCUS_SELECT_ALL = bundle(obActFocusSelectAll, ACT_DEPS);
 const IS_FOCUSED = bundle(obActIsFocused, ACT_DEPS);
-const FOCUS = bundle((el: Element) => {
-  if (!obActIsFocused(el)) (el as HTMLElement).focus({ preventScroll: true });
-  return obActIsFocused(el);
-}, ACT_DEPS);
+const FOCUS = bundle(obActFocus, ACT_DEPS);
 const LABEL_PROXY = bundle(obActLabelProxy, ACT_DEPS);
 const LAND_START = bundle(
   (el: Element, key: string, subject: Element | null) => obActLandStart(key, el, subject),

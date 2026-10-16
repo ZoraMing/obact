@@ -6,8 +6,8 @@
 //      （quotes.toscrape.com、uitestingplayground.com、the-internet.herokuapp.com；延迟缩短，页面结构、选择器、
 //      文案、对话框文字与站点一致）跑通脚本逻辑。桩页通过不等于真实站点通过：真实站点没有实测过；
 //   3. 站点不可达时如实报告失败原因；--only 过滤；命令行入口；
-//   4. 两个内核问题（todo）：后台标签页上的点击要多等约 5 秒；封闭 Shadow DOM 里的元素没先 observe 就找不到。
-//      按正确行为写断言，内核修好后去掉 todo。
+//   4. 三个内核问题的回归：后台标签页上的点击要先切到前台；封闭 Shadow DOM 里的元素没先 observe 也能按角色定位；
+//      iframe 里的 contenteditable 要真正拿到焦点才写入。
 //
 // 单独运行：node --test bench/test/bw3-7.test.ts
 import assert from 'node:assert/strict';
@@ -493,8 +493,7 @@ describe('BW-3 / BW-7 基准脚本', { skip: SKIP }, () => {
 
   test('BW-7 --live（桩站点，未对真实站点实测）：the-internet 的 entry_ad、alerts、frames、shadowdom、upload、download、windows', async () => {
     const site = await start(internetSite);
-    // V4（iframe 里的富文本编辑器）单独在下面的 todo 测试里：内核对 iframe 里的 contenteditable 填写不生效
-    const ids = LIVE_7.filter((id) => id !== 'V4');
+    const ids = LIVE_7;
     const report = await run7({
       live: true,
       sites: { internet: site.base },
@@ -571,7 +570,7 @@ describe('BW-3 / BW-7 基准脚本', { skip: SKIP }, () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// 内核问题（todo）：写基准脚本时发现，按正确行为断言；内核修好后去掉 todo
+// 内核问题的回归：写基准脚本时发现，已修复
 // ---------------------------------------------------------------------------------------------
 
 describe('内核问题（基准脚本发现）', { skip: SKIP }, () => {
@@ -583,9 +582,7 @@ describe('内核问题（基准脚本发现）', { skip: SKIP }, () => {
     await env?.close();
   });
 
-  test('对后台标签页的点击与悬停不应多等约 5 秒（FR-04：所有动作都带 pageId，不必先 select_page）', {
-    todo: '内核：另一个标签页到了前台后，对原标签页的点击、悬停（带不带后置检查都一样）要等满 5 秒才返回；press_key、assert、evaluate_script 不受影响；select_page 之后恢复正常',
-  }, async () => {
+  test('对后台标签页的点击与悬停不应多等约 5 秒（FR-04：所有动作都带 pageId，不必先 select_page）', async () => {
     const p = await env.open('/structure/');
     // 再开一个标签页并切到前台，p 成了后台标签页
     const q = await act(env.session, { op: 'new_page', url: `${env.server.base}/timing/` });
@@ -612,9 +609,7 @@ describe('内核问题（基准脚本发现）', { skip: SKIP }, () => {
     );
   });
 
-  test('封闭 Shadow DOM 里的元素，没先 observe 也应能按 {role, name} 定位（回放已存规则时页面不一定观察过）', {
-    todo: '内核：封闭 Shadow Root 要等 observe/markPage 把它挂出来，resolveTarget 不会自己处理，新打开的页面上直接 fill/click 报 not_found',
-  }, async () => {
+  test('封闭 Shadow DOM 里的元素，没先 observe 也应能按 {role, name} 定位（回放已存规则时页面不一定观察过）', async () => {
     const p = await env.open('/structure/');
     const r = await act(env.session, {
       op: 'fill',
@@ -634,9 +629,7 @@ describe('内核问题（基准脚本发现）', { skip: SKIP }, () => {
     assert.equal(pay.status, 'ok', `${pay.error?.code} ${pay.error?.message}`);
   });
 
-  test('iframe 里的 contenteditable（富文本编辑器）fill 应当真正写入内容，BW-7 /iframe', {
-    todo: '内核：fill 报 ok 但内容没变。iframe 文档里 body 默认就是 activeElement，obActFocusSelectAll 因此不调用 focus()，键盘事件仍发给主 frame；先点一下编辑器再 fill 就正常',
-  }, async () => {
+  test('iframe 里的 contenteditable（富文本编辑器）fill 应当真正写入内容，BW-7 /iframe', async () => {
     const site = await internetSite();
     const dir = mkdtempSync(join(tmpdir(), 'obact-bench-iframe-'));
     try {
