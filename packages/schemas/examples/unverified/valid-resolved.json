@@ -1,0 +1,8 @@
+{
+  "run_id": "run_42",
+  "step_id": "s04",
+  "idempotency_key": "audit:88232",
+  "time": "2026-10-14T10:21:05Z",
+  "reason": "post_timeout",
+  "resolution": { "outcome": "done", "time": "2026-10-14T11:00:00Z", "note": "后台已审核" }
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>编号预研</title></head>
+<body>
+  <h1>编号预研页</h1>
+  <button id="query">查询</button>
+  <input id="order" placeholder="订单号">
+  <a href="#detail">详情</a>
+  <select id="status"><option>全部</option><option>待审核</option></select>
+  <div role="button" tabindex="0">自绘按钮</div>
+  <ul id="list"><li><button>审核 88231</button></li><li><button>审核 88232</button></li></ul>
+  <button id="rerender-clone">整块重绘（outerHTML，保留属性）</button>
+  <button id="rerender-fresh">整块重绘（新节点）</button>
+  <open-widget></open-widget>
+  <closed-widget></closed-widget>
+  <iframe id="same" src="/frame.html?who=same" width="300" height="120"></iframe>
+  <iframe id="cross" width="300" height="120"></iframe>
+  <canvas width="400" height="100"></canvas>
+  <script>
+    const xo = new URLSearchParams(location.search).get('xo');
+    if (xo) document.getElementById('cross').src = `http://localhost:${xo}/frame.html?who=cross`;
+    customElements.define('open-widget', class extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({ mode: 'open' }).innerHTML = '<button>开放 Shadow 按钮</button>';
+      }
+    });
+    customElements.define('closed-widget', class extends HTMLElement {
+      connectedCallback() {
+        this.attachShadow({ mode: 'closed' }).innerHTML = '<button>封闭 Shadow 按钮</button>';
+      }
+    });
+    const list = document.getElementById('list');
+    document.getElementById('rerender-clone').onclick = () => { list.outerHTML = list.outerHTML; };
+    document.getElementById('rerender-fresh').onclick = () => {
+      document.getElementById('list').innerHTML = '<li><button>审核 88231</button></li><li><button>审核 88232</button></li>';
+    };
+  </script>
+</body>
+</html>

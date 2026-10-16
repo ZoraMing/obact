@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obact"
+version = "0.1.0"
+description = "Obact 统一接口的 Python 薄客户端与任务评测"
+requires-python = ">=3.11"
+dependencies = ["jsonschema[format-nongpl]>=4.23", "referencing>=0.35"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.17.0"]
+
+[tool.setuptools.packages.find]
+include = ["obact*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,11 @@
+{"step_id": "s01", "op": "navigate_page", "pageId": "main", "url": "https://example.com/login", "section": "preamble"}
+{"step_id": "s02", "op": "fill", "pageId": "main", "target": {"css": "#password"}, "value": "{{param:login_password}}", "section": "preamble"}
+{"step_id": "s03", "op": "loop_begin", "over": "{{file:inputs/orders.csv}}", "as": "order", "on_unverified": "stop"}
+{"step_id": "s04", "op": "click", "pageId": "main", "target": {"css": "button.audit-btn", "role": "button", "name": "审核", "within": "tr[data-id='{{var:order.id}}']"}, "post": [{"text_present": "审核通过"}], "once_only": true, "idempotency_key": "audit:{{var:order.id}}"}
+{"step_id": "s05", "op": "loop_end"}
+{"step_id": "s06", "op": "if", "value": "{{var:need_export}}", "equals": "yes"}
+{"step_id": "s07", "op": "click_at", "pageId": "main", "x": 1052, "y": 434, "volatile": true}
+{"step_id": "s08", "op": "end_if"}
+{"step_id": "s10", "op": "extract", "pageId": "main", "source": {"type": "response", "url": "/api/quotes\\?page=\\d+", "path": "quotes"}, "key": "text", "wait_ms": 5000}
+{"step_id": "s11", "op": "new_page", "url": "https://example.com/report"}
+{"step_id": "s12", "op": "checkpoint"}

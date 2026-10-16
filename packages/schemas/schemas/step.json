@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/step.json",
+  "title": "Step",
+  "description": "JSONL 工作流的一行（FR-16，PRD 7.4）：动作调用的格式 + 步骤字段，或控制流步骤。工作流里的目标只能是定位器，不能是编号。字符串值可含模板 {{param:..}}、{{var:..}}、{{file:..}}。",
+  "type": "object",
+  "allOf": [
+    { "$ref": "#/$defs/StepCommon" },
+    { "$ref": "action.json#/$defs/Common" },
+    {
+      "oneOf": [
+        { "$ref": "action.json#/$defs/Op" },
+        { "$ref": "#/$defs/LoopBegin" },
+        { "$ref": "#/$defs/LoopEnd" },
+        { "$ref": "#/$defs/Break" },
+        { "$ref": "#/$defs/If" },
+        { "$ref": "#/$defs/Else" },
+        { "$ref": "#/$defs/EndIf" },
+        { "$ref": "#/$defs/Call" },
+        { "$ref": "#/$defs/SetVar" },
+        { "$ref": "#/$defs/Checkpoint" }
+      ]
+    }
+  ],
+  "if": {
+    "properties": {
+      "op": {
+        "enum": [
+          "new_page",
+          "loop_begin",
+          "loop_end",
+          "break",
+          "if",
+          "else",
+          "end_if",
+          "call",
+          "set_var",
+          "checkpoint"
+        ]
+      }
+    }
+  },
+  "else": { "required": ["pageId"] },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "StepCommon": {
+      "type": "object",
+      "properties": {
+        "step_id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "section": {
+          "type": "string",
+          "enum": ["preamble", "main"],
+          "description": "preamble 为前置可达路径，续跑时重放；默认 main。"
+        },
+        "pre": { "type": "array", "items": { "$ref": "common.json#/$defs/Assertion" } },
+        "retry": {
+          "type": "object",
+          "properties": {
+            "max": { "type": "integer", "minimum": 0, "maximum": 10 },
+            "delay_ms": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["max"],
+          "additionalProperties": false
+        },
+        "on_fail": {
+          "type": "string",
+          "enum": ["stop", "skip", "human"],
+          "description": "失败策略；定位失败默认先查弹窗规则再转人工（FR-20）。"
+        },
+        "once_only": { "type": "boolean", "description": "单次提交步骤，永不自动重试（FR-18）。" },
+        "idempotency_key": { "type": "string", "minLength": 1 },
+        "volatile": {
+          "type": "boolean",
+          "description": "无法换算为定位器的坐标步骤，标记为易失效（FR-32）。"
+        },
+        "note": { "type": "string" },
+        "target": { "$ref": "common.json#/$defs/Locator" },
+        "from": {
+          "anyOf": [
+            { "$ref": "common.json#/$defs/Locator" },
+            { "$ref": "common.json#/$defs/Point" }
+          ]
+        },
+        "to": {
+          "anyOf": [
+            { "$ref": "common.json#/$defs/Locator" },
+            { "$ref": "common.json#/$defs/Point" }
+          ]
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": { "target": { "$ref": "common.json#/$defs/Locator" } }
+          }
+        }
+      },
+      "required": ["step_id"],
+      "if": { "properties": { "once_only": { "const": true } }, "required": ["once_only"] },
+      "then": { "required": ["idempotency_key"] }
+    },
+    "LoopBegin": {
+      "type": "object",
+      "properties": {
+        "op": { "const": "loop_begin" },
+        "over": {
+          "description": "数据源：模板（如 {{file:inputs/orders.csv}}、{{var:list}}）或字面数组。",
+          "type": ["string", "array"]
+        },
+        "as": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "description": "条目主键模板，用于游标与去重。" },
+        "on_unverified": {
+          "type": "string",
+          "enum": ["stop", "skip"],
+          "description": "默认 stop（PRD 5.3）。"
+        },
+        "anchor": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/Assertion" },
+          "description": "循环锚点：跳过模式下重置页面后需要满足的状态。"
+        }
+      },
+      "required": ["op", "over", "as"],
+      "title": "LoopBeginStep"
+    },
+    "LoopEnd": {
+      "type": "object",
+      "properties": { "op": { "const": "loop_end" } },
+      "required": ["op"],
+      "title": "LoopEndStep"
+    },
+    "Break": {
+      "type": "object",
+      "properties": { "op": { "const": "break" } },
+      "required": ["op"],
+      "title": "BreakStep"
+    },
+    "If": {
+      "type": "object",
+      "properties": {
+        "op": { "const": "if" },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "common.json#/$defs/Assertion" }
+        },
+        "value": { "type": "string", "description": "模板值，与 equals 比较。" },
+        "equals": { "type": ["string", "number", "boolean", "null"] }
+      },
+      "required": ["op"],
+      "oneOf": [{ "required": ["checks"] }, { "required": ["value", "equals"] }],
+      "title": "IfStep"
+    },
+    "Else": {
+      "type": "object",
+      "properties": { "op": { "const": "else" } },
+      "required": ["op"],
+      "title": "ElseStep"
+    },
+    "EndIf": {
+      "type": "object",
+      "properties": { "op": { "const": "end_if" } },
+      "required": ["op"],
+      "title": "EndIfStep"
+    },
+    "Call": {
+      "type": "object",
+      "properties": {
+        "op": { "const": "call" },
+        "workflow": { "type": "string", "minLength": 1 },
+        "args": { "type": "object", "additionalProperties": true }
+      },
+      "required": ["op", "workflow"],
+      "title": "CallStep"
+    },
+    "SetVar": {
+      "type": "object",
+      "properties": {
+        "op": { "const": "set_var" },
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "tsType": "unknown" }
+      },
+      "required": ["op", "name", "value"],
+      "title": "SetVarStep"
+    },
+    "Checkpoint": {
+      "description": "在关键节点额外写一次检查点（FR-17）。",
+      "type": "object",
+      "properties": { "op": { "const": "checkpoint" } },
+      "required": ["op"],
+      "title": "CheckpointStep"
+    }
+  }
+}

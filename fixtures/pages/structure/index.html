@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>页面结构</title>
+<!--
+  夹具：页面结构（PRD 9.3，FR-04、FR-05）。
+  - Shadow DOM：开放（profile-card，内嵌一个开放的 star-rating）、封闭（pay-box）；
+  - iframe：同源（#same-frame）、跨域（#cross-frame，另一个主机名：127.0.0.1 ↔ localhost）、
+    嵌套（#nested-frame 同源外层 → 内层跨域）、开放 Shadow Root 里的 iframe（frame-host）；
+  - 新标签页：target=_blank 链接、window.open 按钮。
+  各 frame 的“提交”通过 postMessage 通知顶层，顶层在 #status 显示“跨域框架提交 1 次”这样的文字，供后置检查。
+  点击记录：window.__log 与页面上的“操作记录”。
+-->
+<style>
+  body { font: 14px/1.6 system-ui, sans-serif; margin: 24px; }
+  section { margin-bottom: 16px; }
+  iframe { width: 360px; height: 150px; border: 1px solid #ccc; vertical-align: top; }
+  #nested-frame { width: 420px; height: 260px; }
+</style>
+</head>
+<body>
+<h1>页面结构</h1>
+<section aria-label="Shadow DOM">
+  <h2>Shadow DOM</h2>
+  <profile-card></profile-card>
+  <pay-box></pay-box>
+</section>
+<section aria-label="框架">
+  <h2>iframe</h2>
+  <iframe id="same-frame" title="同源表单" src="frame.html?who=same"></iframe>
+  <iframe id="cross-frame" title="跨域表单"></iframe>
+  <iframe id="nested-frame" title="嵌套框架" src="outer.html"></iframe>
+  <frame-host></frame-host>
+</section>
+<section aria-label="新标签页">
+  <h2>新标签页</h2>
+  <a href="popup.html?from=link" target="_blank">在新标签页打开报表</a>
+  <button type="button" id="open-window">弹出窗口</button>
+</section>
+<p id="status" role="status">尚无提交</p>
+<section aria-label="操作记录"><ol id="log"></ol></section>
+<script>
+  const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  const crossUrl = (path) => `${location.protocol}//${other}:${location.port}/structure/${path}`;
+  document.getElementById('cross-frame').src = crossUrl('frame.html?who=cross');
+
+  window.__log = [];
+  const record = (text) => {
+    window.__log.push(text);
+    const li = document.createElement('li');
+    li.textContent = text;
+    document.getElementById('log').append(li);
+  };
+
+  customElements.define('star-rating', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<span>评分组件</span> <button type="button">收藏</button>';
+      root.querySelector('button').onclick = () => record('已收藏');
+    }
+  });
+  customElements.define('profile-card', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<div style="border:1px solid #ddd;padding:8px;margin:4px 0">' +
+        '<strong>店铺：星河贸易</strong> <button type="button" id="follow">关注</button> <star-rating></star-rating></div>';
+      root.getElementById('follow').onclick = () => record('已关注');
+    }
+  });
+  customElements.define('pay-box', class extends HTMLElement {
+    connectedCallback() {
+      // 封闭的 Shadow Root：页面脚本外部拿不到 shadowRoot
+      const root = this.attachShadow({ mode: 'closed' });
+      root.innerHTML = '<div style="border:1px solid #ddd;padding:8px;margin:4px 0">' +
+        '<label for="amount">金额</label> <input id="amount" inputmode="decimal"> ' +
+        '<button type="button" id="pay">支付</button></div>';
+      root.getElementById('pay').onclick = () => record(`已支付 ${root.getElementById('amount').value} 元`);
+    }
+  });
+  customElements.define('frame-host', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<iframe title="组件内框架" src="frame.html?who=shadow" style="width:360px;height:150px;border:1px solid #ccc"></iframe>';
+    }
+  });
+
+  const LABEL = { same: '同源框架', cross: '跨域框架', nested: '嵌套框架', shadow: '组件内框架', outer: '外层框架' };
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.type !== 'frame-submit') return;
+    const text = `${LABEL[d.who] ?? d.who}提交 ${d.count} 次${d.email ? `（${d.email}）` : ''}`;
+    document.getElementById('status').textContent = text;
+    record(text);
+  });
+
+  document.getElementById('open-window').onclick = () => {
+    window.open('popup.html?from=open', '_blank');
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>报表（新标签页）</title>
+<!-- 页面结构夹具的新标签页：?from=link（target=_blank 链接）或 ?from=open（window.open）。 -->
+<style>body { font: 14px/1.6 system-ui, sans-serif; margin: 24px; }</style>
+</head>
+<body>
+<h1>月度报表</h1>
+<p id="from"></p>
+<button type="button" id="ack">确认收到</button>
+<p id="ack-result"></p>
+<script>
+  const from = new URLSearchParams(location.search).get('from') || '未知';
+  document.getElementById('from').textContent = `打开方式：${from}`;
+  document.getElementById('ack').onclick = () => {
+    document.getElementById('ack-result').textContent = `已确认（来自 ${from}）`;
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+[{ "id": "x", "match": { "css": "#ad" }, "actions": [{ "op": "click", "target": { "ref": 3 } }] }]

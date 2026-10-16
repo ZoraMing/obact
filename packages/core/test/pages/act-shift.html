@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>布局偏移（落点防护）</title>
+<style>
+  body { margin: 0; padding: 0; font: 14px sans-serif; }
+  #wrap { position: absolute; left: 40px; top: 100px; width: 200px; }
+  #banner { height: 60px; margin: 0; background: #fde68a; border: 0; width: 200px; display: block; }
+  button.b { display: block; width: 200px; height: 40px; margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <button type="button" class="b" id="target">目标</button>
+  <button type="button" class="b" id="other">别的按钮</button>
+</div>
+<script>
+  window.events = [];
+  const log = (s) => window.events.push(s);
+  const wrap = document.getElementById('wrap');
+  const mode = new URLSearchParams(location.search).get('mode') || 'once';
+  document.getElementById('target').addEventListener('click', () => log('target'));
+  document.getElementById('other').addEventListener('click', () => log('other'));
+  let banner = null;
+  function addBanner() {
+    banner = document.createElement('button');
+    banner.type = 'button';
+    banner.id = 'banner';
+    banner.textContent = '横幅（点了就是误点）';
+    banner.addEventListener('click', () => log('banner'));
+    wrap.prepend(banner);
+  }
+  // 布局偏移发生在“鼠标移动之后的第一次命中测试”（即派发前最后一次复核）之后、真正按下之前：
+  // 复核看到的是偏移前的布局，按下时布局已经变了。mode=once 只偏移一次，mode=always 每次都在两种布局间切换。
+  let armed = false;
+  let shifts = 0;
+  addEventListener('mousemove', () => { armed = true; }, true);
+  const orig = Document.prototype.elementFromPoint;
+  Document.prototype.elementFromPoint = function (x, y) {
+    const r = orig.call(this, x, y);
+    if (armed && (mode === 'always' || shifts === 0)) {
+      armed = false;
+      shifts++;
+      if (banner) { banner.remove(); banner = null; } else addBanner();
+    }
+    return r;
+  };
+</script>
+</body>
+</html>

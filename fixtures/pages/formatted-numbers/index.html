@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>格式化数字</title>
+<style>
+  body { margin: 0; padding: 16px 24px; font: 14px/1.5 sans-serif; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 16px 0 6px; }
+  #kpis { display: grid; grid-template-columns: repeat(4, 200px); gap: 12px; }
+  .kpi { border: 1px solid #dde; border-radius: 6px; padding: 8px 12px; }
+  .kpi .label { color: #667; font-size: 12px; }
+  .kpi .value { font-size: 20px; font-weight: bold; }
+  .neg { color: #c33; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #dde; padding: 4px 10px; }
+  td.num { text-align: right; }
+</style>
+</head>
+<body>
+  <h1>经营概览</h1>
+  <p id="status">加载中…</p>
+  <section id="kpis" aria-label="核心指标"></section>
+  <h2>近 7 日</h2>
+  <table id="daily">
+    <thead><tr><th>日期</th><th>销售额（元）</th><th>访客</th><th>转化率</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const seed = Number(new URLSearchParams(location.search).get('seed')) || 1;
+    const groups = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    // 与 fixtures/api/formatted-numbers.ts 的 formatValue 相同：千分位两位小数、中文单位（万、亿一位小数）、百分比一位小数
+    function fmt(v, format) {
+      const sign = v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (format === 'percent') return `${(v * 100).toFixed(1)}%`;
+      if (format === 'thousands') {
+        const [int, frac] = a.toFixed(2).split('.');
+        return `${sign}${groups(int)}.${frac}`;
+      }
+      if (a < 1e4) return `${sign}${groups(String(Math.round(a)))}`;
+      const wan = Math.round(a / 1e3) / 10;
+      if (wan < 1e4) return `${sign}${wan.toFixed(1)}万`;
+      return `${sign}${(Math.round(a / 1e7) / 10).toFixed(1)}亿`;
+    }
+
+    async function main() {
+      const r = await fetch(`/api/formatted-numbers/data?seed=${seed}`);
+      const data = await r.json();
+      const kpis = document.getElementById('kpis');
+      for (const k of data.kpis) {
+        const card = document.createElement('div');
+        card.className = 'kpi';
+        card.dataset.key = k.key;
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = k.label;
+        const value = document.createElement('div');
+        value.className = k.value < 0 ? 'value neg' : 'value';
+        value.textContent = fmt(k.value, k.format);
+        card.append(label, value);
+        kpis.append(card);
+      }
+      const tbody = document.querySelector('#daily tbody');
+      for (const d of data.daily) {
+        const tr = document.createElement('tr');
+        tr.dataset.key = d.date;
+        const cells = [
+          [d.date, ''],
+          [fmt(d.sales, 'thousands'), 'num'],
+          [fmt(d.visitors, 'cn'), 'num'],
+          [fmt(d.conversion, 'percent'), 'num'],
+        ];
+        for (const [text, cls] of cells) {
+          const td = document.createElement('td');
+          td.textContent = text;
+          if (cls) td.className = cls;
+          tr.append(td);
+        }
+        tbody.append(tr);
+      }
+      document.getElementById('status').textContent = `数据日期：2026-10-07（seed ${seed}）`;
+      document.body.dataset.ready = '1';
+    }
+    main();
+  </script>
+</body>
+</html>

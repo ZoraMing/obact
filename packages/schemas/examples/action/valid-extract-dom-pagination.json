@@ -1,0 +1,14 @@
+{
+  "op": "extract",
+  "pageId": "main",
+  "source": {
+    "type": "dom",
+    "kind": "list",
+    "root": { "css": "ol.row" },
+    "item": "article.product_pod",
+    "fields": { "title": "h3 a@title", "url": "h3 a@href", "price": ".price_color" },
+    "pagination": { "next": { "css": "li.next a" }, "max_pages": 50 }
+  },
+  "key": "url",
+  "into": "books"
+}

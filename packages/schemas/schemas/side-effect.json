@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/side-effect.json",
+  "title": "SideEffectRecord",
+  "description": "runs/<run_id>/side_effects.jsonl 的一行：已确认成功的单次提交；续跑时按幂等键跳过（FR-18）。",
+  "type": "object",
+  "properties": {
+    "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+    "step_id": { "type": "string" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "time": { "$ref": "common.json#/$defs/Timestamp" },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "common.json#/$defs/AssertionResult" },
+      "description": "确认成功所依据的后置检查。"
+    }
+  },
+  "required": ["run_id", "step_id", "idempotency_key", "time"],
+  "additionalProperties": false
+}

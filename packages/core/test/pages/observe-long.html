@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>长页面</title></head>
+<body>
+  <div id="list"></div>
+  <script>
+    const parts = [];
+    for (let i = 0; i < 300; i++) {
+      parts.push(`<p>第 ${i} 段说明文字，用来占用纯网页信息的字符预算。</p><button>操作按钮 ${i}</button>`);
+    }
+    document.getElementById('list').innerHTML = parts.join('');
+  </script>
+</body>
+</html>

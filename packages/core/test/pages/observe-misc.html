@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>观察测试</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  #half { position: absolute; left: -50px; top: 10px; width: 100px; height: 20px; }
+  #mask { position: fixed; left: 0; top: 60px; width: 300px; height: 40px; background: transparent; }
+  #covered { position: absolute; left: 10px; top: 70px; }
+  #same { position: absolute; left: 400px; top: 20px; width: 300px; height: 120px; border: 7px solid #333; padding: 5px; }
+  #cross { position: absolute; left: 400px; top: 200px; width: 300px; height: 120px; border: 3px solid #333; }
+  #form { position: absolute; left: 10px; top: 140px; }
+</style>
+</head>
+<body>
+  <button id="half">半出视口</button>
+  <button id="covered">被遮挡</button>
+  <div id="mask"></div>
+  <div id="form">
+    <h2>登录</h2>
+    <label>账号 <input id="user" value="alice"></label>
+    <label>密码 <input id="pwd" type="password" value="s3cret"></label>
+    <label>令牌 <input id="api-token" name="api_token" value="abc"></label>
+    <p>请输入账号和密码。</p>
+  </div>
+  <iframe id="same" title="同源" src="/pages/frame.html?who=same"></iframe>
+  <iframe id="cross" title="跨域"></iframe>
+  <script>
+    document.getElementById('cross').src = location.href.replace('127.0.0.1', 'localhost').replace(/\/pages\/.*/, '/pages/frame.html?who=cross');
+  </script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>动作测试</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  #mask { position: fixed; inset: 0 auto auto 0; width: 260px; height: 50px; background: transparent; z-index: 10; display: none; }
+  #moving { position: absolute; left: 300px; top: 10px; transition: left 0.4s linear; }
+  #pad { width: 200px; height: 120px; outline: 1px solid #333; display: block; }
+  #scrollbox { height: 80px; overflow: auto; width: 200px; }
+  .vh { opacity: 0; position: absolute; width: 1px; height: 1px; }
+  #drop { width: 120px; height: 60px; border: 2px dashed #999; }
+</style>
+</head>
+<body>
+  <div id="mask"></div>
+  <button id="btn" onclick="log('click:' + event.isTrusted)">点我</button>
+  <button id="moving" onclick="log('moving:' + event.isTrusted)">移动按钮</button>
+  <button id="disabled" disabled>不可用</button>
+  <label>文本 <input id="text" value="旧值"></label>
+  <label>只读 <input id="ro" readonly value="固定"></label>
+  <label>多行 <textarea id="area"></textarea></label>
+  <label>状态 <select id="sel"><option value="a">全部</option><option value="p">待审核</option><option value="d">已审核</option></select></label>
+  <label><input type="checkbox" id="cb"> 同意</label>
+  <label class="toggle"><input type="checkbox" id="hidden-cb" class="vh"> 自动续费</label>
+  <div id="editor" contenteditable="true" aria-label="编辑器">原内容</div>
+  <label>附件 <input type="file" id="file"></label>
+  <button id="alert" onclick="alert('提示一下')">弹 alert</button>
+  <button id="confirm" onclick="log('confirm:' + confirm('确定吗？'))">弹 confirm</button>
+  <button id="prompt" onclick="log('prompt:' + prompt('名字？', '默认'))">弹 prompt</button>
+  <a id="newtab" href="/pages/act-target.html" target="_blank">新标签页</a>
+  <a id="nav" href="/pages/act-target.html">跳转</a>
+  <button id="later" onclick="setTimeout(() => document.getElementById('out').textContent = '完成', 200)">稍后完成</button>
+  <form id="form" onsubmit="event.preventDefault(); log('submit:' + document.getElementById('q').value)">
+    <input id="q" aria-label="搜索词">
+  </form>
+  <canvas id="pad" width="200" height="120"></canvas>
+  <div id="scrollbox" aria-label="滚动区"><p>1</p><p>2</p><p>3</p><p>4</p><p>5</p><p>6</p><p>7</p><p>8</p><p>9</p></div>
+  <div id="card" draggable="true">卡片</div>
+  <div id="drop">放置区</div>
+  <p id="out"></p>
+  <div style="height: 1500px"></div>
+  <button id="far" onclick="log('far:' + event.isTrusted)">底部按钮</button>
+  <script>
+    window.events = [];
+    function log(s) { window.events.push(s); }
+    for (const id of ['text', 'area', 'q', 'editor']) {
+      document.getElementById(id).addEventListener('input', (e) => log(`input:${id}:${e.isTrusted}`));
+    }
+    document.getElementById('sel').addEventListener('change', (e) => log('change:sel:' + e.target.value));
+    document.getElementById('cb').addEventListener('change', (e) => log('cb:' + e.target.checked + ':' + e.isTrusted));
+    document.getElementById('hidden-cb').addEventListener('change', (e) => log('hcb:' + e.target.checked));
+    document.getElementById('file').addEventListener('change', (e) => log('file:' + [...e.target.files].map((f) => f.name).join(',')));
+    const pad = document.getElementById('pad');
+    pad.addEventListener('click', (e) => log(`pad:${Math.round(e.offsetX)},${Math.round(e.offsetY)}:${e.isTrusted}`));
+    let drawing = false;
+    pad.addEventListener('pointerdown', () => { drawing = true; log('down'); });
+    pad.addEventListener('pointerup', () => { if (drawing) log('up'); drawing = false; });
+    const card = document.getElementById('card');
+    card.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', 'card'));
+    const drop = document.getElementById('drop');
+    drop.addEventListener('dragover', (e) => e.preventDefault());
+    drop.addEventListener('drop', (e) => { e.preventDefault(); log('drop:' + e.dataTransfer.getData('text/plain')); });
+    document.getElementById('scrollbox').addEventListener('scroll', (e) => { window.boxTop = e.target.scrollTop; });
+    // 每 100 毫秒轮询一次接口（常驻请求不能拖慢等待，C-10）
+    setInterval(() => fetch('/api/poll').catch(() => {}), 100);
+  </script>
+</body>
+</html>

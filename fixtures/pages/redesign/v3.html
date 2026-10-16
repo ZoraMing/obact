@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>订单编辑 · 改层级</title>
+<link rel="stylesheet" href="style.css">
+<!-- 改版夹具 v3：改层级。外面套了卡片、分组和多层容器，按钮包进 span，表格包进折叠区；id、文案、位置顺序不变。 -->
+</head>
+<body>
+<div id="app"><div class="layout"><div class="layout-header">
+<header class="topbar">
+  <div class="search-group"><span class="input-wrap"><input type="search" id="order-search" placeholder="搜索订单" data-x-key="search"></span>
+  <span class="btn-wrap"><button id="search-btn" class="btn" data-x-key="search-btn">搜索</button></span></div>
+  <span class="spacer"></span>
+  <nav><ul style="list-style:none;margin:0;padding:0;display:flex;gap:8px;align-items:center">
+    <li><a href="#help" data-x-key="help">帮助</a></li>
+    <li><span><button type="button" class="icon-btn icon-close" data-x-key="close"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button></span></li>
+  </ul></nav>
+</header>
+</div>
+<div class="notice-wrap"><div class="notice-inner"><div class="notice" data-testid="shipping-notice">运费调整：偏远地区加收运费。<button type="button" class="icon-btn notice-close" data-x-key="notice-close"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button></div></div></div>
+<main class="layout-content">
+<section class="card">
+  <div class="card-head">
+    <div class="toolbar" role="toolbar" aria-label="订单操作">
+      <span class="btn-wrap"><button type="button" id="tb-1" class="btn" data-x-key="create">新建</button></span>
+      <span class="btn-wrap"><button type="button" id="tb-2" class="btn" data-x-key="import">导入</button></span>
+      <span class="btn-wrap"><button type="button" id="tb-3" class="btn" data-x-key="export">导出</button></span>
+    </div>
+  </div>
+  <div class="card-body">
+<form id="order-form">
+  <h2>订单 SO-24003</h2>
+  <fieldset><legend>基本信息</legend>
+    <div class="row"><div class="col">
+      <div class="field"><label for="customer">客户名称</label><div class="control"><input id="customer" name="customer" data-x-key="customer"></div></div>
+    </div><div class="col">
+      <div class="field"><label for="phone">联系电话</label><div class="control"><input id="phone" name="phone" data-x-key="phone"></div></div>
+    </div></div>
+    <div class="field"><label for="status">状态</label><div class="control">
+      <select id="status" name="status" data-x-key="status"><option>待审核</option><option>已发货</option><option>已取消</option></select>
+    </div></div>
+  </fieldset>
+  <fieldset><legend>其他</legend>
+    <div class="field"><label for="remark">备注</label><div class="control"><textarea id="remark" name="remark" data-x-key="remark"></textarea></div></div>
+    <div class="field"><span class="checkbox-wrap"><input type="checkbox" id="urgent" name="urgent" data-x-key="urgent"></span><label for="urgent">加急处理</label></div>
+  </fieldset>
+  <details open><summary>商品明细</summary>
+    <div class="table-wrap"><div class="table-scroll">
+      <table class="items"><tbody>
+        <tr data-key="sku-apple"><td>苹果</td><td>2 箱</td><td><div class="cell-actions"><span><button type="button" class="link-btn" data-x-key="remove-apple">移除</button></span></div></td></tr>
+        <tr data-key="sku-pear"><td>梨</td><td>1 箱</td><td><div class="cell-actions"><span><button type="button" class="link-btn" data-x-key="remove-pear">移除</button></span></div></td></tr>
+      </tbody></table>
+    </div></div>
+  </details>
+  <footer><div class="actions">
+    <span class="btn-wrap"><button id="save-btn" class="btn primary" data-x-key="save">保存</button></span>
+    <span class="btn-wrap"><button type="button" id="cancel-btn" class="btn" data-x-key="cancel">取消</button></span>
+    <span class="btn-wrap"><button type="button" id="delete-btn" class="btn danger" data-x-key="delete">删除订单</button></span>
+  </div></footer>
+</form>
+  </div>
+</section>
+</main>
+</div></div>
+<script src="log.js"></script>
+</body>
+</html>

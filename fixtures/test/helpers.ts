@@ -1,0 +1,50 @@
+// 夹具测试助手：夹具服务 + 无头浏览器 + 会话。每个测试文件 setup 一次。
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { launchBrowser, Session } from '@obact/core';
+import type { Browser } from 'puppeteer-core';
+import { MISSING, testChrome } from '../../tools/browser.ts';
+import { type FixtureServer, startFixtures } from '../server.ts';
+
+export const CHROME = await testChrome();
+/** 传给 describe 的 skip 选项：没有浏览器时跳过并说明原因。 */
+export const SKIP: false | string = CHROME ? false : MISSING;
+
+export type FixtureEnv = {
+  server: FixtureServer;
+  browser: Browser;
+  session: Session;
+  /** 新建标签页并打开夹具路径（如 /timing/），返回 pageId。 */
+  open(path: string, opts?: { cross?: boolean }): Promise<string>;
+  close(): Promise<void>;
+};
+
+export async function setup(): Promise<FixtureEnv> {
+  const server = await startFixtures();
+  const profileDir = mkdtempSync(join(tmpdir(), 'obact-fixture-'));
+  const browser = await launchBrowser({
+    profileDir,
+    chromePath: CHROME,
+    mode: process.env.HEADED === '1' ? 'headed' : 'headless',
+  });
+  const session = await Session.attach(browser);
+  return {
+    server,
+    browser,
+    session,
+    async open(path, opts = {}) {
+      const pageId = await session.pages.newPage();
+      await session.pages
+        .get(pageId)
+        .goto((opts.cross ? server.crossBase : server.base) + path, { waitUntil: 'load' });
+      return pageId;
+    },
+    async close() {
+      await session.close({ closeBrowser: true });
+      await server.close();
+      rmSync(profileDir, { recursive: true, force: true });
+    },
+  };
+}

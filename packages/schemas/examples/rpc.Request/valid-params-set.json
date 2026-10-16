@@ -1,0 +1,6 @@
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "params.set",
+  "params": { "key": "login_user", "value": "standard_user", "scope": "site", "site": "saucedemo" }
+}

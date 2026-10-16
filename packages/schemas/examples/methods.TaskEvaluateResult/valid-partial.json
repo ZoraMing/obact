@@ -1,0 +1,9 @@
+{
+  "score": 0.8,
+  "complete": false,
+  "items": [
+    { "id": "status", "weight": 0.5, "pass": true },
+    { "id": "comment", "weight": 0.3, "pass": true },
+    { "id": "once", "weight": 0.2, "pass": false, "detail": "提交了 2 次" }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/trajectory.json",
+  "title": "TrajectoryRecord",
+  "description": "runs/<run_id>/trajectory.jsonl 的一行：一步的“观察—动作—结果”（FR-26）。敏感参数已脱敏为 ***。",
+  "type": "object",
+  "properties": {
+    "run_id": { "$ref": "checkpoint.json#/$defs/RunId" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "time": { "$ref": "common.json#/$defs/Timestamp" },
+    "step_id": { "type": "string" },
+    "loop_index": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "observation": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "signature": { "type": ["string", "null"] },
+        "snapshot_path": { "type": "string" },
+        "screenshot_path": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "action": { "$ref": "action.json" },
+    "result": { "$ref": "act-result.json" },
+    "source": {
+      "type": "string",
+      "enum": ["workflow", "human", "client"],
+      "description": "动作来源：工作流回放、人工接管、外部调用（以后的模型）。"
+    }
+  },
+  "required": ["run_id", "seq", "time", "action", "result", "source"],
+  "additionalProperties": false
+}

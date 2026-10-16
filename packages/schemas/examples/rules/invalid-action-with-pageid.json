@@ -1,0 +1,7 @@
+[
+  {
+    "id": "x",
+    "match": { "css": "#ad" },
+    "actions": [{ "op": "click", "pageId": "main", "target": { "css": "#ad .close" } }]
+  }
+]

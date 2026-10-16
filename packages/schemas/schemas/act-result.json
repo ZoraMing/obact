@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/act-result.json",
+  "title": "ActResult",
+  "description": "act 方法的返回（FR-15，PRD 7.3）。",
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "error"] },
+    "error": { "$ref": "common.json#/$defs/Error" },
+    "locator_used": {
+      "type": ["string", "null"],
+      "enum": ["ref", "css", "role", "coord", null],
+      "description": "实际命中目标所用的方式；无目标的动作为 null。"
+    },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "screenshot_path": { "type": ["string", "null"] },
+    "effects": {
+      "type": "object",
+      "properties": {
+        "navigated": { "type": "boolean" },
+        "new_pages": { "type": "array", "items": { "$ref": "common.json#/$defs/PageId" } },
+        "dialogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "enum": ["alert", "confirm", "prompt", "beforeunload"] },
+              "message": { "type": "string" },
+              "handled": { "type": "string", "enum": ["accept", "dismiss", "pending"] }
+            },
+            "required": ["type", "message"],
+            "additionalProperties": false
+          }
+        },
+        "changed": { "type": "boolean" }
+      },
+      "required": ["navigated", "new_pages", "dialogs", "changed"],
+      "additionalProperties": false
+    },
+    "assertions": { "type": "array", "items": { "$ref": "common.json#/$defs/AssertionResult" } },
+    "diff": { "type": ["string", "null"], "description": "页面变化差异（仅在请求时返回）。" },
+    "data": { "description": "extract、evaluate_script 等动作的返回数据。", "tsType": "unknown" },
+    "action_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "本动作的序号，接口缓存按它判定响应先后（PRD 5.6）。"
+    }
+  },
+  "required": ["status", "duration_ms", "effects"],
+  "if": { "properties": { "status": { "const": "error" } } },
+  "then": { "required": ["error"] },
+  "additionalProperties": false
+}

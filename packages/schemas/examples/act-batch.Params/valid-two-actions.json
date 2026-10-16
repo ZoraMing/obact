@@ -1,0 +1,7 @@
+{
+  "actions": [
+    { "op": "fill", "pageId": "main", "target": { "ref": 13 }, "value": "88231" },
+    { "op": "press_key", "pageId": "main", "key": "Enter" }
+  ],
+  "observe": { "pageId": "main", "views": ["text"] }
+}

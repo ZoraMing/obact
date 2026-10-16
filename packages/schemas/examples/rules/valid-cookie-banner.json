@@ -1,0 +1,8 @@
+[
+  {
+    "id": "cookie_banner",
+    "match": { "css": "#cookie-banner" },
+    "actions": [{ "op": "click", "target": { "role": "button", "name": "接受" } }],
+    "created_from": "run_42/s02"
+  }
+]

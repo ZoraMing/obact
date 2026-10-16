@@ -1,0 +1,52 @@
+{
+  "results": [
+    {
+      "status": "ok",
+      "locator_used": "css",
+      "duration_ms": 310,
+      "screenshot_path": null,
+      "effects": { "navigated": false, "new_pages": [], "dialogs": [], "changed": true },
+      "assertions": [{ "text_present": "审核通过", "pass": true }],
+      "diff": null
+    }
+  ],
+  "stopped_at": null,
+  "observation": {
+    "pageId": "main",
+    "url": "https://example.com/orders",
+    "title": "订单列表",
+    "signature": "order_list",
+    "canvas_warning": false,
+    "snapshot_text": "[12] button \"查询\" → click\n[13] textbox \"订单号\" value=\"\" type=text → fill,type_text,press_key\n[14] combobox \"状态\" value=\"全部\" options=全部|待审核|已审核 → fill\n[15] button \"审核\" within=tr[data-id='88231'] → click",
+    "elements": [
+      {
+        "ref": 14,
+        "role": "combobox",
+        "name": "状态",
+        "actions": ["fill"],
+        "value": "全部",
+        "options": [
+          { "label": "全部", "value": "all", "selected": true },
+          { "label": "待审核", "value": "pending" },
+          { "label": "已审核", "value": "audited" }
+        ],
+        "bbox": [200, 120, 120, 28],
+        "visible_ratio": 1,
+        "clickable": true
+      },
+      {
+        "ref": 15,
+        "role": "button",
+        "name": "审核",
+        "actions": ["click"],
+        "bbox": [1020, 420, 64, 28],
+        "visible_ratio": 1,
+        "clickable": true,
+        "within": "tr[data-id='88231']"
+      }
+    ],
+    "text_md": "# 订单列表\n\n共 238 条\n\n| 订单号 | 金额 | 操作 |\n|---|---|---|\n| 88231 | 1,280.00 | [15] |",
+    "truncated": false,
+    "viewport": { "width": 1280, "height": 800, "scale": 1 }
+  }
+}
