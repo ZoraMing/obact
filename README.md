@@ -16,10 +16,12 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 | `packages/schemas/` | JSON Schema 数据契约、生成的 TS 类型、契约样例 |
 | `packages/core/` | 观察与执行内核：浏览器启动、标签页、编号、定位器、`observe`、`act`、断言 |
 | `python/` | Python 包 `obact`（目前只有契约校验） |
+| `fixtures/` | 本地夹具库（12 类确定性页面与接口，PRD 9.3）和它们的测试 |
+| `lab/` | Obact Lab 测试应用：数据空间、重置/状态/故障注入三个接口，登录、订单后台、复杂结构、干扰层四个模块 |
 | `bench/` | 对照与基准：BW-14 组件识别对照、MiniWoB++ 任务 |
 | `spikes/` | M0 预研脚本 |
 
-后续模块（server、workflow、recorder、extension、lab、fixtures）按开发计划第 3 节在各里程碑加入。
+后续模块（server、workflow、recorder、extension）按开发计划第 3 节在各里程碑加入。当前进度见 [开发计划](docs/DEV_PLAN.md) 的总览。
 
 ## 试用 observe / act
 
