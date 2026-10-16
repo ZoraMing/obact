@@ -217,7 +217,12 @@ export function obName(el: Element): string {
   if (fromContent.includes(role) || obIsClickableGeneric(el)) {
     // 没有子元素时 textContent 折叠空白后与 innerText 相同，且不触发排版：
     // innerText 首次调用要为每个块建立排版映射，5000 个按钮约 2.6 秒（大表 observe 的主要耗时）
-    const raw = el.childElementCount === 0 ? el.textContent : (el as HTMLElement).innerText;
+    const raw =
+      el.childElementCount === 0
+        ? el.textContent
+        : el.querySelector('[aria-hidden="true"]')
+          ? obContentText(el)
+          : (el as HTMLElement).innerText;
     const text = obNorm(raw || el.textContent);
     if (text) return text;
     // 只含图标或图片的链接、按钮：取后代的 alt / aria-label / title
@@ -228,6 +233,33 @@ export function obName(el: Element): string {
     if (obNorm(alt)) return obNorm(alt);
   }
   return obNorm(el.getAttribute('title'));
+}
+
+/**
+ * 内容文字，按 accname 规范排除 aria-hidden 的后代（如表头排序箭头、链接后的“›”图标）：
+ * 否则名称会随排序状态变化（“下单时间 ▼”），角色+名称定位器和同名消歧都会失效。
+ * 隐藏（display:none 等）的后代同样不计；块级与元素之间补空格。
+ */
+export function obContentText(el: Element): string {
+  const parts: string[] = [];
+  const walk = (node: Node) => {
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3) {
+        parts.push(c.nodeValue ?? '');
+      } else if (c.nodeType === 1) {
+        const child = c as Element;
+        if (child.getAttribute('aria-hidden') === 'true') continue;
+        const st = getComputedStyle(child);
+        if (st.display === 'none' || st.visibility === 'hidden') continue;
+        parts.push(' ');
+        const sr = obShadow(child);
+        walk(sr ?? child);
+        parts.push(' ');
+      }
+    }
+  };
+  walk(el);
+  return parts.join('');
 }
 
 /**
@@ -631,6 +663,7 @@ export const DOM_LIB = [
   obActiveElement,
   obRole,
   obLabelText,
+  obContentText,
   obName,
   obHint,
   obIsInteractive,
