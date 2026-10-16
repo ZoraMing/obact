@@ -14,6 +14,14 @@ export { exposeForMarking, type FrameRefs, markPage } from './mark.ts';
 export { type ObserveOptions, observe } from './observe/index.ts';
 export { matchSignature } from './observe/signature.ts';
 export { PageRegistry } from './pages.ts';
+export {
+  assertAccountName,
+  BrowserPool,
+  type PoolEntryInfo,
+  type PoolExit,
+  type PoolLease,
+  type PoolOptions,
+} from './pool.ts';
 export { type RefEntry, RefRegistry } from './refs.ts';
 export {
   frameFor,

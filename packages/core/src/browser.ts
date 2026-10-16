@@ -14,6 +14,8 @@ export type LaunchOptions = {
   /** 要加载的扩展目录（只做界面，PRD 8.1）；用 --load-extension 加载（M0 预研结论）。 */
   extensions?: string[];
   args?: string[];
+  /** 追加到浏览器进程环境的变量（如池自起 Xvfb 时的 DISPLAY）；与本进程环境合并。 */
+  env?: NodeJS.ProcessEnv;
   windowSize?: { width: number; height: number };
 };
 
@@ -60,7 +62,7 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
     executablePath: resolveChromePath(opts.chromePath),
     headless: opts.mode === 'headless',
     userDataDir: opts.profileDir,
-    env: browserEnv() as Record<string, string | undefined>,
+    env: browserEnv({ ...process.env, ...opts.env }) as Record<string, string | undefined>,
     defaultViewport: null,
     enableExtensions: extArgs.length > 0,
     args: [
