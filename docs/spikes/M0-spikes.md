@@ -69,7 +69,7 @@
 - 全量可访问性树只在请求 `axtree` 视图时才取，并受字符预算限制。
 - 大表数据走页面抽取或接口截获（FR-09、FR-10），不走 observe。
 
-## 2. MV3 扩展加载
+## 2. MV3 扩展加载（已取消：第一阶段不做扩展，结论仅留档）
 
 脚本：`node spikes/extension/load.ts`（有头：`HEADED=1 xvfb-run -a node spikes/extension/load.ts`）
 
