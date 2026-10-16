@@ -8,6 +8,7 @@
     "start": "node server.ts"
   },
   "devDependencies": {
-    "@obact/core": "*"
+    "@obact/core": "*",
+    "@shoelace-style/shoelace": "2.20.1"
   }
 }
