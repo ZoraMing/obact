@@ -1,0 +1,57 @@
+name: Live
+
+# 需要访问公开站点或下载最新稳定版 Chrome 的检查。开发容器访问不了这些，所以放在这里：
+# 手动触发，或每周一次。不阻塞合并，结果看各步骤和上传的 bench/out。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+jobs:
+  # BW-3、6、7、12 的公开站点版本（quotes.toscrape.com、uitestingplayground.com、the-internet.herokuapp.com）
+  bench-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 安装 Chrome for Testing
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          npm run browser:install
+      # 每个场景集独立运行：一个失败不影响其余，最后统一看结果
+      - run: node bench/bw3.ts --live
+        continue-on-error: true
+      - run: node bench/bw6.ts --live
+        continue-on-error: true
+      - run: node bench/bw7.ts --live
+        continue-on-error: true
+      - run: node bench/bw12.ts --live
+        continue-on-error: true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: bench-live-out
+          path: bench/out
+
+  # 运行时支持区间的抽测（PRD 8.3）：在当前最新稳定版 Chrome 上跑全套浏览器测试
+  compat-stable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 安装最新稳定版 chrome-headless-shell
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          npx @puppeteer/browsers install chrome-headless-shell@stable --path "$HOME/.cache/cft-stable" | tee stable.txt
+          echo "CHROME_PATH=$(tail -1 stable.txt | awk '{print $2}')" >> "$GITHUB_ENV"
+      - run: $CHROME_PATH --version
+      - run: npm test
+      - run: npm run test:bench
