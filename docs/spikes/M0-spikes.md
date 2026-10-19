@@ -154,3 +154,14 @@ spikes/miniwob/fetch.sh && node spikes/miniwob/run.ts
 | 运行用户 | GitHub runner 为非 root，开启沙箱运行（Ubuntu 24.04 需放开 `apparmor_restrict_unprivileged_userns`） |
 
 结论：**扩展加载风险关闭**，采用方式 A。CI 固定使用 CfT 141.0.7390.122（`.github/workflows/ci.yml` 的 `CFT_VERSION`），与本机预装的 Chromium 141 同一大版本。
+
+## 6. 完整 Chrome 点击导航后输入失效（M1 期间发现，2026-10-19）
+
+**现象**：页面上的点击引起整页导航（如表单提交）之后，只要 Node 进程（Puppeteer 客户端）被卡住约 100 毫秒（解析大结果、垃圾回收、同步编译等），该标签页就收不到任何 CDP 输入（鼠标、键盘都不行）；`page.evaluate` 仍正常，页面内 `document.hasFocus()` 为真，刷新、重连 DevTools、切前台、新建 CDP 会话都无效，只有跳到 about:blank 再后退才恢复。
+
+**范围**：Chrome for Testing 141.0.7390.122 与 154.0.8037.57 的新无头模式和有头模式（Xvfb）都复现；**chrome-headless-shell 141 不受影响**（同一场景 3/3 正常）。普通 Puppeteer 加静态页面复现不了，需要 Lab 登录流程（点击登录 → 303 → 验证页 → 提交 → 停顿 → 再点击）；根因未找到。已排除：WebSocket 或 pipe 传输、`RenderDocument`、`BackForwardCache`、后台节流参数、焦点模拟、cookie、favicon、输入文字、Lab 是否与客户端同进程。
+
+**处理**
+- 无头一律用 chrome-headless-shell（`npm run browser:install` 一并安装，`launchBrowser` 看到路径含 headless-shell 时用 `headless: 'shell'`）。测试默认走它，Lab 登录的浏览器流程由此稳定通过。
+- 有头（完整 Chrome）仍有此风险。缓解：保持 CDP 客户端进程轻量、不做长时间同步计算（M4 的任务进程与服务分离时注意）；落点防护在“始终收不到按下事件”时报 `landing_mismatch` 并附事件计数与页面状态，便于识别。自动恢复（about:blank 再后退）会丢 JS 状态且可能重复提交 POST，不自动做。
+- 待办：在真实桌面环境的有头 Chrome（带窗口管理器）上确认是否同样出现。

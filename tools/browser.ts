@@ -16,14 +16,14 @@ export const BASELINE_VERSION = '141.0.7390.122';
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const CACHE_DIR = join(REPO, '.cache', 'chrome');
 
-async function installedPath(): Promise<string | undefined> {
+async function installedPath(kind: 'chrome' | 'shell' = 'chrome'): Promise<string | undefined> {
   const { Browser, computeExecutablePath, detectBrowserPlatform } = await import(
     '@puppeteer/browsers'
   );
   const platform = detectBrowserPlatform();
   if (!platform) return undefined;
   const p = computeExecutablePath({
-    browser: Browser.CHROME,
+    browser: kind === 'shell' ? Browser.CHROMEHEADLESSSHELL : Browser.CHROME,
     buildId: BASELINE_VERSION,
     cacheDir: CACHE_DIR,
     platform,
@@ -31,9 +31,21 @@ async function installedPath(): Promise<string | undefined> {
   return existsSync(p) ? p : undefined;
 }
 
-/** 测试用浏览器路径：CHROME_PATH，否则安装目录里的基准版本，都没有则 undefined。 */
+/**
+ * 测试用浏览器路径：CHROME_PATH，否则安装目录里的基准版本，都没有则 undefined。
+ * 无头测试默认用 chrome-headless-shell：完整 Chrome（有头或新无头）在点击引起整页导航后，
+ * 只要 Node 进程被卡住约 100 毫秒，该标签页就收不到任何鼠标和键盘输入，见 docs/spikes/M0-spikes.md 第 6 节。
+ * HEADED=1 时用完整 Chrome。
+ */
 export async function testChrome(): Promise<string | undefined> {
-  return process.env.CHROME_PATH || (await installedPath());
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  if (process.env.HEADED !== '1') return (await installedPath('shell')) ?? (await installedPath());
+  return installedPath();
+}
+
+/** 完整 Chrome（有头测试用）。 */
+export async function testFullChrome(): Promise<string | undefined> {
+  return process.env.CHROME_PATH || installedPath();
 }
 
 export const MISSING = `未找到浏览器：运行 npm run browser:install 安装 Chrome for Testing ${BASELINE_VERSION}，或设置 CHROME_PATH`;
@@ -44,13 +56,15 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     const { Browser, install, detectBrowserPlatform } = await import('@puppeteer/browsers');
     const platform = detectBrowserPlatform();
     if (!platform) throw new Error('不支持的平台');
-    const r = await install({
-      browser: Browser.CHROME,
-      buildId: BASELINE_VERSION,
-      cacheDir: CACHE_DIR,
-      platform,
-    });
-    console.log(r.executablePath);
+    for (const browser of [Browser.CHROME, Browser.CHROMEHEADLESSSHELL]) {
+      const r = await install({
+        browser,
+        buildId: BASELINE_VERSION,
+        cacheDir: CACHE_DIR,
+        platform,
+      });
+      console.log(r.executablePath);
+    }
   } else if (cmd === 'path') {
     console.log((await testChrome()) ?? '');
   } else {

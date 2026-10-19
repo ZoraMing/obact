@@ -17,7 +17,7 @@ import {
   type PoolOptions,
   Session,
 } from '../src/index.ts';
-import { CHROME, rejectsWithCode, SKIP } from './helpers.ts';
+import { CHROME, FULL_CHROME, rejectsWithCode, SKIP } from './helpers.ts';
 
 const TASK = join(dirname(fileURLToPath(import.meta.url)), 'fixtures-pool', 'task.ts');
 
@@ -486,7 +486,7 @@ describe('浏览器池：有头模式与 Xvfb', { skip: SKIP || XVFB_SKIP, timeo
   function mkPool(opts: Partial<PoolOptions> = {}): BrowserPool {
     const root = mkdtempSync(join(tmpdir(), 'obact-pool-xvfb-'));
     dirs.push(root);
-    const pool = new BrowserPool({ root, chromePath: CHROME, ...opts });
+    const pool = new BrowserPool({ root, chromePath: FULL_CHROME, ...opts });
     pools.push(pool);
     return pool;
   }

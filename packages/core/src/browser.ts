@@ -51,6 +51,7 @@ export function resolveChromePath(explicit?: string): string {
  * 不要传 --remote-debugging-address（会导致启动超时，见 M0 预研）。
  */
 export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
+  const chromePath = resolveChromePath(opts.chromePath);
   const size = opts.windowSize ?? { width: 1280, height: 800 };
   const extArgs = opts.extensions?.length
     ? [
@@ -59,8 +60,10 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
       ]
     : [];
   return puppeteer.launch({
-    executablePath: resolveChromePath(opts.chromePath),
-    headless: opts.mode === 'headless',
+    executablePath: chromePath,
+    // chrome-headless-shell 是 Puppeteer 推荐的无头自动化二进制，不受完整 Chrome 的输入失效问题影响
+    headless:
+      opts.mode === 'headless' ? (/headless-shell/.test(chromePath) ? 'shell' : true) : false,
     userDataDir: opts.profileDir,
     env: browserEnv({ ...process.env, ...opts.env }) as Record<string, string | undefined>,
     defaultViewport: null,

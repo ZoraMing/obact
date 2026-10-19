@@ -353,6 +353,7 @@ workspace/
 | 选择顺序 | 配置或 `CHROME_PATH` 指定的 → 用户机器上的 Chrome / Chromium → 提示安装推荐版本 |
 | 官方 Chrome | 可用。Chrome 137 起官方版不再支持命令行加载扩展，所以第一阶段不做扩展，界面提示走页面提示条和终端（FR-29） |
 | 测试环境 | 基准版本 Chrome for Testing 141.0.7390.122：开发容器、本机、CI 都用它跑全套测试，必须全绿；`tools/browser.ts` 是版本号的唯一来源。最新稳定版 Chrome 定期（每周或发布前）只跑核心测试，不卡每次提交；下限不单独测，用户反馈某版本不行再补 |
+| 无头 | 无头模式用 chrome-headless-shell（与 Chrome for Testing 同版本发布，`obact browser install` 一并安装）；完整 Chrome 的无头/有头在点击引起整页导航后可能收不到输入，见 docs/spikes/M0-spikes.md 第 6 节 |
 | 升级 | 改基准版本号 → 全套测试通过 → 再更新推荐版本与区间 |
 
 ### 8.2 技术决策

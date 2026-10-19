@@ -7,13 +7,15 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Browser } from 'puppeteer-core';
-import { MISSING, testChrome } from '../../../tools/browser.ts';
+import { MISSING, testChrome, testFullChrome } from '../../../tools/browser.ts';
 import { launchBrowser, Session } from '../src/index.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO = join(here, '..', '..', '..');
 
 export const CHROME = await testChrome();
+/** 有头测试需要完整 Chrome（chrome-headless-shell 不能有头）。 */
+export const FULL_CHROME = await testFullChrome();
 /** 传给 describe/test 的 skip 选项：没有浏览器时跳过并说明原因。 */
 export const SKIP: false | string = CHROME ? false : MISSING;
 
