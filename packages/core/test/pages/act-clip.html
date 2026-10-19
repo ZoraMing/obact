@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>滚动容器裁剪</title>
+<style>
+  body { margin: 0; padding: 20px; font: 14px sans-serif; }
+  /* 外层容器 200 高，内层再套一个 100 高的滚动容器；撑开高度刻意取小，使按钮的几何位置仍在页面视口内（被两层容器裁掉） */
+  #outer { height: 200px; width: 400px; overflow: auto; border: 1px solid #888; }
+  #inner { height: 100px; width: 300px; overflow: auto; border: 1px solid #ccc; }
+  .spacer { height: 300px; }
+  #inner .spacer { height: 150px; }
+  /* position:fixed 的按钮不受祖先 overflow 裁剪：不能因此把它判成“被裁掉”而去滚动容器 */
+  #pinned { position: fixed; left: 500px; top: 400px; }
+</style>
+</head>
+<body>
+<div id="outer">
+  <div class="spacer"></div>
+  <div id="inner">
+    <div class="spacer"></div>
+    <button type="button" id="deep">容器里的按钮</button>
+  </div>
+  <button type="button" id="pinned">固定按钮</button>
+</div>
+<script>
+  window.events = [];
+  for (const id of ['deep', 'pinned']) {
+    document.getElementById(id).addEventListener('click', () => window.events.push(id));
+  }
+</script>
+</body>
+</html>

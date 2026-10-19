@@ -835,7 +835,8 @@ async function scrollIntoView(env: Env): Promise<Item[]> {
   // 两种位置：按钮在视口外（常见的“滚动到可见”）；按钮几何上在视口内、却被容器裁掉（UI Testing Playground 的
   // Overlapped Element、Scrollbars 就是这一类：视口够高，页面不用滚，要滚的是容器）。
   const cases = [
-    { row: 'R00018', height: null, inView: false, label: '在视口外，被滚动容器裁掉' },
+    // 视口高度显式指定：默认视口随浏览器（完整 Chrome 713、headless-shell 800）而变，行 18 的按钮底边在 772，不能依赖默认值
+    { row: 'R00018', height: 700, inView: false, label: '在视口外，被滚动容器裁掉' },
     { row: 'R00017', height: 900, inView: true, label: '在视口内，但被滚动容器裁掉' },
   ];
   for (const c of cases) {

@@ -1,5 +1,5 @@
-import { existsSync, realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { existsSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { KeyInput, Page } from 'puppeteer-core';
 import { ObactError } from '../errors.ts';
 
@@ -29,23 +29,50 @@ export async function within<T, F>(p: Promise<T>, ms: number, fallback: F): Prom
 export function resolveInside(root: string, path: string, mustExist: boolean): string {
   const base = resolve(root);
   const full = resolve(base, path);
+  // 名字以 .. 开头的合法文件（如 ..hidden.txt）不算越界：只有恰好是 .. 或以 ../ 开头才算
   const outside = (p: string, b: string) => {
     const rel = relative(b, p);
-    return rel.startsWith('..') || isAbsolute(rel);
+    return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
   };
   if (outside(full, base)) {
     throw new ObactError('path_outside_workspace', `路径越出工作区：${path}`, { path, root: base });
   }
-  if (mustExist) {
-    if (!existsSync(full)) throw new ObactError('invalid_params', `文件不存在：${path}`, { path });
-    if (outside(realpathSync(full), realpathSync(base))) {
-      throw new ObactError('path_outside_workspace', `路径经符号链接越出工作区：${path}`, {
-        path,
-        root: base,
-      });
-    }
+  if (mustExist && !existsSync(full)) {
+    throw new ObactError('invalid_params', `文件不存在：${path}`, { path });
+  }
+  // 目标不存在（要新建）时也要防符号链接：找最深的已存在祖先做 realpath，悬空链接按指向位置展开
+  if (outside(realpathLoose(full), realpathLoose(base))) {
+    throw new ObactError('path_outside_workspace', `路径经符号链接越出工作区：${path}`, {
+      path,
+      root: base,
+    });
   }
   return full;
+}
+
+/** realpath 的宽松版：路径（或其一部分）不存在时，对最深的已存在祖先取 realpath 再接上剩余部分。 */
+function realpathLoose(p: string, depth = 0): string {
+  if (depth > 32) throw new ObactError('invalid_params', `符号链接层数过多：${p}`, { path: p });
+  const tail: string[] = [];
+  let cur = p;
+  for (;;) {
+    try {
+      return join(realpathSync(cur), ...tail);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw e;
+      let link: string | undefined;
+      try {
+        link = readlinkSync(cur);
+      } catch {}
+      if (link !== undefined)
+        return join(realpathLoose(resolve(dirname(cur), link), depth + 1), ...tail);
+      const parent = dirname(cur);
+      if (parent === cur) throw e;
+      tail.unshift(basename(cur));
+      cur = parent;
+    }
+  }
 }
 
 const MODIFIERS: Record<string, 'Alt' | 'Control' | 'Meta' | 'Shift'> = {

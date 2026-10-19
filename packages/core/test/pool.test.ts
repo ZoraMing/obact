@@ -442,6 +442,17 @@ describe('浏览器池', { skip: SKIP, timeout: 180_000 }, () => {
     assert.equal(pool.list()[0]?.leases, 1);
   });
 
+  test('浏览器卡死（进程被冻结）：探活超时后杀掉重启；探活不能被缓存的结果糊弄', async () => {
+    const pool = mkPool({ probeTimeoutMs: 800 });
+    const lease = await pool.acquire('frozen');
+    await pool.acquire('frozen'); // 复用一次：探活成功过之后，卡死的浏览器也必须探得出来
+    process.kill(lease.pid, 'SIGSTOP');
+    const again = await pool.acquire('frozen');
+    assert.notEqual(again.pid, lease.pid);
+    assert.equal(await (await again.browser.newPage()).evaluate(() => 1 + 1), 2);
+    assert.equal(alive(lease.pid), false, '冻结的旧浏览器已被杀掉');
+  });
+
   test('没指定浏览器：acquire 直接报 invalid_params，不留下半成品', async () => {
     const saved = process.env.CHROME_PATH;
     delete process.env.CHROME_PATH;

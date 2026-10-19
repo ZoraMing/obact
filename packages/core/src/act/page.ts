@@ -113,20 +113,92 @@ export function obActViewport(): { w: number; h: number } {
 }
 
 /**
- * 候选点击点：取元素在视口内面积最大的一段 client rect（换行的行内元素有多段），
+ * 元素当前真正能被看到的区域 [左, 上, 右, 下]（本 frame 的 client 坐标）：视口与各级裁剪祖先的内边距盒取交集。
+ * 只算会裁剪它的祖先（overflow 不是 visible 的），而且要沿“包含块链”判断：
+ * - 普通流/相对/粘性定位的元素，被所有这样的祖先裁剪；
+ * - absolute 元素不被它与包含块之间的祖先裁剪；fixed 元素除非有 transform、filter 等祖先充当包含块，否则不被任何祖先裁剪。
+ * 目标在视口内却被滚动容器裁掉时，点击点必须落在容器内的可见部分，否则会落到容器外面的元素上。
+ */
+export function obActClip(el: Element): [number, number, number, number] {
+  const vp = obActViewport();
+  let l = 0;
+  let t = 0;
+  let r = vp.w;
+  let b = vp.h;
+  const html = document.documentElement;
+  const parentOf = (n: Element): Element | null => {
+    const p: Node | null = n.assignedSlot ?? n.parentNode;
+    return p instanceof ShadowRoot ? p.host : p instanceof Element ? p : null;
+  };
+  // 祖先是否充当 absolute/fixed 后代的包含块（transform、filter、contain 等）
+  const containsFixed = (st: CSSStyleDeclaration): boolean =>
+    st.transform !== 'none' ||
+    st.translate !== 'none' ||
+    st.rotate !== 'none' ||
+    st.scale !== 'none' ||
+    st.perspective !== 'none' ||
+    st.filter !== 'none' ||
+    (st.backdropFilter !== 'none' && st.backdropFilter !== '') ||
+    /paint|layout|strict|content/.test(st.contain) ||
+    /transform|perspective|filter/.test(st.willChange) ||
+    (st.containerType !== 'normal' && st.containerType !== '');
+  let pos = getComputedStyle(el).position;
+  let a = parentOf(el);
+  for (let i = 0; i < 128 && a && a !== html; i++, a = parentOf(a)) {
+    const st = getComputedStyle(a);
+    if (st.display === 'contents') continue;
+    if (pos === 'fixed' && !containsFixed(st)) continue;
+    if (pos === 'absolute' && st.position === 'static' && !containsFixed(st)) continue;
+    // a 是当前元素的包含块（或在包含块链上）：先应用它的裁剪，再以它为基准往上找
+    pos = st.position;
+    const clipX = st.overflowX !== 'visible';
+    const clipY = st.overflowY !== 'visible';
+    if (!clipX && !clipY) continue;
+    // body 的 overflow 在 html 不裁剪时会传给视口，视口已经算过了
+    if (a === document.body && getComputedStyle(html).overflow === 'visible') continue;
+    // 行内元素的 overflow 不生效
+    if (st.display === 'inline' && a instanceof HTMLElement) continue;
+    const rect = a.getBoundingClientRect();
+    let bl = rect.left;
+    let bt = rect.top;
+    let br = rect.right;
+    let bb = rect.bottom;
+    if (a instanceof HTMLElement && a.offsetWidth > 0 && a.offsetHeight > 0) {
+      // 内边距盒：去掉边框和滚动条（client* 是未变换的尺寸，按当前缩放换算）
+      const sx = rect.width / a.offsetWidth;
+      const sy = rect.height / a.offsetHeight;
+      bl = rect.left + a.clientLeft * sx;
+      bt = rect.top + a.clientTop * sy;
+      br = bl + a.clientWidth * sx;
+      bb = bt + a.clientHeight * sy;
+    }
+    if (clipX) {
+      l = Math.max(l, bl);
+      r = Math.min(r, br);
+    }
+    if (clipY) {
+      t = Math.max(t, bt);
+      b = Math.min(b, bb);
+    }
+  }
+  return [l, t, r, b];
+}
+
+/**
+ * 候选点击点：取元素在可见区域（视口减去祖先裁剪）内面积最大的一段 client rect，
  * 先取其可见部分的中心，再取四个象限的中心作为备选（部分被吸顶栏等盖住时仍能命中）。
  */
 export function obActPoints(el: Element): { points: [number, number][]; inView: boolean } {
-  const vp = obActViewport();
+  const [cl, ct, cr, cb] = obActClip(el);
   let best: { l: number; t: number; r: number; b: number; area: number } | null = null;
   let any: DOMRect | null = null;
   for (const rect of el.getClientRects()) {
     if (rect.width <= 0 || rect.height <= 0) continue;
     if (!any || rect.width * rect.height > any.width * any.height) any = rect;
-    const l = Math.max(rect.left, 0);
-    const t = Math.max(rect.top, 0);
-    const r = Math.min(rect.right, vp.w);
-    const b = Math.min(rect.bottom, vp.h);
+    const l = Math.max(rect.left, cl);
+    const t = Math.max(rect.top, ct);
+    const r = Math.min(rect.right, cr);
+    const b = Math.min(rect.bottom, cb);
     const area = Math.max(0, r - l) * Math.max(0, b - t);
     if (area > 0 && (!best || area > best.area)) best = { l, t, r, b, area };
   }
@@ -256,8 +328,9 @@ export function obActFrameHit(
   const st = getComputedStyle(frameEl);
   const px = x + r.left + (parseFloat(st.borderLeftWidth) || 0) + (parseFloat(st.paddingLeft) || 0);
   const py = y + r.top + (parseFloat(st.borderTopWidth) || 0) + (parseFloat(st.paddingTop) || 0);
-  const vp = obActViewport();
-  const inView = px >= 0 && py >= 0 && px < vp.w && py < vp.h;
+  // iframe 元素自己也可能被父文档里的滚动容器裁掉
+  const [cl, ct, cr, cb] = obActClip(frameEl);
+  const inView = px >= cl && py >= ct && px < cr && py < cb;
   if (!inView) return { ok: false, inView, x: px, y: py, desc: '' };
   const hit = obActDeepHit(px, py);
   const ok = hit === frameEl || obActHits(frameEl, hit);
@@ -756,6 +829,7 @@ export const ACT_DEPS = [
   obActVisible,
   obActLabelProxy,
   obActViewport,
+  obActClip,
   obActPoints,
   obActProbe,
   obActRecheck,

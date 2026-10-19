@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import type { Browser } from 'puppeteer-core';
 import { type LaunchOptions, launchBrowser, resolveChromePath } from './browser.ts';
 import { ObactError } from './errors.ts';
+import { checkBrowserVersion } from './version.ts';
 
 const ACCOUNT = /^[A-Za-z0-9_.-]{1,64}$/;
 
@@ -60,6 +61,9 @@ export type PoolEntryInfo = {
 /** 浏览器退出事件：unexpected 为 true 表示不是池主动关的（崩溃、被外部杀掉）。 */
 export type PoolExit = { account: string; pid: number; unexpected: boolean };
 
+/** 浏览器启动后的警告（目前只有版本低于已验证区间，PRD 8.3）；每个浏览器进程启动时最多一次。 */
+export type PoolWarning = { account: string; pid: number; message: string };
+
 type Entry = {
   account: string;
   profileDir: string;
@@ -98,6 +102,19 @@ async function race(ms: number, p: Promise<unknown>): Promise<'ok' | 'timeout'> 
     ]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * 一次真正的 CDP 往返（浏览器级会话发 Browser.getVersion）。不能用 browser.version() 探活：
+ * puppeteer 会缓存它的结果，第一次成功之后，卡死或已被杀的浏览器也会“探活成功”。
+ */
+async function ping(browser: Browser): Promise<void> {
+  const session = await browser.target().createCDPSession();
+  try {
+    await session.send('Browser.getVersion');
+  } finally {
+    await session.detach().catch(() => {});
   }
 }
 
@@ -166,7 +183,10 @@ async function startXvfb(): Promise<XvfbHandle> {
  * - 有头模式在没有显示器的 Linux 上由池启动 Xvfb，closeAll 时关掉。
  * 并行与排队规则放 M4。
  */
-export class BrowserPool extends EventEmitter<{ exit: [info: PoolExit] }> {
+export class BrowserPool extends EventEmitter<{
+  exit: [info: PoolExit];
+  warning: [info: PoolWarning];
+}> {
   readonly root: string;
   readonly mode: NonNullable<LaunchOptions['mode']>;
   readonly #chromePath: string | undefined;
@@ -302,7 +322,7 @@ export class BrowserPool extends EventEmitter<{ exit: [info: PoolExit] }> {
   async #healthy(e: Entry): Promise<boolean> {
     if (!e.browser.connected || hasExited(e.proc)) return false;
     try {
-      return (await race(this.#probeTimeoutMs, e.browser.version())) === 'ok';
+      return (await race(this.#probeTimeoutMs, ping(e.browser))) === 'ok';
     } catch {
       return false;
     }
@@ -347,7 +367,16 @@ export class BrowserPool extends EventEmitter<{ exit: [info: PoolExit] }> {
     const gone = () => this.#onGone(entry);
     browser.once('disconnected', gone);
     proc.once('exit', gone);
+    await this.#warnVersion(entry);
     return entry;
+  }
+
+  /** 浏览器版本不在已验证区间时发出一次 'warning'；检测本身失败不影响使用。 */
+  async #warnVersion(entry: Entry): Promise<void> {
+    const v = await checkBrowserVersion(entry.browser).catch(() => null);
+    if (v?.warning) {
+      this.emit('warning', { account: entry.account, pid: entry.pid, message: v.warning });
+    }
   }
 
   async #launchError(account: string, profileDir: string, cause: unknown): Promise<ObactError> {

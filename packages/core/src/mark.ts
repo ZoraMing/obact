@@ -1,4 +1,5 @@
 import type { CDPSession, Frame, Page } from 'puppeteer-core';
+import { BANNER_ATTR } from './banner.ts';
 import { bundle } from './page/bundle.ts';
 import { DOM_LIB, obMark } from './page/dom.ts';
 import type { Session } from './session.ts';
@@ -34,8 +35,8 @@ const NATIVE = new Set([
   'BODY',
 ]);
 
-const SET_CLOSED_ROOT =
-  'function () { const r = this.getRootNode(); if (r instanceof ShadowRoot) Object.defineProperty(r.host, "__obactClosedRoot", { value: r, configurable: true }); }';
+// 页面提示条（banner.ts）的宿主不暴露：observe 与 act 看不到条里的文字，也不会把它当成页面内容
+const SET_CLOSED_ROOT = `function () { const r = this.getRootNode(); if (r instanceof ShadowRoot && !r.host.hasAttribute("${BANNER_ATTR}")) Object.defineProperty(r.host, "__obactClosedRoot", { value: r, configurable: true }); }`;
 const SET_CLICKABLE =
   'function () { Object.defineProperty(this, "__obactClickable", { value: true, configurable: true }); }';
 

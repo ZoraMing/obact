@@ -224,6 +224,23 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.ok((await events(pageId)).includes('far:true'));
   });
 
+  test('目标被祖先滚动容器裁掉时先滚动容器再点；position:fixed 的元素不算被裁掉', async () => {
+    const pageId = await env.open('/pages/act-clip.html');
+    const page = env.session.pages.get(pageId);
+    const scrolls = () =>
+      page.evaluate(() => [
+        (document.getElementById('outer') as HTMLElement).scrollTop,
+        (document.getElementById('inner') as HTMLElement).scrollTop,
+      ]);
+    // 按钮的几何位置在 800 高的视口内，被两层 overflow 容器裁掉
+    await ok({ op: 'click', pageId, target: { css: '#pinned' } });
+    assert.deepEqual(await scrolls(), [0, 0], '固定定位的按钮不该触发容器滚动');
+    await ok({ op: 'click', pageId, target: { css: '#deep' } });
+    const [outer, inner] = await scrolls();
+    assert.ok((outer ?? 0) > 0 && (inner ?? 0) > 0, `两层容器都应滚动：${outer} ${inner}`);
+    assert.deepEqual(await events(pageId), ['pinned', 'deep']);
+  });
+
   test('对话框：alert 记为 pending、阻塞后续动作、handle_dialog 处理；confirm 取消；prompt 填写', async () => {
     const pageId = await open();
     const r = await ok({ op: 'click', pageId, target: { css: '#alert' } });
