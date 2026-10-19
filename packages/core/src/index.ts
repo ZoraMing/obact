@@ -12,6 +12,13 @@ export {
 export { asObactError, type ErrorCode, ObactError } from './errors.ts';
 export { generateLocator, generateLocatorForHandle, locatorAtPoint } from './locator/index.ts';
 export { exposeForMarking, type FrameRefs, markPage } from './mark.ts';
+export {
+  getByPath,
+  type NetworkAttachOptions,
+  NetworkCache,
+  type NetworkEntry,
+  type NetworkWaitOptions,
+} from './network.ts';
 export { type ObserveOptions, observe } from './observe/index.ts';
 export { matchSignature } from './observe/signature.ts';
 export { PageRegistry } from './pages.ts';
