@@ -66,4 +66,4 @@ python3 -m venv .venv
 .venv/bin/pytest python  # 与 TS 端共用同一批契约样例
 ```
 
-修改 Schema 后运行 `npm run gen:types`。预研脚本的用法见 [M0 预研结论](docs/spikes/M0-spikes.md)；需要本机 Chrome 时用 `CHROME_PATH` 指定。
+修改 Schema 后运行 `npm run gen:types`。预研脚本的用法见 [M0 预研结论](docs/spikes/M0-spikes.md)；其中扩展加载、OOPIF 两个脚本要完整 Chrome，默认的 chrome-headless-shell 跑不出文档里的结果：加 `HEADED=1 xvfb-run -a`，或把 `CHROME_PATH` 设成完整 Chrome。
