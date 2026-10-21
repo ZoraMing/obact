@@ -6,6 +6,7 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 
 - [PRD v1.5.2](docs/PRD.md)：第一阶段需求基线
 - [开发计划](docs/DEV_PLAN.md)：里程碑、任务拆分、测试矩阵、并行开发规则
+- [M2 工作计划](docs/M2_PLAN.md)、[工作流引擎设计](packages/workflow/DESIGN.md)
 - [M0 预研结论](docs/spikes/M0-spikes.md)
 - [数据契约](packages/schemas/README.md)
 
@@ -15,20 +16,22 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 |---|---|
 | `packages/schemas/` | JSON Schema 数据契约、生成的 TS 类型、契约样例 |
 | `packages/core/` | 观察与执行内核：浏览器启动、标签页、编号、定位器、`observe`、`act`、断言 |
+| `packages/workflow/` | 工作流引擎（M2 进行中）：模板、参数库、工作区文件、加载校验、运行目录存储、页面抽取、采集输出、最小监督；runner 与命令行还没有 |
 | `python/` | Python 包 `obact`（目前只有契约校验） |
 | `fixtures/` | 本地夹具库（12 类确定性页面与接口，PRD 9.3）和它们的测试 |
 | `lab/` | Obact Lab 测试应用：数据空间、重置/状态/故障注入三个接口，登录、订单后台、复杂结构、干扰层四个模块 |
 | `bench/` | 基准与对照：BW-3、6、7、12 基准脚本，BW-14 组件识别对照，MiniWoB++ 任务（用法见 `bench/README.md`） |
 | `spikes/` | M0 预研脚本 |
+| `tools/` | 测试与基准共用的浏览器安装与取路径（`npm run browser:install`、`node tools/browser.ts path`）、静态文件的路径解析 |
 
-后续模块（server、workflow、recorder、extension）按开发计划第 3 节在各里程碑加入。当前进度见 [开发计划](docs/DEV_PLAN.md) 的总览。
+后续模块（server、recorder）按开发计划第 3 节在各里程碑加入；第一阶段不做浏览器扩展。当前进度见 [开发计划](docs/DEV_PLAN.md) 的总览。
 
 ## 试用 observe / act
 
-服务与统一接口在 M4 提供，目前可以直接调用 `packages/core` 的库，或用交互脚本试：
+服务与统一接口在 M4 提供，目前可以直接调用 `packages/core` 的库，或用交互脚本试。先运行 `npm run browser:install` 装好浏览器（见下面“开发”一节）；脚本本身只认环境变量 `CHROME_PATH`，用 `node tools/browser.ts path` 把装好的浏览器路径传给它：
 
 ```bash
-CHROME_PATH=/path/to/chrome node packages/core/examples/try.ts https://example.com
+CHROME_PATH=$(node tools/browser.ts path) node packages/core/examples/try.ts https://example.com
 ```
 
 脚本先打印页面的两部分：
