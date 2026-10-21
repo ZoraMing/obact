@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertAccountName,
   BrowserPool,
+  connectBrowser,
   observe,
   type PoolExit,
   type PoolOptions,
@@ -207,17 +208,15 @@ describe('浏览器池', { skip: SKIP, timeout: 180_000 }, () => {
     assert.equal(a1.pid, a2.pid);
     assert.equal(a1.pid, a3.pid);
     assert.equal(a1.wsEndpoint, a2.wsEndpoint);
-    assert.equal(a1.browser, a3.browser, '并发 acquire 共用同一次启动');
     const a4 = await pool.acquire('alice');
     assert.equal(a4.pid, a1.pid);
     assert.equal(a4.wsEndpoint, a1.wsEndpoint);
-    assert.equal(a4.browser, a1.browser);
+    assert.equal(new Set([a1, a2, a3, a4].map((l) => l.browser)).size, 4, '每次 acquire 一条连接');
     assert.match(a1.wsEndpoint, /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\//, '只绑定本机');
 
     const bob = await pool.acquire('bob');
     assert.notEqual(bob.pid, a1.pid);
     assert.notEqual(bob.wsEndpoint, a1.wsEndpoint);
-    assert.notEqual(bob.browser, a1.browser);
     assert.equal(a1.profileDir, join(pool.root, 'alice'));
     assert.equal(bob.profileDir, join(pool.root, 'bob'));
     assert.ok(existsSync(join(a1.profileDir, 'Default')), 'alice 的配置目录被浏览器实际使用');
@@ -240,10 +239,12 @@ describe('浏览器池', { skip: SKIP, timeout: 180_000 }, () => {
         `启动时间 ${e.startedAt}`,
       );
     }
-    // release 只减计数，浏览器不关
+    // release 只减计数，浏览器不关；传租约时断开这次借出的连接，重复归还不重复计数
     pool.release('alice');
-    pool.release(a1);
+    pool.release(a4);
+    pool.release(a4);
     assert.equal(pool.list().find((e) => e.account === 'alice')?.leases, 2);
+    assert.equal(a4.browser.connected, false);
     assert.ok(alive(a1.pid));
 
     // 登录态隔离：alice 写了 Cookie 和 localStorage，bob 看不到
@@ -361,6 +362,31 @@ describe('浏览器池', { skip: SKIP, timeout: 180_000 }, () => {
     assert.ok(ob.elements.some((e) => e.name === '保存登录态'));
     await session.close(); // 只断开，浏览器由池管理
     assert.ok(alive(lease.pid));
+  });
+
+  test('对租约的 browser 做 Session.close() 只断开这一条连接：浏览器、池登记和别的连接不受影响，也不算意外退出', async () => {
+    const pool = mkPool();
+    const events: PoolExit[] = [];
+    pool.on('exit', (e) => events.push(e));
+    const lease = await pool.acquire('shared');
+    const other = await pool.acquire('shared');
+    const task = await connectBrowser(lease.wsEndpoint); // 模拟另一个任务进程
+    const session = await Session.attach(lease.browser);
+    await session.close();
+    assert.equal(lease.browser.connected, false);
+    // 池没有把它当成崩溃：登记还在，没有退出事件；连接还在的各方照常工作
+    assert.deepEqual(
+      pool.list().map((e) => [e.account, e.pid]),
+      [['shared', lease.pid]],
+    );
+    assert.deepEqual(events, []);
+    assert.equal(await (await other.browser.newPage()).evaluate(() => 1 + 1), 2);
+    assert.match(await task.version(), /Chrome/);
+    assert.equal(task.connected, true);
+    const again = await pool.acquire('shared');
+    assert.equal(again.pid, lease.pid, '复用原来的浏览器');
+    assert.ok(alive(lease.pid));
+    task.disconnect();
   });
 
   test('closeAll 后用同一个根目录重新起池：持久 Cookie 和 localStorage 还在（登录态复用）', async () => {

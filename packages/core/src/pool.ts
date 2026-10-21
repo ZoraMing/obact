@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { lstat, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Browser } from 'puppeteer-core';
-import { type LaunchOptions, launchBrowser, resolveChromePath } from './browser.ts';
+import { connectBrowser, type LaunchOptions, launchBrowser, resolveChromePath } from './browser.ts';
 import { ObactError } from './errors.ts';
 import { checkBrowserVersion } from './version.ts';
 
@@ -35,7 +35,10 @@ export type PoolOptions = {
   probeTimeoutMs?: number;
 };
 
-/** acquire 的返回：任务进程拿 wsEndpoint 用 connectBrowser 连接；browser 是池进程自己持有的连接。 */
+/**
+ * acquire 的返回：任务进程拿 wsEndpoint 用 connectBrowser 连接；browser 是这次 acquire 单独建的连接
+ * （不与池自己的连接、别的租约共用），对它 Session.close() 或 disconnect() 只断开这一条，不影响浏览器。
+ */
 export type PoolLease = {
   account: string;
   wsEndpoint: string;
@@ -179,6 +182,7 @@ async function startXvfb(): Promise<XvfbHandle> {
  * 最小浏览器池（FR-01、FR-02 登录态复用、FR-03 最小部分）：
  * - 每个账号一个独立配置目录 <root>/<账号> 和一个浏览器；同一账号复用已在运行的浏览器。
  * - 浏览器由池进程启动，任务进程只用 wsEndpoint 连接（connectBrowser），任务进程崩溃或被杀不影响浏览器。
+ * - 池自己的连接私有，用来探活和判断浏览器是否退出；租约的 browser 是另建的连接，调用方断开它不会被当成浏览器崩溃。
  * - 浏览器意外退出会自动从池中移除，下次 acquire 重新启动（配置目录不变，持久 Cookie 保留）。
  * - 有头模式在没有显示器的 Linux 上由池启动 Xvfb，closeAll 时关掉。
  * 并行与排队规则放 M4。
@@ -194,6 +198,8 @@ export class BrowserPool extends EventEmitter<{
   readonly #closeTimeoutMs: number;
   readonly #probeTimeoutMs: number;
   readonly #entries = new Map<string, Entry>();
+  /** 已借出、还没归还的租约连接 → 它所连的浏览器；release 据此识别租约并断开它。 */
+  readonly #lent = new WeakMap<Browser, Entry>();
   /** 每个账号同一时刻只有一个“探活 + 启动”在进行，并发的 acquire 共用它。 */
   readonly #ensuring = new Map<string, Promise<Entry>>();
   /** 已被移出池、进程还没退干净的浏览器（按账号）。 */
@@ -227,31 +233,56 @@ export class BrowserPool extends EventEmitter<{
     return join(this.root, account);
   }
 
-  /** 取得账号的浏览器：已在运行就复用，没有或已退出就启动。 */
+  /** 取得账号的浏览器：已在运行就复用，没有或已退出就启动。每次返回一条单独的连接（lease.browser）。 */
   async acquire(account: string): Promise<PoolLease> {
     assertAccountName(account);
-    while (this.#closing) await this.#closing;
-    const entry = await this.#ensure(account);
-    entry.leases++;
-    return {
-      account,
-      wsEndpoint: entry.wsEndpoint,
-      browser: entry.browser,
-      pid: entry.pid,
-      profileDir: entry.profileDir,
-    };
+    for (;;) {
+      while (this.#closing) await this.#closing;
+      const entry = await this.#ensure(account);
+      let browser: Browser;
+      try {
+        browser = await connectBrowser(entry.wsEndpoint);
+      } catch (e) {
+        if (this.#gone(entry)) continue; // 连接期间浏览器被关了：从头来过
+        throw e;
+      }
+      if (this.#gone(entry)) {
+        browser.disconnect().catch(() => {});
+        continue;
+      }
+      this.#lent.set(browser, entry);
+      entry.leases++;
+      return {
+        account,
+        wsEndpoint: entry.wsEndpoint,
+        browser,
+        pid: entry.pid,
+        profileDir: entry.profileDir,
+      };
+    }
   }
 
   /**
    * 归还一次 acquire。浏览器不会因此关闭（登录态要长期复用）。
-   * 传 acquire 的返回值时，若该浏览器已被替换（崩溃后重启），则忽略，不误减新浏览器的计数。
+   * 传 acquire 的返回值时，同时断开这次借出的连接；若该浏览器已被替换（崩溃后重启），则不误减新浏览器的计数。
+   * 传账号名只减计数，不断开连接（连接随浏览器退出或调用方的 disconnect 结束）。
    */
   release(target: string | Pick<PoolLease, 'account' | 'browser'>): void {
-    const account = typeof target === 'string' ? target : target.account;
-    const entry = this.#entries.get(account);
-    if (!entry) return;
-    if (typeof target !== 'string' && target.browser !== entry.browser) return;
-    if (entry.leases > 0) entry.leases--;
+    if (typeof target === 'string') {
+      const entry = this.#entries.get(target);
+      if (entry && entry.leases > 0) entry.leases--;
+      return;
+    }
+    const entry = this.#lent.get(target.browser);
+    if (!entry) return; // 不是本池借出的，或已经归还过
+    this.#lent.delete(target.browser);
+    target.browser.disconnect().catch(() => {});
+    if (this.#entries.get(entry.account) === entry && entry.leases > 0) entry.leases--;
+  }
+
+  /** 浏览器已被移出池或正在关闭。 */
+  #gone(entry: Entry): boolean {
+    return entry.closing || this.#entries.get(entry.account) !== entry;
   }
 
   /** 关闭一个账号的浏览器（优雅关闭，Cookie 落盘）。返回是否真的关了一个在运行的浏览器。 */
