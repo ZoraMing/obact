@@ -49,7 +49,7 @@ node --test "lab/test/**/*.test.ts"
 | `structure` 复杂结构 | `/structure`：同源与跨域 iframe、嵌套 frame、开放与封闭 Shadow DOM、新标签页、同名“查看”、动态 id 与哈希类名；`/structure/library`：Shoelace 组件库实现的差旅申请 | FR-04、FR-06、FR-07 |
 | `noise` 干扰层 | `/noise`：Cookie 提示条、1.5 秒透明遮挡层、布局偏移；`/noise/entry-ad`：每次都弹的 Entry Ad；`popup_rate` 让任意页面随机弹广告 | FR-13、FR-23 |
 
-后续模块（消息中心、申请向导、看板与画布、实时面板、大表与数据、文件区、设置页）按开发计划在 M2、M5 加入。
+后续模块按开发计划加入：大表与数据、文件区在 M2，消息中心、申请向导、看板与画布、实时面板在 M5。设置页（PRD 9.3 列了它，覆盖 FR-12 的 alert / confirm / prompt）还没排进任何里程碑，目前由 `forms-files` 夹具顶替。
 
 ## 写新模块
 
