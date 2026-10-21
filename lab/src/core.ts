@@ -19,7 +19,7 @@ export type Faults = {
   delay_ms: number;
   /** 偶发 500 的比例，0~1。 */
   error_rate: number;
-  /** 丢弃响应（直接断开连接）的比例，0~1。 */
+  /** 丢弃响应（直接断开连接）的比例，0~1。commit 写接口先照常执行并落库再断开，读接口直接断开。 */
   drop_rate: number;
   /** 提交超时但已落库：标记为 commit 的写接口照常执行并记录，然后不返回响应（挂起直到客户端放弃）。 */
   commit_timeout: boolean;

@@ -134,4 +134,18 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal((s.modules.counter as { n: number }).n, 3, '已落库');
     assert.equal(s.submissions.find((x) => x.key === 'once')?.count, 1);
   });
+
+  test('故障：丢弃响应对写接口是“已落库但连接被断开”，重试同一个键才会被记成重复', async () => {
+    const c = control(lab, 'dw');
+    await c.faults({ drop_rate: 1 });
+    await assert.rejects(post('dw', '/api/counter/4', { key: 'dropped' }));
+    await c.faults({ drop_rate: 0 });
+    const s = await c.state();
+    assert.equal((s.modules.counter as { n: number }).n, 4, '写操作已执行，不是请求没到服务端');
+    assert.equal(s.submissions.find((x) => x.key === 'dropped')?.count, 1);
+    assert.ok(s.log.some((x) => x.type === 'fault_drop'));
+    // 盲目重试的实现在对账里会露馅
+    await post('dw', '/api/counter/4', { key: 'dropped' });
+    assert.equal((await c.state()).submissions.find((x) => x.key === 'dropped')?.count, 2);
+  });
 });

@@ -298,8 +298,19 @@ export async function createLab(
       const f = space.faults;
       const rng = faultRng.get(space.id) as () => number;
       if (f.delay_ms > 0) await sleep(f.delay_ms);
+      // 提交超时与丢弃响应都是“写操作已执行、客户端拿不到响应”：把响应函数换成空操作再执行
+      const swallowResponse = () => {
+        ctx.json = () => {};
+        ctx.html = () => {};
+        ctx.redirect = () => {};
+      };
       if (f.drop_rate > 0 && rng() < f.drop_rate) {
         space.log.push({ at: new Date().toISOString(), type: 'fault_drop', detail: rest });
+        if (route.opts.commit) {
+          // 写接口照常执行并落库，再断开连接：客户端看到的是连接重置，状态未明
+          swallowResponse();
+          await route.handler(ctx);
+        }
         return void req.socket.destroy();
       }
       if (f.error_rate > 0 && rng() < f.error_rate) {
@@ -313,9 +324,7 @@ export async function createLab(
           type: 'fault_commit_timeout',
           detail: rest,
         });
-        ctx.json = () => {};
-        ctx.html = () => {};
-        ctx.redirect = () => {};
+        swallowResponse();
         await route.handler(ctx);
         return;
       }
