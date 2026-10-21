@@ -8,10 +8,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  BodyTooLarge,
   type Ctx,
   DEFAULT_FAULTS,
   esc,
   type LabModule,
+  MAX_BODY,
   page,
   parseFaults,
   parseReset,
@@ -96,7 +98,13 @@ function parseCookies(header: string | undefined): Record<string, string> {
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let size = 0;
+  // 超过上限后继续读完但不再缓存：内存有界，客户端也能收到 413 而不是连接重置
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size <= MAX_BODY) chunks.push(c as Buffer);
+  }
+  if (size > MAX_BODY) throw new BodyTooLarge(`请求体超过 ${MAX_BODY} 字节`);
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) return {};
   const type = req.headers['content-type'] ?? '';
@@ -154,7 +162,8 @@ export async function createLab(
   const bodyOrNull = async (ctx: Ctx): Promise<unknown> => {
     try {
       return await ctx.body();
-    } catch {
+    } catch (e) {
+      if (e instanceof BodyTooLarge) throw e;
       return null;
     }
   };
@@ -369,6 +378,10 @@ export async function createLab(
 
   const server = createServer((req, res) => {
     handle(req, res).catch((e) => {
+      if (e instanceof BodyTooLarge) {
+        if (!res.headersSent) res.writeHead(413, { 'content-type': 'application/json' });
+        return void res.end('{"error":"payload_too_large"}');
+      }
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(String((e as Error).stack ?? e));
     });

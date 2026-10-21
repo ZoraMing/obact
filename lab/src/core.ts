@@ -181,6 +181,12 @@ export type Ctx = {
   record(op: string, key: string | undefined, payload: unknown): Submission;
 };
 
+/** 请求体超过 MAX_BODY：由服务统一回 413（模块里捕获读体错误时要原样抛出）。 */
+export class BodyTooLarge extends Error {}
+
+/** 请求体大小上限（字节）：测试里的畸形输入或误传的大文件不能把共享机器的内存吃光。 */
+export const MAX_BODY = 1024 * 1024;
+
 export type Handler = (ctx: Ctx) => void | Promise<void>;
 
 export type RouteOpts = {

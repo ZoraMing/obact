@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createLab, type Lab } from '../src/app.ts';
-import { type LabModule, page, Router } from '../src/core.ts';
+import { type LabModule, MAX_BODY, page, Router } from '../src/core.ts';
 import { control } from './helpers.ts';
 
 /** 测试用的最小模块：一个计数器、一个需要登录的页面和一个写接口。 */
@@ -151,6 +151,19 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     const param = await post('pct', '/api/counter/%E0%A4%A', {});
     assert.equal(param.status, 400);
     assert.equal(((await c.state()).modules.counter as { n: number }).n, 0, '请求没有被执行');
+  });
+
+  test('请求体超过 1 MiB 回 413，不缓存也不执行；之后的请求照常', async () => {
+    const c = control(lab, 'big');
+    const r = await post('big', '/api/counter/1', { key: 'big', pad: 'x'.repeat(MAX_BODY + 1) });
+    assert.equal(r.status, 413);
+    assert.deepEqual(await r.json(), { error: 'payload_too_large' });
+    // 控制接口同样有上限，不会被当成“不是对象”回 400
+    assert.equal((await post('big', '/_lab/faults', { pad: 'x'.repeat(MAX_BODY) })).status, 413);
+    const s = await c.state();
+    assert.equal((s.modules.counter as { n: number }).n, 0, '超限的写请求没有执行');
+    assert.equal(s.submissions.length, 0);
+    assert.equal((await post('big', '/api/counter/1', { key: 'small' })).status, 200);
   });
 
   test('提交按幂等键计数', async () => {
