@@ -22,6 +22,18 @@ export type TextContext = {
   longText: number;
 };
 
+/**
+ * 这一行是否留在纯网页信息里：子 frame 占位、表格行（表头与数据行）、含信息文字的行都留；
+ * 只由编号占位、空白与 Markdown 列表/表格/引用符号组成的行（一排按钮、导航里的一排链接）不留，
+ * 这些元素已在 snapshot_text 里。占位只在与信息混排时（表格行、列表项）保留，用来对应信息与操作。
+ * 页面内（列表整体判定）与 Node 侧（applyBudget 过滤）共用这一份。
+ */
+export function obsKeepLine(l: TextLine): boolean {
+  return (
+    l.f !== undefined || l.tb === 1 || !/^[\s\-*>|:]*(?:\uE000\d+\uE001[\s|,，、:-]*)+$/.test(l.t)
+  );
+}
+
 export function obsText(c: TextContext): TextLine[] {
   const SKIP = new Set([
     'SCRIPT',
@@ -117,8 +129,8 @@ export function obsText(c: TextContext): TextLine[] {
       Math.min(r.right, c.clip[0] + c.clip[2]) > x && Math.min(r.bottom, c.clip[1] + c.clip[3]) > y
     );
   };
-  const emit = (t: string, v: boolean) => {
-    lines.push({ t: first + t, v: v ? 1 : 0 });
+  const emit = (t: string, v: boolean, tb = false) => {
+    lines.push(tb ? { t: first + t, v: v ? 1 : 0, tb: 1 } : { t: first + t, v: v ? 1 : 0 });
     first = rest;
   };
   const flush = () => {
@@ -274,7 +286,7 @@ export function obsText(c: TextContext): TextLine[] {
         firstCells.every((x) => x.tagName === 'TH' || x.getAttribute('role') === 'columnheader'));
     const data = isHead ? rows.slice(1) : rows;
     const cols = Math.max(1, ...rows.slice(0, 5).map((r) => cellsOf(r).length));
-    if (isHead) emit(fmt(first0), visOf(first0));
+    if (isHead) emit(fmt(first0), visOf(first0), true);
     else emit(`|${'   |'.repeat(cols)}`, visOf(first0));
     emit(`|${' --- |'.repeat(cols)}`, false);
     const keep = pick(data, c.tableRows);
@@ -282,7 +294,7 @@ export function obsText(c: TextContext): TextLine[] {
     for (const i of keep) {
       if (i !== prev + 1) emit('| … |', false);
       const r = data[i] as Element;
-      emit(fmt(r), visOf(r));
+      emit(fmt(r), visOf(r), true);
       prev = i;
     }
     const total = Number(el.getAttribute('aria-rowcount')) || 0;
@@ -306,10 +318,12 @@ export function obsText(c: TextContext): TextLine[] {
       return;
     }
     flush();
+    const start = lines.length;
     const base = rest;
     const saveFirst = first;
     const keep = pick(items, c.listItems);
     let prev = -1;
+    let hasInfo = false;
     for (const i of keep) {
       if (i !== prev + 1) {
         first = base;
@@ -317,8 +331,10 @@ export function obsText(c: TextContext): TextLine[] {
       }
       first = `${base}${ordered ? `${i + 1}.` : '-'} `;
       rest = `${base}  `;
+      const at = lines.length;
       walk(items[i] as Element, 0);
       flush();
+      if (lines.slice(at).some(obsKeepLine)) hasInfo = true;
       prev = i;
     }
     first = base;
@@ -327,6 +343,8 @@ export function obsText(c: TextContext): TextLine[] {
       if (prev < items.length - 1) emit('- …', false);
       emit(`（列表共 ${items.length} 项，列出 ${keep.length} 项）`, false);
     }
+    // 整张列表的项都只剩编号占位（如导航里的一排链接）：这些行会在 applyBudget 里被滤掉，“…”与计数也不留
+    if (!hasInfo) lines.length = start;
     first = saveFirst;
   };
 

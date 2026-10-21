@@ -567,6 +567,10 @@ export function obStates(el: Element): Record<string, boolean | string> {
   else if (aria('selected') !== null) s.selected = aria('selected') === 'true';
   if (aria('expanded') !== null) s.expanded = aria('expanded') === 'true';
   else if (tag === 'details') s.expanded = (el as HTMLDetailsElement).open;
+  // 列出的是 <summary>（details 本身不是可交互元素），展开与否取自它所在的 details
+  else if (tag === 'summary' && el.parentElement?.tagName === 'DETAILS') {
+    s.expanded = (el.parentElement as HTMLDetailsElement).open;
+  }
   if (obActiveElement() === el) s.focused = true;
   if (el.matches(':required') || aria('required') === 'true') s.required = true;
   // readOnly 只对文本类输入框和 textarea 有意义（复选框、按钮等也匹配 :read-only，不能用伪类）

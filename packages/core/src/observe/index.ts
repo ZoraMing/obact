@@ -5,7 +5,7 @@ import { markPage } from '../mark.ts';
 import { bundle } from '../page/bundle.ts';
 import { DOM_LIB } from '../page/dom.ts';
 import type { Session } from '../session.ts';
-import { applyBudget, type Item } from './format.ts';
+import { applyBudget, type Item, NAME_MAX } from './format.ts';
 import {
   type FrameCollect,
   OBS_LIB,
@@ -44,7 +44,8 @@ const LIMITS = {
   valueMax: 200,
   tableRows: 20,
   listItems: 30,
-  longText: 120,
+  // 与 snapshot_text 里名称的显示上限一致：文字超过它时名称在快照里是截断的，内容仍作为信息输出
+  longText: NAME_MAX,
 };
 
 const VIEWS = new Set(['text', 'screenshot', 'som', 'axtree']);

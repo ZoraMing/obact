@@ -19,7 +19,7 @@ import {
   obShadow,
   obStates,
 } from '../page/dom.ts';
-import { obsText } from './text.ts';
+import { obsKeepLine, obsText } from './text.ts';
 
 /** [x, y, width, height]；宽或高为 0 表示空区域。 */
 export type Rect = [number, number, number, number];
@@ -55,8 +55,11 @@ export type RawElement = {
   hint?: string;
 };
 
-/** 纯网页信息的一行：t 文本（可操作元素以 \uE000编号\uE001 占位），v 是否在视口内，f 子 frame 占位。 */
-export type TextLine = { t: string; v: number; f?: number };
+/**
+ * 纯网页信息的一行：t 文本（可操作元素以 \uE000编号\uE001 占位），v 是否在视口内，f 子 frame 占位，
+ * tb 表格的表头与数据行（只剩编号占位时也保留：列头与行结构不能丢）。
+ */
+export type TextLine = { t: string; v: number; f?: number; tb?: 1 };
 
 export type CollectOptions = {
   attr: string;
@@ -127,11 +130,14 @@ export function obsFoldDuplicates(listed: Map<Element, RawElement>): Set<RawElem
     return [area(g) > 0 ? ov / area(g) : 0, area(c) > 0 ? ov / area(c) : 0];
   };
   const sameName = (g: RawElement, c: RawElement) => !g.name || g.name === c.name;
-  // 向上（g 在带角色元素 c 的内部）：几乎重合，或 g 整个落在 c 的范围内（如 sl-radio 里的标签文字）
-  const dupInside = (g: RawElement, c: RawElement | undefined) => {
+  // 向上（g 在带角色元素 c 的内部）：几乎重合，或 g 整个落在 c 的范围内（如 sl-radio 里的标签文字）。
+  // 例外：无名但有提示词的图标，且与 c 在同一棵树里（卡片里的收藏星标、标签页的关闭叉：页面作者放进去的内容）
+  // 是独立的操作，不折叠；组件自己 Shadow DOM 里的无名外观才是同一控件的重复
+  const dupInside = (g: RawElement, c: RawElement | undefined, ge: Element, ce: Element) => {
     if (!c || c.role === 'generic' || !sameName(g, c)) return false;
     const [a, b] = cover(g.rect, c.rect);
-    return (a >= 0.6 && b >= 0.6) || a >= 0.9;
+    const own = Boolean(g.hint) && ge.getRootNode() === ce.getRootNode();
+    return (a >= 0.6 && b >= 0.6) || (a >= 0.9 && !own);
   };
   // 向下（g 是包着真控件 c 的宿主或外壳）：几乎重合；或 g 没有名称，c 占了它的大半（如 sl-select 外面的表单项容器）
   const dupWrap = (g: RawElement, c: RawElement | undefined) => {
@@ -145,7 +151,7 @@ export function obsFoldDuplicates(listed: Map<Element, RawElement>): Set<RawElem
     let up: Element | null = obsParent(el);
     let hit = false;
     for (let i = 0; i < 6 && up && !hit; i++, up = obsParent(up))
-      hit = dupInside(info, listed.get(up));
+      hit = dupInside(info, listed.get(up), el, up);
     // 向下：generic 是包着真控件的宿主或外壳（如 sl-button 宿主包着内部的 button）
     if (!hit) {
       let level = obsFlatChildren(el);
@@ -400,16 +406,32 @@ export function obsElement(
   const transparent = !proxy && shown && !el.checkVisibility({ opacityProperty: true });
   if (proxy || shown) {
     const fixed = getComputedStyle(geo).position === 'fixed';
-    const vis = obsIntersect(
-      obsIntersect(rect, o.clip),
-      fixed ? null : obsClipFor(obsParent(geo), clipCache),
-    );
+    const outer = fixed ? null : obsClipFor(obsParent(geo), clipCache);
+    const vis = obsIntersect(obsIntersect(rect, o.clip), outer);
     if (vis[2] > 0 && vis[3] > 0) {
       ratio = Math.max(0.001, Math.round(((vis[2] * vis[3]) / (r.width * r.height)) * 1000) / 1000);
-      const x = vis[0] + vis[2] / 2;
-      const y = vis[1] + vis[3] / 2;
-      const hit = obsHit(x, y);
-      const onTarget = hit !== null && (obsContains(geo, hit) || obsContains(el, hit));
+      let x = vis[0] + vis[2] / 2;
+      let y = vis[1] + vis[3] / 2;
+      const hitsTarget = (px: number, py: number) => {
+        const hit = obsHit(px, py);
+        return hit !== null && (obsContains(geo, hit) || obsContains(el, hit));
+      };
+      let onTarget = hitsTarget(x, y);
+      // 折行的内联元素（段落里换行的长链接）：包围盒中心可能落在两行之间，再逐个行盒取可见部分的中心试
+      const lineBoxes = onTarget ? [] : [...geo.getClientRects()];
+      if (lineBoxes.length > 1) {
+        for (const q of lineBoxes.slice(0, 8)) {
+          const v = obsIntersect(obsIntersect([q.left, q.top, q.width, q.height], o.clip), outer);
+          if (v[2] <= 0 || v[3] <= 0) continue;
+          const lx = v[0] + v[2] / 2;
+          const ly = v[1] + v[3] / 2;
+          if (!hitsTarget(lx, ly)) continue;
+          x = lx;
+          y = ly;
+          onTarget = true;
+          break;
+        }
+      }
       // 透明元素（opacity:0）：只有它本身是命中目标（透明覆盖在自绘外观上的原生控件）时才算可操作
       if (transparent && !onTarget && !formControl) return null;
       if (onTarget && !states.disabled) {
@@ -497,7 +519,9 @@ export function obsCollect(o: CollectOptions): FrameCollect {
     if (!info) continue;
     elements.push(info);
     listed.set(el, info);
-    // 控件的标签文字就是它的名称，纯网页信息里不再重复
+    // 控件的标签文字就是它的名称，纯网页信息里不再重复；名称超过 longText 时 snapshot_text 里是截断的，
+    // 完整文字（长协议、扣费说明）留在纯网页信息里
+    if (info.name.length > o.longText) continue;
     for (const l of obLabelsOf(el)) skip.add(l);
     const ids = el.getAttribute('aria-labelledby');
     if (ids) {
@@ -705,5 +729,6 @@ export const OBS_LIB = [
   obsSomShow,
   obsSomHide,
   obsCountLocator,
+  obsKeepLine,
   obsText,
 ];
