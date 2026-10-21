@@ -143,6 +143,47 @@ export function obRole(el: Element): string {
   return 'generic';
 }
 
+/**
+ * 敏感值字段（密码、令牌、验证码、银行卡等）。observe 与 act 共用这一份判定：命中的字段，值一律不外露
+ * （observe 显示 ***，act 的失败详情不写值），可访问性树里也不输出它的值。
+ * - input 的 type 为 password；
+ * - input、textarea、contenteditable、role=textbox 类元素：autocomplete 声明了密码、一次性验证码、银行卡信息，
+ *   或 name、id、aria-label、placeholder 里含敏感词。
+ * 敏感词分两类：password、secret、token 这类长词常写成 newpassword、authtoken 的连写，按子串匹配；
+ * otp、cvv、card 这类短词按词边界匹配（驼峰、下划线、连字符、数字都算边界），不误伤 cardinal、hotpot。
+ */
+export function obIsSensitive(el: Element): boolean {
+  const tag = el.tagName;
+  if (tag === 'INPUT' && (el as HTMLInputElement).type === 'password') return true;
+  const editable =
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) ||
+    ['textbox', 'searchbox', 'combobox'].includes(
+      el.getAttribute('role')?.trim().split(/\s+/)[0]?.toLowerCase() ?? '',
+    );
+  if (!editable) return false;
+  if (
+    /current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp/i.test(
+      el.getAttribute('autocomplete') ?? '',
+    )
+  ) {
+    return true;
+  }
+  // 驼峰拆成单词（apiKey → api key、OTPCode → otp code）并转小写，再按词匹配
+  const text = ['name', 'id', 'aria-label', 'placeholder']
+    .map((a) => el.getAttribute(a) ?? '')
+    .join(' ')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase();
+  return (
+    /passw|pwd|secret|token|api[-_ ]?key|access[-_ ]?key|credit[-_ ]?card|card[-_ ]?number|验证码|密码|口令|令牌|密钥/.test(
+      text,
+    ) || /(?<![a-z])(?:[th]?otp|cvv|cvc|card)(?![a-z])/.test(text)
+  );
+}
+
 /** label 的文字：不含其中表单控件（下拉框选项、文本框内容等）的文字；<slot> 展开成投影进来的内容。 */
 export function obLabelText(label: Element): string {
   let text = '';
@@ -215,8 +256,13 @@ export function obName(el: Element): string {
     'tooltip',
   ];
   const role = obRole(el);
+  // 可编辑区域（contenteditable、role=textbox/searchbox）的内容是它的值，不是名称：名称会随输入变化，值也会被重复写进 name
+  const editable =
+    role === 'textbox' ||
+    role === 'searchbox' ||
+    ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable'));
   // 可点击的行、列表项、单元格等（点击监听、onclick、pointer 推断）也按内容取名，后台系统里很常见
-  if (fromContent.includes(role) || obIsClickableGeneric(el)) {
+  if (!editable && (fromContent.includes(role) || obIsClickableGeneric(el))) {
     // 没有子元素时 textContent 折叠空白后与 innerText 相同，且不触发排版：
     // innerText 首次调用要为每个块建立排版映射，5000 个按钮约 2.6 秒（大表 observe 的主要耗时）
     const raw =
@@ -277,17 +323,24 @@ export function obContentText(el: Element): string {
  */
 export function obHint(el: Element): string {
   const GENERIC =
-    /^(icon|icons|btn|button|fa|fas|far|fab|material-icons|iconfont|svg|img|image|active|clicked|selected|disabled|left|right|small|large|sm|lg|md)$/i;
+    /^(icon|icons|btn|button|fa|fas|far|fab|anticon|glyphicon|bi|mdi|material-icons|iconfont|svg|img|image|active|clicked|selected|disabled|left|right|small|large|sm|lg|md)$/i;
+  // 图标库的类名前缀：去掉前缀就是图标名（fa-trash、el-icon-delete、anticon-plus、glyphicon-search、bi-gear）
+  const ICON = /^(icon|ico|fa|el-icon|ant-icon|anticon|glyphicon|bi|mdi)[-_]/i;
+  // 框架给按钮自身的样式类（btn-primary、el-button--danger、ant-btn-primary、is-circle）：前缀之后只是颜色、尺寸、形状，不是图标含义
+  const STYLE = /^(?:btn|button|el-button|ant-btn|is|has)(?:[-_]+|$)/i;
+  const MODIFIER =
+    /^(?:primary|secondary|success|danger|warning|info|light|dark|default|link|block|circle|round|plain|outline|ghost|dashed|text)(?:[-_]|$)/i;
   const fileWord = (url: string) => {
     const m = /([A-Za-z][\w-]*?)(?:[-_.]?\d+)?\.(png|svg|gif|jpe?g|webp)/i.exec(url);
     return m ? (m[1] as string) : '';
   };
   const words: string[] = [];
-  const push = (w: string) => {
-    const t = w
-      .replace(/^(icon|ico|fa|el-icon|ant-icon|mdi)[-_]/i, '')
-      .replace(/[-_]+/g, ' ')
-      .trim();
+  const push = (word: string) => {
+    // 样式类去掉框架前缀，剩下的若只是修饰词（primary、circle）就丢弃，否则（btn-delete）留下后半
+    const style = STYLE.exec(word);
+    const w = style ? word.slice(style[0].length) : word;
+    if (style && (!w || GENERIC.test(w) || MODIFIER.test(w))) return;
+    const t = w.replace(ICON, '').replace(/[-_]+/g, ' ').trim();
     if (t && !GENERIC.test(t) && !words.includes(t)) words.push(t);
   };
   const nodes = [el, ...el.querySelectorAll('*')].slice(0, 6);
@@ -301,12 +354,24 @@ export function obHint(el: Element): string {
     const st = getComputedStyle(n);
     for (const v of [st.content, st.backgroundImage]) if (v?.includes('url(')) push(fileWord(v));
   }
-  for (const n of nodes) for (const c of n.classList) if (obIsStableToken(c)) push(c);
+  // 类名的优先级：图标库的类（fa-trash）> 后代元素的类 > 元素自身的类（多是按钮的样式类，不能挤掉图标词）
+  const classes = [...nodes.slice(1).flatMap((n) => [...n.classList]), ...el.classList].filter(
+    obIsStableToken,
+  );
+  for (const c of [
+    ...classes.filter((c) => ICON.test(c)),
+    ...classes.filter((c) => !ICON.test(c)),
+  ]) {
+    push(c);
+  }
   return words.slice(0, 3).join(' ').slice(0, 40);
 }
 
-/** 可交互元素的判定（与 BrowserGym 的可交互角色对齐，另含原生控件、tabindex、contenteditable、onclick）。 */
-export function obIsInteractive(el: Element): boolean {
+/**
+ * 可交互元素的判定（与 BrowserGym 的可交互角色对齐，另含原生控件、tabindex、contenteditable、onclick）。
+ * ignoreListener 为 true 时不看点击监听标记，只认原生、role、tabindex 这类“真”交互依据。
+ */
+export function obIsInteractive(el: Element, ignoreListener = false): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === 'input') return (el.getAttribute('type') ?? '').toLowerCase() !== 'hidden';
   // datalist 里的 option 不渲染、不可单独操作，已作为输入框的 options 返回
@@ -343,14 +408,42 @@ export function obIsInteractive(el: Element): boolean {
   if (tabindex !== null && tabindex !== '-1') return true;
   if ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) return true;
   if (el.getAttribute('draggable') === 'true') return true;
-  // Node 侧用 DOMSnapshot 的 isClickable 找到绑定了点击类监听的元素后打上的不可枚举标记（见 mark.ts）
-  if ((el as unknown as { __obactClickable?: boolean }).__obactClickable) return true;
-  return el.hasAttribute('onclick');
+  if (el.hasAttribute('onclick')) return true;
+  // Node 侧用 DOMSnapshot 的 isClickable 找到绑定了点击类监听的元素后打上的不可枚举标记（见 mark.ts）；
+  // 事件委托的挂载点只是监听挂在那里，不算
+  return (
+    !ignoreListener &&
+    Boolean((el as unknown as { __obactClickable?: boolean }).__obactClickable) &&
+    !obIsDelegationRoot(el)
+  );
+}
+
+/**
+ * 事件委托的挂载点（React 17+ 把监听挂在 #root，jQuery 的 .on('click', 'li') 挂在 ul）：只靠监听标记算可交互
+ * （调用方已排除其他依据），自身 cursor 不是 pointer，并且满足其一：
+ * - 里面有只靠 cursor:pointer 判定的自绘控件，监听多半是替它们委托的；
+ * - 它是页面外壳（没有显式 role 的 body 直接子元素，如 #root），里面还有别的可交互元素。
+ * 真正可操作的是里面的元素；它自己若也列出来，名称是整块文字，会吞掉纯网页信息，还会挤掉里面自绘控件的推断。
+ * 带 role 的容器（可拖拽的 dialog、事件委托的 tablist）、包着原生控件的小包装（滑块轨道、表单项外层）、
+ * svg 绘图区（图表、地图的空白处本身也可点）不在此列，仍按可交互处理（BW-14 对照里它们都是 BrowserGym 认定的可点击元素）。
+ */
+export function obIsDelegationRoot(el: Element): boolean {
+  if (el.tagName.toLowerCase() === 'svg' || getComputedStyle(el).cursor === 'pointer') return false;
+  const inside = obDeepAll(el, '*');
+  if (
+    el.parentElement === document.body &&
+    !el.hasAttribute('role') &&
+    inside.some((d) => obIsInteractive(d, true))
+  ) {
+    return true;
+  }
+  return inside.some((d) => !obIsInteractive(d, true) && obInferredKind(d) === 'pointer');
 }
 
 /**
  * 推断的可操作元素（需要计算样式，比 obIsInteractive 贵）：
  * - 自绘控件：cursor 为 pointer 的最外层元素，且不在已有可交互元素之内（常见于事件委托到根节点的框架，如 React）；
+ *   监听挂在祖先容器上（React 17+ 的 #root）不影响推断；
  * - 滚动容器：内容超出且 overflow 为 auto/scroll 的区域（虚拟滚动表格等），可执行 scroll。
  * 返回推断类型，不是则返回 null。
  */
@@ -376,7 +469,8 @@ export function obInferredKind(el: Element): 'pointer' | 'scroll' | null {
   if (r.width < 4 || r.height < 4) return null;
   let a: Element | null = parent;
   while (a) {
-    if (obIsInteractive(a)) return null;
+    // 只靠监听标记的祖先不算：多半是事件委托的挂载点，里面 cursor:pointer 的才是控件
+    if (obIsInteractive(a, true)) return null;
     a = a.parentElement;
   }
   return 'pointer';
@@ -417,7 +511,10 @@ export function obActions(el: Element): string[] {
     (role === 'combobox' && tag === 'input')
   ) {
     if (readonly) add('click');
-    else add('click', 'fill', 'type_text', 'press_key');
+    // fill 只给 act 填得了的：原生输入框、textarea、可编辑区域；只有 ARIA 角色的自绘输入区（div role=textbox）点击后键入
+    else if (tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable) {
+      add('click', 'fill', 'type_text', 'press_key');
+    } else add('click', 'type_text', 'press_key');
   } else if (['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role)) {
     add('click');
     if (tag === 'input') add('fill');
@@ -438,10 +535,11 @@ export function obActions(el: Element): string[] {
   return out;
 }
 
-/** 下拉框、列表框、带 datalist 的输入框的选项（最多 limit 个），以及未列出的数量。 */
+/** 下拉框、列表框、带 datalist 的输入框的选项（最多 limit 个，选项文字与值最长 max 个字符），以及未列出的数量。 */
 export function obOptions(
   el: Element,
   limit: number,
+  max = 200,
 ): {
   options: { label: string; value: string; selected?: boolean; disabled?: boolean }[];
   omitted: number;
@@ -451,10 +549,11 @@ export function obOptions(
   else if (el.tagName === 'INPUT' && (el as HTMLInputElement).list) {
     list = [...((el as HTMLInputElement).list as HTMLDataListElement).options];
   } else return null;
+  const cut = (s: string) => (s.length > max ? `${s.slice(0, max)}…` : s);
   const options = list.slice(0, limit).map((o) => {
     const item: { label: string; value: string; selected?: boolean; disabled?: boolean } = {
-      label: obNorm(o.label || o.text || o.value),
-      value: o.value,
+      label: cut(obNorm(o.label || o.text || o.value)),
+      value: cut(o.value),
     };
     if (o.selected && el.tagName === 'SELECT') item.selected = true;
     if (o.disabled) item.disabled = true;
@@ -489,6 +588,10 @@ export function obStates(el: Element): Record<string, boolean | string> {
   else if (aria('selected') !== null) s.selected = aria('selected') === 'true';
   if (aria('expanded') !== null) s.expanded = aria('expanded') === 'true';
   else if (tag === 'details') s.expanded = (el as HTMLDetailsElement).open;
+  // 列出的是 <summary>（details 本身不是可交互元素），展开与否取自它所在的 details
+  else if (tag === 'summary' && el.parentElement?.tagName === 'DETAILS') {
+    s.expanded = (el.parentElement as HTMLDetailsElement).open;
+  }
   if (obActiveElement() === el) s.focused = true;
   if (el.matches(':required') || aria('required') === 'true') s.required = true;
   // readOnly 只对文本类输入框和 textarea 有意义（复选框、按钮等也匹配 :read-only，不能用伪类）
@@ -537,11 +640,18 @@ export function obFindRef(ref: number, attr: string, key: string): Element | nul
   return null;
 }
 
-/** 多个候选时，只剩一个可见的就取它（响应式页面常见的隐藏副本）。 */
+/**
+ * 多个候选时，只剩一个已渲染的就取它（响应式页面常见的隐藏副本）。
+ * 只看是否渲染（display、visibility、opacity、零尺寸），不看是否在视口内：同名元素的唯一性不能随滚动位置变化。
+ */
 export function obPickUnique(list: Element[]): Element | null {
   if (list.length === 1) return list[0] ?? null;
-  const visible = list.filter((e) => obVisibleRatio(e) > 0);
-  return visible.length === 1 ? (visible[0] ?? null) : null;
+  const shown = list.filter((e) => {
+    if (!e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  return shown.length === 1 ? (shown[0] ?? null) : null;
 }
 
 /**
@@ -671,11 +781,13 @@ export const DOM_LIB = [
   obDeepAll,
   obActiveElement,
   obRole,
+  obIsSensitive,
   obLabelText,
   obContentText,
   obName,
   obHint,
   obIsInteractive,
+  obIsDelegationRoot,
   obInferredKind,
   obIsClickableGeneric,
   obActions,

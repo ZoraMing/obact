@@ -53,11 +53,25 @@ export async function resolveRef(s: Session, pageId: string, ref: number): Promi
   return { handle: el, frame: entry.frame, via: 'ref' };
 }
 
+/** 选择器语法无效（CSS、within、iframe 选择器）是调用方的输入错误：页面内抛出的 SyntaxError 转成 invalid_params。 */
+async function guardSelector<T>(run: Promise<T>, details: Record<string, unknown>): Promise<T> {
+  try {
+    return await run;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '';
+    if (!/SyntaxError|is not a valid selector/.test(msg)) throw e;
+    const detail = msg.replace(/^Evaluation failed: /, '');
+    throw new ObactError('invalid_params', `选择器语法无效：${detail}`, details);
+  }
+}
+
 /** 按 iframe 选择器链从顶层进入目标 frame。 */
 export async function frameFor(page: Page, chain: string[] = []): Promise<Frame> {
   let frame = page.mainFrame();
   for (const selector of chain) {
-    const h = await frame.evaluateHandle(FIND_FRAME_OWNER, selector);
+    const h = await guardSelector(frame.evaluateHandle(FIND_FRAME_OWNER, selector), {
+      frame: selector,
+    });
     const owner = (await h.getProperty('el')).asElement() as ElementHandle<Element> | null;
     const count = await h.evaluate((o) => o.count);
     await h.dispose();
@@ -86,7 +100,7 @@ export async function resolveLocator(s: Session, pageId: string, loc: Locator): 
   const frame = await frameFor(page, loc.frame);
   const { frame: _f, ...inFrame } = loc;
   const run = async () => {
-    const h = await frame.evaluateHandle(RESOLVE, inFrame);
+    const h = await guardSelector(frame.evaluateHandle(RESOLVE, inFrame), { locator: loc });
     const info = await h.evaluate((r) => ({ via: r.via, reason: r.reason, counts: r.counts }));
     const el = (await h.getProperty('el')).asElement() as ElementHandle<Element> | null;
     await h.dispose();

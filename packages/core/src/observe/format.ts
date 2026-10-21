@@ -4,6 +4,7 @@
  */
 import type { ObservedElement } from '@obact/schemas';
 import type { TextLine } from './page.ts';
+import { obsKeepLine } from './text.ts';
 
 /** 一个元素：契约字段 + 只用于文本快照的补充信息。 */
 export type Item = {
@@ -13,10 +14,16 @@ export type Item = {
   scroll?: [number, number];
   /** 没有名称的图标类元素的提示词。 */
   hint?: string;
+  /** 命中它，但它（或祖先）opacity:0，act 判“不可见”操作不了：快照里注明 transparent，不是被遮挡。 */
+  transparent?: boolean;
 };
 
-/** 文本快照里元素名称、值、链接的最大长度；选项最多显示的个数。 */
-const NAME_MAX = 80;
+/**
+ * 文本快照里元素名称、值、链接的最大长度；选项最多显示的个数。
+ * 名称上限同时是纯网页信息里“文字已作为名称”的上限（observe 的 longText）：名称在快照里被截断时，
+ * 完整文字要留在 text_md，否则两个文本视图都看不到后半段。
+ */
+export const NAME_MAX = 120;
 const VALUE_MAX = 60;
 const HREF_MAX = 80;
 const OPTIONS_SHOWN = 30;
@@ -82,12 +89,11 @@ export function snapshotLine(item: Item, pageUrl: string): string {
   // 位置提示：不在视口内（需滚动）、未渲染（如隐藏的文件框）、被遮挡
   const [, , w, h] = e.bbox as number[];
   if (e.visible_ratio === 0) parts.push((w ?? 0) > 0 && (h ?? 0) > 0 ? 'offscreen' : 'hidden');
-  else if (!e.clickable && !st.disabled) parts.push('covered');
-  return `${parts.join(' ')} → ${e.actions.join(',')}`;
+  else if (!e.clickable && !st.disabled) parts.push(item.transparent ? 'transparent' : 'covered');
+  // 页面来源的字符串（textarea 的值、文件名、iframe 的 title）里的换行显示成 \n：不能把一行拆开，冒充别的元素行
+  const line = `${parts.join(' ')} → ${e.actions.join(',')}`;
+  return line.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, '\\n');
 }
-
-/** 只由占位、空白与 Markdown 列表/表格/引用符号组成的行。 */
-const REF_ONLY = /^[\s\-*>|:]*(?:\uE000\d+\uE001[\s|,，、:-]*)+$/;
 
 /** 把占位 \uE000编号\uE001 换成 [编号]；未列出（被预算截掉）的元素换成它的名称。 */
 export function renderLine(t: string, kept: Set<number>, names: Map<number, string>): string {
@@ -132,7 +138,7 @@ export function applyBudget(
 ): Budgeted {
   // 纯网页信息里只含可操作元素占位、没有任何信息文字的行（如一排按钮）不放进 text_md：
   // 这些元素已在 snapshot_text 里；占位只在与信息混排时（表格行、列表项）保留，用来对应信息与操作
-  lines = lines.filter((l) => l.f !== undefined || !REF_ONLY.test(l.t));
+  lines = lines.filter(obsKeepLine);
   const snapLines = items.map((it) => snapshotLine(it, pageUrl));
   const names = new Map(items.map((it) => [it.el.ref, it.el.name]));
   const allRefs = new Set(items.map((it) => it.el.ref));

@@ -106,6 +106,7 @@ async function refsByBackend(client: CDPSession, attr: string): Promise<Map<numb
  * 可访问性树文本（view=axtree）：只在请求时取（M0 预研：全量取树开销大），受字符预算限制。
  * 节点的编号由 DOMSnapshot 按 backendDOMNodeId 读编号属性得到，只标出 elements 中列出的编号，保证一致；
  * 子 frame 的树接在它的 iframe 节点下（OOPIF 用它自己的 CDP 会话）。
+ * 敏感字段（masked）的值是它下面的 StaticText 子节点：不论字段有没有列入 elements，都不输出这些子节点。
  */
 export async function axtreeText(
   page: Page,
@@ -113,7 +114,7 @@ export async function axtreeText(
   attr: string,
   listed: Set<number>,
   cap: number,
-  /** 值已打码的元素编号：可访问性树里它的值（StaticText 子节点）同样不输出。 */
+  /** 敏感字段的编号（页面内 obIsSensitive 判定，含未列入 elements 的）：可访问性树里它的值同样不输出。 */
   masked: Set<number> = new Set(),
 ): Promise<{ text: string; truncated: boolean }> {
   type FrameTree = { nodes: AXNode[]; refs: Map<number, number>; owner?: number };
@@ -194,7 +195,7 @@ export async function axtreeText(
         );
       }
       const next = show ? d + 1 : d;
-      if (isListed && masked.has(ref)) return;
+      if (ref !== undefined && masked.has(ref)) return;
       for (const c of n.childIds ?? []) rec(c, next, show ? name : parentName);
       const sub = n.backendDOMNodeId === undefined ? undefined : kids.get(n.backendDOMNodeId);
       for (const f of sub ?? []) render(f, next);

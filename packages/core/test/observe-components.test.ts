@@ -34,11 +34,12 @@ const EXPECTS = bundle((attr: string) => {
 describe('observe：组件陈列验收', { skip: SKIP }, () => {
   let env: TestEnv;
   let r: ObserveResult;
+  let pageId = '';
   let expects: Expect[] = [];
 
   before(async () => {
     env = await setup();
-    const pageId = await env.open('/pages/components.html');
+    pageId = await env.open('/pages/components.html');
     r = await observe(env.session, { pageId, views: ['text'] });
     expects = await env.session.pages.get(pageId).evaluate(EXPECTS, env.session.attr);
   });
@@ -80,6 +81,21 @@ describe('observe：组件陈列验收', { skip: SKIP }, () => {
       assert.ok(line, `缺少 [${e.ref}]`);
       for (const a of e.actions) assert.ok(line.includes(a), `[${e.ref}] 行缺少操作 ${a}：${line}`);
     }
+  });
+
+  test('透明的原生控件（没有可见 label）：act 判不可见，标 transparent、不可点击；有 label 代点的仍可点击', async () => {
+    // 陈列页比视口长：先滚到这些控件处，不在视口内的元素只显示 offscreen
+    await env.session.pages
+      .get(pageId)
+      .evaluate(() => document.querySelector('.bare')?.scrollIntoView());
+    const seen = await observe(env.session, { pageId });
+    const bare = seen.elements.find((e) => e.name === '选择此行');
+    assert.ok(bare);
+    assert.equal(bare.clickable, false);
+    const line = (seen.snapshot_text ?? '').split('\n').find((l) => l.startsWith(`[${bare.ref}] `));
+    assert.match(line ?? '', / transparent /);
+    assert.doesNotMatch(line ?? '', /covered/);
+    assert.equal(seen.elements.find((e) => e.name === '自动续费')?.clickable, true);
   });
 
   test('纯网页信息：含页面内容，不含可操作元素的文字，表格里用 [编号] 引用', () => {

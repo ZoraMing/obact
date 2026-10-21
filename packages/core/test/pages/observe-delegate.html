@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>事件委托</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .card { cursor: pointer; border: 1px solid #999; padding: 8px; width: 200px; margin: 4px; }
+  #menu { list-style: none; padding: 0; width: 200px; }
+  #menu li { cursor: pointer; padding: 6px; }
+  #order-row { cursor: pointer; padding: 6px; }
+</style>
+</head>
+<body>
+  <!-- React 17+ 的 #root：监听（捕获与冒泡）挂在根容器上，卡片是 div + onClick 的自绘控件 -->
+  <div id="root">
+    <h1>商品列表</h1>
+    <p>点击卡片查看详情。</p>
+    <div class="card" data-id="1">商品 A</div>
+    <div class="card" data-id="2">商品 B</div>
+    <button>提交</button>
+    <!-- jQuery 的 .on('click', 'li')：监听挂在 ul 上，li 是 cursor:pointer 的自绘项 -->
+    <ul id="menu"><li>首页</li><li>订单管理</li></ul>
+    <!-- 对照：自己绑了监听的控件仍要列出 -->
+    <div id="panel">自绘面板</div>
+    <div id="order-row">订单行 <a href="#detail">详情</a></div>
+  </div>
+  <!-- 页面外壳里只有原生控件：同样只是监听的挂载点 -->
+  <div id="form-root">
+    <h2>订阅</h2>
+    <label>邮箱 <input type="email"></label>
+    <button>订阅提交</button>
+  </div>
+  <!-- 对照：带 role 的容器（可拖拽对话框一类）仍按可交互处理 -->
+  <div id="dlg" role="dialog" aria-label="确认框"><button>知道了</button></div>
+  <script>
+    const noop = () => {};
+    // 根容器：像 React 17+ 那样对点击事件同时注册捕获与冒泡监听
+    for (const id of ['root', 'form-root']) {
+      const el = document.getElementById(id);
+      el.addEventListener('click', noop, true);
+      el.addEventListener('click', noop, false);
+    }
+    document.getElementById('menu').addEventListener('click', noop);
+    document.getElementById('panel').addEventListener('click', noop);
+    document.getElementById('order-row').addEventListener('click', noop);
+    document.getElementById('dlg').addEventListener('click', noop);
+  </script>
+</body>
+</html>

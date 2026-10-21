@@ -20,6 +20,9 @@
   .log { height: 80px; overflow: auto; border: 1px solid #ccc; }
   .vh { opacity: 0; position: absolute; width: 1px; height: 1px; }
   .toggle { display: inline-block; padding: 4px 10px; background: #def; }
+  /* 组件库的复选框写法：原生 input 透明铺满自绘外观，没有包裹它的 label */
+  .bare { position: relative; display: inline-block; width: 18px; height: 18px; background: #def; }
+  .bare input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
   [role=slider] { display: inline-block; width: 120px; height: 12px; background: #ccc; }
   [role=listbox] li, [role=menu] div { padding: 2px 6px; }
 </style>
@@ -85,6 +88,7 @@
   <div role="menu">
     <div role="menuitem" data-x-role="menuitem" data-x-name="删除" data-x-actions="click,hover">删除</div>
   </div>
+  <div role="textbox" tabindex="0" aria-label="自绘输入框" data-x-role="textbox" data-x-name="自绘输入框" data-x-actions="click,type_text,press_key">输入内容</div>
   <div role="slider" tabindex="0" aria-label="亮度" aria-valuenow="50" data-x-role="slider" data-x-name="亮度" data-x-actions="drag,press_key,click"></div>
   <ul role="tree"><li role="treeitem" data-x-role="treeitem" data-x-name="根目录" data-x-actions="click">根目录</li></ul>
   <div role="dialog" aria-label="提示">
@@ -106,6 +110,10 @@
     <p>第 1 行</p><p>第 2 行</p><p>第 3 行</p><p>第 4 行</p><p>第 5 行</p><p>第 6 行</p><p>第 7 行</p><p>第 8 行</p>
   </div>
   <label class="toggle"><input type="checkbox" class="vh" data-x-role="checkbox" data-x-name="自动续费" data-x-actions="click,fill"> 自动续费</label>
+  <span class="bare"><input type="checkbox" aria-label="选择此行" data-x-role="checkbox" data-x-name="选择此行" data-x-actions="click,fill"></span>
+  <button class="btn btn-primary btn-sm" data-x-role="button" data-x-name="" data-x-hint="trash" data-x-actions="click"><i class="fa fa-trash"></i></button>
+  <button class="el-button el-button--danger is-circle" data-x-role="button" data-x-name="" data-x-hint="delete" data-x-actions="click"><i class="el-icon-delete"></i></button>
+  <button class="ant-btn ant-btn-primary" data-x-role="button" data-x-name="" data-x-hint="plus" data-x-actions="click"><span class="anticon anticon-plus"></span></button>
   <table>
     <tr id="row-click" data-x-role="row" data-x-name="88233 待付款" data-x-actions="click"><td>88233</td><td>待付款</td></tr>
   </table>

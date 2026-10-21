@@ -10,6 +10,7 @@ import {
   obNorm,
   obPickUnique,
   obRole,
+  obShadow,
   obWithin,
 } from '../page/dom.ts';
 
@@ -164,8 +165,10 @@ export function obElementAtPoint(
   y: number,
 ): { el: Element | null; iframe: Element | null; ix: number; iy: number } {
   let el: Element | null = document.elementFromPoint(x, y);
-  while (el?.shadowRoot) {
-    const inner: Element | null = el.shadowRoot.elementFromPoint(x, y);
+  // 开放和封闭的 Shadow Root 都要穿透（封闭的由 Node 侧挂出，见 mark.ts）
+  while (el) {
+    const sr = obShadow(el);
+    const inner: Element | null = sr ? sr.elementFromPoint(x, y) : null;
     if (!inner || inner === el) break;
     el = inner;
   }

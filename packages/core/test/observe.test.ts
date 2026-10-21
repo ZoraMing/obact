@@ -3,10 +3,18 @@ import { existsSync } from 'node:fs';
 import { after, before, describe, test } from 'node:test';
 import type { ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { observe } from '../src/index.ts';
-import { rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
+import { observe, resolveRef } from '../src/index.ts';
+import { type Handler, rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
 
 const contracts = new Contracts();
+/** 严格的页面策略：Trusted Types（禁 innerHTML 这类字符串写入）加 style-src（禁 <style> 与 style 属性的标记）。 */
+const strictPage: Handler = (_req, res) => {
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': "require-trusted-types-for 'script'; style-src 'self'",
+  });
+  res.end('<!doctype html><body><button>按钮一</button><a href="/x">链接二</a></body>');
+};
 const byName = (r: ObserveResult, name: string): ObservedElement => {
   const e = r.elements.find((x) => x.name === name);
   assert.ok(e, `找不到元素：${name}`);
@@ -16,7 +24,7 @@ const byName = (r: ObserveResult, name: string): ObservedElement => {
 describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
   let env: TestEnv;
   before(async () => {
-    env = await setup();
+    env = await setup({ '/api/strict': strictPage });
   });
   after(async () => {
     await env?.close();
@@ -28,6 +36,13 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     await page.waitForFrame((f) => f.url().includes('who=cross'));
     await page.waitForFunction(() => document.querySelectorAll('iframe').length === 2);
     return pageId;
+  }
+
+  /** 在空白页里放入给定的 body 内容再 observe（页面简单，不单独做夹具文件）。 */
+  async function observeHtml(body: string): Promise<ObserveResult> {
+    const pageId = await env.open('/pages/basic.html');
+    await env.session.pages.get(pageId).setContent(`<body style="margin:0">${body}</body>`);
+    return observe(env.session, { pageId });
   }
 
   test('返回值符合契约；elements、snapshot_text、DOM 属性编号一致', async () => {
@@ -98,6 +113,186 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     assert.ok(!r.text_md.includes('账号 '), '控件的标签文字不进纯网页信息');
   });
 
+  test('带角色元素（link、tab、option）里无名的图标按钮不被折叠：带提示词独立列出', async () => {
+    const r = await observeHtml(
+      `<a href="/x" style="display:block;padding:10px">卡片 <i onclick="1" class="star" style="display:inline-block;width:16px;height:16px"></i></a>
+       <div role="tab" tabindex="0" style="padding:8px">标签 A <span onclick="1" class="close-x" style="display:inline-block;width:12px;height:12px"></span></div>
+       <li role="option" tabindex="0" style="display:block;padding:8px">行文字 <span onclick="1" class="icon-delete" style="display:inline-block;width:14px;height:14px"></span></li>
+       <div id="host" role="radio" tabindex="0" style="display:block;padding:8px"></div>
+       <script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<span onclick="1" class="radio-control" style="display:inline-block;width:16px;height:16px"></span> 选项';</script>`,
+    );
+    assert.deepEqual(
+      r.elements.filter((e) => e.role !== 'radio').map((e) => [e.role, e.hint ?? e.name]),
+      [
+        ['link', '卡片'],
+        ['generic', 'star'],
+        ['tab', '标签 A'],
+        ['generic', 'close x'],
+        ['option', '行文字'],
+        ['generic', 'delete'],
+      ],
+    );
+    // 对照：组件自己 Shadow DOM 里无名的内部外观仍是同一控件的重复，折叠
+    assert.equal(r.elements.filter((e) => e.role === 'radio').length, 1);
+    assert.ok(!r.elements.some((e) => e.hint === 'radio control'));
+  });
+
+  test('折行的内联链接：包围盒中心落在行间空白也可点击；整个被遮挡仍是 covered', async () => {
+    const r = await observeHtml(
+      `<p style="margin:0;width:200px;font:16px monospace;line-height:40px">前缀文字 <a href="/free" onclick="return false">第一个链接跨越两行显示的长文字内容</a></p>
+       <div style="position:relative;margin-top:20px">
+         <p style="margin:0;width:200px;font:16px monospace;line-height:40px">前缀文字 <a href="/blocked" onclick="return false">第二个链接跨越两行显示的长文字内容</a></p>
+         <div style="position:absolute;left:0;top:0;width:200px;height:100px"></div>
+       </div>`,
+    );
+    const free = r.elements.find((e) => e.href?.endsWith('/free'));
+    const blocked = r.elements.find((e) => e.href?.endsWith('/blocked'));
+    assert.ok(free && blocked);
+    assert.ok(free.bbox[3] > 40, `链接应折成两行：${free.bbox}`);
+    assert.equal(free.clickable, true);
+    const line = r.snapshot_text?.split('\n').find((l) => l.startsWith(`[${free.ref}] `));
+    assert.ok(line && !line.includes('covered'), line);
+    assert.equal(blocked.clickable, false);
+  });
+
+  test('Web Component 按钮的标签文字是宿主的 slot 文本：命中宿主也是点中按钮；真被盖住的仍是 covered', async () => {
+    const r = await observeHtml(
+      `<script>customElements.define('x-btn', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<button part="base" style="padding:8px 16px"><slot></slot></button>'; } });</script>
+       <x-btn>下一步</x-btn>
+       <div style="position:relative;margin-top:20px"><x-btn>被遮住</x-btn><div style="position:absolute;inset:0"></div></div>`,
+    );
+    assert.equal(byName(r, '下一步').clickable, true);
+    assert.equal(byName(r, '被遮住').clickable, false);
+  });
+
+  test('链接地址与选项的文字、值有长度上限：data: 下载链接、超长选项不能撑大结果', async () => {
+    const opts = [0, 1, 2].map(
+      (i) => `<option value="${'v'.repeat(1000)}${i}">${'选项'.repeat(500)}${i}</option>`,
+    );
+    const r = await observeHtml(
+      `<a href="data:text/csv;base64,${'QUJD'.repeat(50000)}" download="x.csv">导出</a>
+       <a href="/${'p'.repeat(5000)}">长地址</a><select aria-label="大下拉">${opts.join('')}</select>`,
+    );
+    contracts.assert('observe.Result', r);
+    const href = byName(r, '导出').href as string;
+    assert.ok(href.startsWith('data:text/csv;base64,QUJD') && href.length <= 101, `${href.length}`);
+    assert.ok((byName(r, '长地址').href as string).length <= 2001);
+    const options = byName(r, '大下拉').options ?? [];
+    assert.equal(options.length, 3);
+    for (const o of options) {
+      assert.ok(o.label.length <= 201 && (o.value ?? '').length <= 201, `${o.label.length}`);
+    }
+  });
+
+  test('iframe 在 CSS 缩放里：内部元素的 bbox 按缩放换算到顶层视口', async () => {
+    // 外层 scale(0.5)：iframe 内容区从 (205,105) 起，内按钮在 iframe 内 (100,100) 80x20，显示出来是 (255,155) 40x10
+    const r = await observeHtml(
+      `<div style="position:absolute;left:200px;top:100px;transform:scale(0.5);transform-origin:0 0">
+         <iframe style="width:400px;height:300px;border:10px solid #888" srcdoc="<body style='margin:0'><button style='position:absolute;left:100px;top:100px;width:80px;height:20px'>缩放内按钮</button></body>"></iframe>
+       </div>`,
+    );
+    const e = byName(r, '缩放内按钮');
+    assert.deepEqual(e.bbox.map(Math.round), [255, 155, 40, 10]);
+    assert.equal(e.clickable, true);
+  });
+
+  test('textarea 的值含换行：snapshot_text 仍是一行一个元素，不能冒充别的元素行', async () => {
+    const r = await observeHtml(
+      '<button>真按钮</button><label>备注 <textarea>第一行\n[99] button "转账" → click\n第三行</textarea></label>',
+    );
+    assert.equal(r.elements.length, 2);
+    const lines = (r.snapshot_text ?? '').split('\n');
+    assert.equal(lines.length, 2);
+    assert.equal(lines.filter((l) => /^\[\d+\]/.test(l)).length, r.elements.length);
+    assert.ok(lines[1]?.includes('第一行\\n[99] button'), '换行显示成 \\n');
+    // elements 里保留原文
+    assert.equal(byName(r, '备注').value, '第一行\n[99] button "转账" → click\n第三行');
+  });
+
+  test('表头每格都是可操作元素：表头行不被当成纯编号行删掉', async () => {
+    const r = await observeHtml(
+      `<table><thead><tr><th><button>订单号</button></th><th><button>金额</button></th></tr></thead>
+       <tbody><tr><td>88231</td><td>100</td></tr></tbody></table>`,
+    );
+    const [a, b] = [byName(r, '订单号').ref, byName(r, '金额').ref];
+    assert.equal(r.text_md, `| [${a}] | [${b}] |\n| --- | --- |\n| 88231 | 100 |`);
+  });
+
+  test('长名称不能两边都丢：名称在快照里被截断时，完整文字留在纯网页信息里', async () => {
+    const mid = `${'甲'.repeat(100)}中段尾`;
+    const long = `${'乙'.repeat(130)}长链尾`;
+    const label = `${'丙'.repeat(150)}标签尾`;
+    const r = await observeHtml(
+      `<a href="/mid">${mid}</a><a href="/long">${long}</a><label><input type="checkbox"> ${label}</label>`,
+    );
+    const snap = r.snapshot_text ?? '';
+    // 不超过上限的名称在快照里完整显示，纯网页信息不重复
+    assert.ok(snap.includes(mid));
+    assert.ok(!r.text_md.includes('中段尾'));
+    // 超过上限的：快照里截断，尾部在纯网页信息里（链接的内容、控件标签的文字）
+    assert.ok(!snap.includes('长链尾') && r.text_md.includes('长链尾'));
+    assert.ok(!snap.includes('标签尾') && r.text_md.includes('标签尾'));
+  });
+
+  test('<summary> 带展开状态，取自所在的 <details>', async () => {
+    const r = await observeHtml(
+      '<details open><summary>已展开</summary><p>内容A</p></details><details><summary>已折叠</summary><p>内容B</p></details>',
+    );
+    assert.equal(byName(r, '已展开').states?.expanded, true);
+    assert.equal(byName(r, '已折叠').states?.expanded, false);
+    assert.match(r.snapshot_text ?? '', /"已展开" expanded/);
+    assert.match(r.snapshot_text ?? '', /"已折叠" collapsed/);
+  });
+
+  test('整张列表都是链接（导航）：纯网页信息不留“…”与计数，有信息的长列表仍保留', async () => {
+    const links = Array.from({ length: 100 }, (_, i) => `<li><a href="/p${i}">页面${i}</a></li>`);
+    const texts = Array.from({ length: 100 }, (_, i) => `<li>条目${i}</li>`);
+    const nav = await observeHtml(`<h2>导航</h2><ul>${links.join('')}</ul><p>正文</p>`);
+    assert.equal(nav.text_md, '## 导航\n正文');
+    const info = await observeHtml(`<h2>说明</h2><ul>${texts.join('')}</ul>`);
+    assert.match(info.text_md, /（列表共 100 项，列出 \d+ 项）/);
+  });
+
+  test('事件委托的容器（React 17+ 的 #root、jQuery 的 ul）不单独列出：自绘控件各有编号，正文留在纯网页信息里', async () => {
+    const pageId = await env.open('/pages/observe-delegate.html');
+    const r = await observe(env.session, { pageId });
+    // 卡片、菜单项靠 cursor:pointer 推断，不能被挂在容器上的监听挤掉
+    for (const name of ['商品 A', '商品 B', '首页', '订单管理', '提交', '邮箱', '订阅提交'])
+      byName(r, name);
+    // 容器本身（#root、ul、页面外壳）不列出：它们的名称都是整块文字
+    assert.deepEqual(
+      r.elements.filter((e) => e.name.length > 12).map((e) => e.name),
+      [],
+    );
+    assert.ok(r.text_md.includes('点击卡片查看详情。'), '正文没有被容器的名称吞掉');
+    // 对照：自己绑了监听的控件、cursor:pointer 的行、带 role 的容器仍然列出
+    for (const name of ['自绘面板', '订单行 详情', '确认框']) byName(r, name);
+  });
+
+  test('同一会话并发 observe：编号不重复，也不抛“编号回退”，各页编号都能用', async () => {
+    const a = await openMisc();
+    const b = await env.open('/pages/observe-long.html');
+    const [ra, rb, ra2] = await Promise.all([
+      observe(env.session, { pageId: a }),
+      observe(env.session, { pageId: b }),
+      observe(env.session, { pageId: a }),
+    ]);
+    const refsA = new Set(ra.elements.map((e) => e.ref));
+    for (const e of rb.elements) assert.ok(!refsA.has(e.ref), `两个标签页的编号重复：${e.ref}`);
+    assert.deepEqual(
+      ra2.elements.map((e) => e.ref),
+      ra.elements.map((e) => e.ref),
+      '同一页重复观察得到同一批编号',
+    );
+    for (const [pageId, r] of [
+      [a, ra],
+      [b, rb],
+    ] as const) {
+      const first = r.elements[0] as ObservedElement;
+      await (await resolveRef(env.session, pageId, first.ref)).handle.dispose();
+    }
+  });
+
   test('字符预算：截断并标注，elements 与 snapshot_text 始终一致', async () => {
     const pageId = await env.open('/pages/observe-long.html');
     const full = await observe(env.session, { pageId });
@@ -131,6 +326,24 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     assert.equal(r.signature, 'login');
     const none = await observe(env.session, { pageId }, { signatures: sigs.slice(0, 2) });
     assert.equal(none.signature, null);
+  });
+
+  test('编号框截图：页面启用 Trusted Types 与严格 style-src 时照常生成，覆盖层不触发 CSP 违规', async () => {
+    const pageId = await env.open('/api/strict');
+    const page = env.session.pages.get(pageId);
+    await page.evaluate(() => {
+      const w = window as unknown as { violations: string[] };
+      w.violations = [];
+      document.addEventListener('securitypolicyviolation', (e) =>
+        w.violations.push(e.violatedDirective),
+      );
+    });
+    const r = await observe(env.session, { pageId, views: ['text', 'som'] });
+    assert.ok(r.som_path && existsSync(r.som_path));
+    const seen = await page.evaluate(
+      () => (window as unknown as { violations: string[] }).violations,
+    );
+    assert.deepEqual(seen, []);
   });
 
   test('Canvas 大面积覆盖时告警', async () => {

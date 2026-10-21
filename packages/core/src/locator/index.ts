@@ -1,6 +1,7 @@
 import type { Locator, ResolveLocatorResult } from '@obact/schemas';
 import type { ElementHandle, Frame } from 'puppeteer-core';
 import { ObactError } from '../errors.ts';
+import { exposeForMarking } from '../mark.ts';
 import { bundle } from '../page/bundle.ts';
 import { DOM_LIB, obName, obRole } from '../page/dom.ts';
 import { resolveLocator, resolveRef } from '../resolve.ts';
@@ -81,7 +82,10 @@ export async function locatorAtPoint(
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     throw new ObactError('invalid_params', '坐标必须是有限数值');
   }
-  let frame = s.pages.get(pageId).mainFrame();
+  const page = s.pages.get(pageId);
+  // 没观察过的页面里封闭影子根和监听标记都还没挂出来，否则会换算成宿主或外层容器
+  await exposeForMarking(page).catch(() => null);
+  let frame = page.mainFrame();
   let px = x;
   let py = y;
   for (let depth = 0; depth < 10; depth++) {
