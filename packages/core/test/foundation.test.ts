@@ -240,6 +240,20 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
     }
   });
 
+  test('改过名的标签页（newPage 带 pageId）关闭后从登记表移除，pageId 可以再用', async () => {
+    const reg = env.session.pages;
+    for (let round = 0; round < 2; round++) {
+      const id = await reg.newPage({ pageId: 'reg-reuse' });
+      assert.equal(id, 'reg-reuse');
+      assert.ok(reg.has('reg-reuse'));
+      const mark = reg.mark();
+      await reg.get(id).close();
+      assert.equal(reg.has('reg-reuse'), false, `第 ${round + 1} 轮：关闭后不在登记表里`);
+      assert.ok(!reg.list().some((p) => p.pageId === 'reg-reuse'), 'list 不含已关闭的页面');
+      assert.deepEqual(reg.createdSince(mark), [], '登记顺序也已清理');
+    }
+  });
+
   test('错误归一', () => {
     const t = new Error('waiting failed');
     t.name = 'TimeoutError';

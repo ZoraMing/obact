@@ -45,10 +45,12 @@ export class PageRegistry {
     this.#ids.set(page, pageId);
     this.#order.set(pageId, ++this.#seq);
     this.#onRegister?.(page);
+    // 页面可能改过名（rename）：关闭时按页面当前的编号移除，不能用登记时的旧编号
     page.once('close', () => {
-      if (this.#byId.get(pageId) === page) {
-        this.#byId.delete(pageId);
-        this.#order.delete(pageId);
+      const cur = this.#ids.get(page);
+      if (cur !== undefined && this.#byId.get(cur) === page) {
+        this.#byId.delete(cur);
+        this.#order.delete(cur);
       }
     });
     return pageId;

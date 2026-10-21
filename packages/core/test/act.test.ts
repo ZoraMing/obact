@@ -657,6 +657,15 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await ok({ op: 'handle_dialog', pageId: kept, action: 'accept' });
     await ok({ op: 'close_page', pageId: kept });
     assert.equal(count(), before);
+    // 带 pageId 的 new_page 失败后，编号随标签页一起释放，可以再用
+    await err(
+      { op: 'new_page', pageId: 'act-named', url: `${env.server.base}/api/hang`, timeout_ms: 0 },
+      'navigation_failed',
+    );
+    assert.equal(count(), before, '带 pageId 失败的标签页也已关闭');
+    await ok({ op: 'new_page', pageId: 'act-named' });
+    await ok({ op: 'close_page', pageId: 'act-named' });
+    assert.equal(count(), before);
   });
 
   test('后置检查：通过即继续；不通过报 assertion_failed', async () => {
