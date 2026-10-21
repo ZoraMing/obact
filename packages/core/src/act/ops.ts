@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   Action,
   Click,
@@ -814,6 +815,37 @@ const handleDialog: Handler = async (ctx, fx) => {
   ctx.changed = true;
 };
 
+/**
+ * 导航地址白名单（navigate_page、new_page 共用）：http、https、about:blank、about:srcdoc；
+ * file: 只放行工作区（filesRoot）内的路径，不然 file:///工作区外 能把任意本地文件读进 observe 与 evaluate。
+ * data:、view-source:、blob:、javascript: 等其余协议一律拒绝。
+ */
+function checkNavUrl(ctx: Ctx, url: URL): string {
+  const proto = url.protocol;
+  if (proto === 'http:' || proto === 'https:') return url.href;
+  if (proto === 'about:' && (url.pathname === 'blank' || url.pathname === 'srcdoc'))
+    return url.href;
+  if (proto === 'file:') {
+    const root = ctx.opts.filesRoot;
+    if (!root) fail('invalid_params', '不允许 file: 地址：未配置 filesRoot', { url: url.href });
+    let path: string;
+    try {
+      path = fileURLToPath(url);
+    } catch {
+      fail('invalid_params', `file: 地址无效：${url.href}`, { url: url.href });
+    }
+    resolveInside(root, path, false);
+    return url.href;
+  }
+  fail(
+    'invalid_params',
+    `不允许 ${proto} 地址：只能打开 http、https、about:blank 和工作区内的 file:`,
+    {
+      url: url.href.slice(0, 200),
+    },
+  );
+}
+
 async function navError(e: unknown, what: string): Promise<never> {
   if (e instanceof ObactError) throw e;
   const msg = String((e as Error)?.message ?? e);
@@ -836,9 +868,9 @@ const navigatePage: Handler = async (ctx) => {
     } catch {
       fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
     }
-    if (url.protocol === 'javascript:') fail('invalid_params', '不允许 javascript: 地址');
+    const href = checkNavUrl(ctx, url);
     ctx.dispatch();
-    resp = await p.goto(url.href, opt).catch((e) => navError(e, '打开页面'));
+    resp = await p.goto(href, opt).catch((e) => navError(e, '打开页面'));
   } else if (type === 'reload') {
     ctx.dispatch();
     resp = await p.reload(opt).catch((e) => navError(e, '刷新'));
@@ -956,11 +988,13 @@ export async function newPage(ctx: Ctx): Promise<void> {
   // 先校验 URL 再建标签页：URL 无效时不留空白标签页
   let url: string | undefined;
   if (a.url) {
+    let u: URL;
     try {
-      url = new URL(a.url).href;
+      u = new URL(a.url);
     } catch {
       fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
     }
+    url = checkNavUrl(ctx, u);
   }
   ctx.dispatch();
   const id = await ctx.s.pages.newPage({ pageId: a.pageId });

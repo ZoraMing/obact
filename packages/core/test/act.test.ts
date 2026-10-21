@@ -4,7 +4,7 @@ import type { ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Action, ActResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
 import { type ActOptions, act, checkAssertions } from '../src/index.ts';
@@ -730,6 +730,43 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await ok({ op: 'new_page', pageId: 'act-named' });
     await ok({ op: 'close_page', pageId: 'act-named' });
     assert.equal(count(), before);
+  });
+
+  test('导航地址白名单：只放行 http、https、about:blank 和工作区内的 file:，其余协议报 invalid_params 且不留标签页', async () => {
+    const pageId = await open();
+    const count = () => env.session.pages.list().length;
+    const before = count();
+    const inside = pathToFileURL(join(FILES, 'hello.txt')).href;
+    // 工作区内的 file: 可以打开
+    await ok({ op: 'navigate_page', pageId, url: inside });
+    assert.equal(env.session.pages.get(pageId).url(), inside);
+    await ok({ op: 'navigate_page', pageId, url: 'about:blank' });
+    // 工作区外的 file:（含目录列表）、没配置 filesRoot 时的 file: 都不行
+    const outside = pathToFileURL(join(FILES, '..', '..', 'package.json')).href;
+    await err({ op: 'navigate_page', pageId, url: outside }, 'path_outside_workspace');
+    await err(
+      { op: 'navigate_page', pageId, url: pathToFileURL(dirname(FILES)).href },
+      'path_outside_workspace',
+    );
+    await err({ op: 'navigate_page', pageId, url: inside }, 'invalid_params', {
+      filesRoot: undefined,
+    });
+    for (const url of [
+      'data:text/html,<h1>x</h1>',
+      `view-source:${env.server.base}/pages/act-main.html`,
+      'javascript:document.title="x"',
+      'chrome://version/',
+      'blob:http://127.0.0.1/x',
+    ]) {
+      await err({ op: 'navigate_page', pageId, url }, 'invalid_params');
+      const r = await err({ op: 'new_page', url }, 'invalid_params');
+      assert.deepEqual(r.effects.new_pages, []);
+    }
+    const bad = await err({ op: 'new_page', url: outside }, 'path_outside_workspace');
+    assert.deepEqual(bad.effects.new_pages, []);
+    assert.equal(count(), before, 'new_page 被拒绝时没有开标签页');
+    const good = await ok({ op: 'new_page', url: inside });
+    await ok({ op: 'close_page', pageId: good.effects.new_pages[0] as string });
   });
 
   test('后置检查：通过即继续；不通过报 assertion_failed', async () => {
