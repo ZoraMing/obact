@@ -86,6 +86,12 @@ export type Ctx = {
   tracked: Set<Frame>;
   /** 动作开始后才确定的标签页（new_page）。 */
   alive(): void;
+  /**
+   * 输入即将派发：先确认动作没被对话框打断（悬空的处理函数到这里停下，不会在 handle_dialog 之后补发输入），
+   * 再置 dispatched；检查与置位之间不能有 await。已经派发过的动作被对话框打断后由 handle_dialog 收尾，
+   * 后续的派发照常进行（页面无响应而放弃的动作除外）。
+   */
+  dispatch(): void;
 };
 
 export function makeCtx(
@@ -121,6 +127,10 @@ export function makeCtx(
     tracked: new Set(),
     alive() {
       if (ctx.aborted) throw new Aborted('动作已被对话框打断');
+    },
+    dispatch() {
+      if (!ctx.dispatched || ctx.stalled) ctx.alive();
+      ctx.dispatched = true;
     },
   };
   return ctx;

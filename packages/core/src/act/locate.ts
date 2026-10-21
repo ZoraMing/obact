@@ -197,6 +197,8 @@ export async function actionable(
         }
       }
     }
+    // 对话框恰好在最后一次求值期间弹出时，挂起的求值要等对话框处理后才返回：此时动作已被打断，不能再往下派发
+    ctx.alive();
     return { point, loc };
   }
 }

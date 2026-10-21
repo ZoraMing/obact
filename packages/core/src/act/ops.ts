@@ -166,8 +166,7 @@ async function clickElement(
     const subject = o.who?.subject ?? null;
     const key = `__obactLand_${ctx.s.key}`;
     await el.evaluate(LAND_START, key, subject).catch(() => {});
-    ctx.alive();
-    ctx.dispatched = true;
+    ctx.dispatch();
     await withModifiers(p, o.modifiers, () =>
       mouseSafe(p, () =>
         p.mouse.click(ready.point.x, ready.point.y, {
@@ -310,7 +309,7 @@ const hover: Handler = async (ctx, fx) => {
   ctx.locator = loc.via;
   try {
     // 悬停不改变页面数据，不限制元素类型（CSS :hover 菜单常不带 aria-haspopup）
-    ctx.dispatched = true;
+    ctx.dispatch();
     await actionable(ctx, loc, { move: true, enabled: false });
   } finally {
     await loc.handle.dispose().catch(() => {});
@@ -365,7 +364,7 @@ async function fillElement(
     case 'text':
     case 'editable': {
       const { point } = await actionable(ctx, loc);
-      ctx.dispatched = true;
+      ctx.dispatch();
       await focusElement(ctx, loc, point);
       const sel = await loc.handle.evaluate(FOCUS_SELECT_ALL);
       if (!sel.focused) fail('not_actionable', '无法聚焦目标元素');
@@ -376,7 +375,7 @@ async function fillElement(
     }
     case 'value': {
       await actionable(ctx, loc);
-      ctx.dispatched = true;
+      ctx.dispatch();
       const want = String(value);
       const r = await loc.handle.evaluate(SET_NATIVE, want);
       if (!r.ok) {
@@ -459,7 +458,7 @@ async function selectOption(
   await actionable(ctx, loc);
   const plan = await planOption(ctx, loc, want, index);
   if (plan.index === plan.current) return;
-  ctx.dispatched = true;
+  ctx.dispatch();
   if (await loc.handle.evaluate(FOCUS)) {
     const keys: KeyInput[] = plan.home ? ['Home'] : [];
     for (let i = 0; i < Math.abs(plan.steps); i++)
@@ -499,7 +498,7 @@ async function selectMulti(ctx: Ctx, loc: Located, want: string): Promise<void> 
           .filter(Boolean);
   const indexes: number[] = [];
   for (const w of wants) indexes.push((await planOption(ctx, loc, w, null)).index);
-  ctx.dispatched = true;
+  ctx.dispatch();
   await loc.handle.evaluate(SELECT_APPLY, indexes);
 }
 
@@ -544,7 +543,7 @@ const typeText: Handler = async (ctx, fx) => {
     try {
       requireAction(await loc.handle.evaluate(INFO), 'type_text');
       const { point } = await actionable(ctx, loc);
-      ctx.dispatched = true;
+      ctx.dispatch();
       // 新聚焦的元素把光标放到末尾，键入接在原有内容后面；已有焦点的元素保持用户放的光标和选区
       const fresh = !(await loc.handle.evaluate(HAS_FOCUS));
       await focusElement(ctx, loc, point);
@@ -553,7 +552,7 @@ const typeText: Handler = async (ctx, fx) => {
       await loc.handle.dispose().catch(() => {});
     }
   }
-  ctx.dispatched = true;
+  ctx.dispatch();
   // 逐字键入：有键位的字符产生完整的 keydown/keypress/input/keyup，其余（如中文）用 insertText
   await p.keyboard.type(a.text);
 };
@@ -564,7 +563,7 @@ const pressKey: Handler = async (ctx) => {
   ctx.wait = 'input';
   const kb = p.keyboard as unknown as { charIsKey?: (k: string) => boolean };
   const combo = parseKeyCombo(a.key, (k) => (kb.charIsKey ? kb.charIsKey(k) : true));
-  ctx.dispatched = true;
+  ctx.dispatch();
   await pressCombo(p, combo);
 };
 
@@ -614,7 +613,7 @@ const drag: Handler = async (ctx, fx) => {
       to.y = again.point.y;
     }
     ctx.locator = from.loc?.via ?? to.loc?.via ?? 'coord';
-    ctx.dispatched = true;
+    ctx.dispatch();
     await mouseSafe(p, () => p.mouse.move(from.x, from.y));
     await p.mouse.down();
     try {
@@ -669,7 +668,7 @@ const uploadFile: Handler = async (ctx, fx) => {
       if (files.length > 1 && !st.multiple) {
         fail('invalid_params', '该文件输入框只接受一个文件', { files: a.files });
       }
-      ctx.dispatched = true;
+      ctx.dispatch();
       await (input as ElementHandle<HTMLInputElement>).uploadFile(...files);
       if (input !== loc.handle) await input.dispose().catch(() => {});
       return;
@@ -738,7 +737,7 @@ const scroll: Handler = async (ctx, fx) => {
     const read = () =>
       stateFrame.evaluate(SCROLL_STATE, fx0, fy0).catch(() => [] as number[]) as Promise<number[]>;
     const before = await read();
-    ctx.dispatched = true;
+    ctx.dispatch();
     await p.mouse.wheel({ deltaX: dx, deltaY: dy });
     const start = Date.now();
     let last = before;
@@ -763,7 +762,7 @@ const clickAt: Handler = async (ctx) => {
   ctx.wait = 'action';
   ctx.locator = 'coord';
   await checkInViewport(ctx, a.x, a.y);
-  ctx.dispatched = true;
+  ctx.dispatch();
   await withModifiers(p, a.modifiers, () =>
     mouseSafe(p, () =>
       p.mouse.click(a.x, a.y, { button: a.button ?? 'left', count: a.double ? 2 : 1 }),
@@ -777,7 +776,7 @@ const mouseMove: Handler = async (ctx) => {
   ctx.wait = 'input';
   ctx.locator = 'coord';
   await checkInViewport(ctx, a.x, a.y);
-  ctx.dispatched = true;
+  ctx.dispatch();
   await mouseSafe(p, () => p.mouse.move(a.x, a.y));
 };
 
@@ -790,7 +789,7 @@ const handleDialog: Handler = async (ctx, fx) => {
   const d = pendingOf(ctx.st, p);
   if (!d) fail('invalid_params', '没有待处理的对话框');
   dropPending(ctx.st, d);
-  ctx.dispatched = true;
+  ctx.dispatch();
   try {
     // prompt 不给文本时与用户直接点“确定”一致：采用页面给的默认值
     if (a.action === 'accept') await d.dialog.accept(a.prompt_text ?? d.dialog.defaultValue());
@@ -833,10 +832,10 @@ const navigatePage: Handler = async (ctx) => {
       fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
     }
     if (url.protocol === 'javascript:') fail('invalid_params', '不允许 javascript: 地址');
-    ctx.dispatched = true;
+    ctx.dispatch();
     resp = await p.goto(url.href, opt).catch((e) => navError(e, '打开页面'));
   } else if (type === 'reload') {
-    ctx.dispatched = true;
+    ctx.dispatch();
     resp = await p.reload(opt).catch((e) => navError(e, '刷新'));
   } else {
     const delta = type === 'back' ? -1 : 1;
@@ -849,7 +848,7 @@ const navigatePage: Handler = async (ctx) => {
     } finally {
       await cdp.detach().catch(() => {});
     }
-    ctx.dispatched = true;
+    ctx.dispatch();
     resp = await (type === 'back' ? p.goBack(opt) : p.goForward(opt)).catch((e) =>
       navError(e, type === 'back' ? '后退' : '前进'),
     );
@@ -861,14 +860,14 @@ const navigatePage: Handler = async (ctx) => {
 
 const selectPage: Handler = async (ctx) => {
   ctx.wait = 'none';
-  ctx.dispatched = true;
+  ctx.dispatch();
   await page(ctx).bringToFront();
 };
 
 const closePage: Handler = async (ctx) => {
   const p = page(ctx);
   ctx.wait = 'none';
-  ctx.dispatched = true;
+  ctx.dispatch();
   ctx.st.pending = ctx.st.pending.filter((d) => d.page !== p);
   await p.close({ runBeforeUnload: false });
   ctx.s.refs.dropPage(ctx.pageId);
@@ -908,13 +907,13 @@ const takeScreenshot: Handler = async (ctx, fx) => {
     ctx.locator = loc.via;
     try {
       await actionable(ctx, loc, { hitTest: false, stable: false, enabled: false });
-      ctx.dispatched = true;
+      ctx.dispatch();
       await loc.handle.screenshot({ path: out.path as `${string}.png`, type: out.type });
     } finally {
       await loc.handle.dispose().catch(() => {});
     }
   } else {
-    ctx.dispatched = true;
+    ctx.dispatch();
     await p.screenshot({
       path: out.path as `${string}.png`,
       type: out.type,
@@ -930,7 +929,7 @@ const evaluateScript: Handler = async (ctx) => {
   ctx.wait = 'none';
   const expr = `(${a.function.trim()}).apply(null, ${JSON.stringify(a.args ?? [])})`;
   const TIMEOUT = Symbol('timeout');
-  ctx.dispatched = true;
+  ctx.dispatch();
   let v: unknown;
   try {
     v = await within(p.mainFrame().evaluate(expr), ctx.timeout, TIMEOUT);
@@ -958,7 +957,7 @@ export async function newPage(ctx: Ctx): Promise<void> {
       fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
     }
   }
-  ctx.dispatched = true;
+  ctx.dispatch();
   const id = await ctx.s.pages.newPage({ pageId: a.pageId });
   const p = ctx.s.pages.get(id);
   ctx.newPages.push(id);

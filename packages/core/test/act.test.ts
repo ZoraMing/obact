@@ -485,6 +485,37 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'handle_dialog', pageId, action: 'accept' }, 'invalid_params');
   });
 
+  test('对话框落在可操作性检查的最后一次求值里：dialog_blocking 就是没有派发，处理对话框后不会补发输入', {
+    timeout: 60_000,
+  }, async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    const value = () => page.$eval('#text', (e) => (e as HTMLInputElement).value);
+    const actions: Action[] = [
+      { op: 'fill', pageId, target: { css: '#text' }, value: 'AB' },
+      { op: 'type_text', pageId, target: { css: '#text' }, text: 'AB' },
+    ];
+    for (const a of actions) {
+      // 稳定性采样要等页面渲染两帧：在第一次 requestAnimationFrame 里弹出对话框，它就落在这次求值里
+      await page.evaluate(() => {
+        const raf = window.requestAnimationFrame.bind(window);
+        window.requestAnimationFrame = (cb) => {
+          window.requestAnimationFrame = raf;
+          alert('求值期间的对话框');
+          return raf(cb);
+        };
+      });
+      const r = await err(a, 'dialog_blocking');
+      assert.equal(r.effects.dialogs[0]?.handled, 'pending');
+      // handle_dialog 会等悬空的处理函数收尾：它要是没停下，输入此时已经补发了
+      await ok({ op: 'handle_dialog', pageId, action: 'accept' });
+      assert.equal(await value(), '旧值', `${a.op} 没执行，输入框不该变`);
+      assert.ok(!(await events(pageId)).some((e) => e.startsWith('input:')), '没有输入事件');
+    }
+    await ok({ op: 'fill', pageId, target: { css: '#text' }, value: 'AB' });
+    assert.equal(await value(), 'AB');
+  });
+
   test('页面第一次被 act 之前弹出的对话框也有记录：动作报 dialog_blocking，handle_dialog 能关掉它', {
     timeout: 60_000,
   }, async () => {
