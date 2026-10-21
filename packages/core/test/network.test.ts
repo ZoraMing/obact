@@ -6,6 +6,7 @@ import { after, before, describe, test } from 'node:test';
 import {
   act,
   currentActionSeq,
+  getByPath,
   type NetworkAttachOptions,
   NetworkCache,
   ObactError,
@@ -160,5 +161,30 @@ describe('接口响应缓存（FR-10）', { skip: SKIP }, () => {
       server.closeAllConnections();
       await new Promise<void>((ok) => server.close(() => ok()));
     }
+  });
+});
+
+describe('字段路径 getByPath', () => {
+  test('只有 $ 后面紧跟 . 或 [ 或路径结束才是根符号；以 $ 开头的普通键（$values、$id、$type）照常取', () => {
+    const body = {
+      $values: [{ a: 1 }],
+      values: 'WRONG',
+      $id: '1',
+      list: [7],
+      nested: { $ref: 'x' },
+    };
+    assert.deepEqual(getByPath(body, '$values'), [{ a: 1 }], '不能被当成 values');
+    assert.equal(getByPath(body, '$values[0].a'), 1);
+    assert.equal(getByPath(body, '$id'), '1');
+    assert.equal(getByPath(body, 'nested.$ref'), 'x');
+    // 真正的根写法不变
+    assert.equal(getByPath(body, '$'), body);
+    assert.equal(getByPath(body, '$.'), body);
+    assert.equal(getByPath(body, ''), body);
+    assert.deepEqual(getByPath(body, '$.$values'), [{ a: 1 }]);
+    assert.equal(getByPath(body, '$.list[0]'), 7);
+    assert.equal(getByPath(body, '$["$id"]'), '1');
+    assert.equal(getByPath([[1, 2]], '$[0][1]'), 2, '根是数组');
+    assert.equal(getByPath(body, '$missing'), undefined);
   });
 });

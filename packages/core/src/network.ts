@@ -400,9 +400,12 @@ export class NetworkCache {
   }
 }
 
-/** 取出 JSON 里 `a.b[0].c`、`a.0.b`、`['a.b']` 形式的路径；空路径返回整个 body，路径不存在返回 undefined。 */
+/**
+ * 取出 JSON 里 `a.b[0].c`、`a.0.b`、`['a.b']` 形式的路径；空路径返回整个 body，路径不存在返回 undefined。
+ * 开头的 `$`、`$.`、`$[` 是根符号；`$values`、`$id` 这类以 $ 开头的普通键（Json.NET 的保留键）按键名取。
+ */
 export function getByPath(body: unknown, path: string): unknown {
-  const p = path.trim().replace(/^\$\.?/, '');
+  const p = path.trim().replace(/^\$(?=[.[]|$)\.?/, '');
   if (p === '') return body;
   const keys: string[] = [];
   for (const m of p.matchAll(/\[(\d+)\]|\["([^"]*)"\]|\['([^']*)'\]|([^.[\]]+)/g)) {
