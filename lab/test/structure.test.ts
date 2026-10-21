@@ -4,13 +4,17 @@
 // 第一组只测服务端（接口幂等、静态资源防目录穿越）；第二、三组在浏览器里用 observe / act 做完整操作并和服务端账本对账。
 // 内核问题（Shoelace 的插槽名称、宿主元素落点判定、aria-hidden 隐藏输入）按正确行为断言，失败即内核待修，见各测试的注释。
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { act, generateLocator, observe } from '@obact/core';
 import type { Action, ActResult, Locator, ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
 import { createLab, type Lab } from '../src/app.ts';
 import { ROWS } from '../src/modules/structure/data.ts';
+import { safeResolve, shoelaceRoot } from '../src/modules/structure/vendor.ts';
 import structure from '../src/modules/structure.ts';
 import { control, type LabEnv, SKIP, setup } from './helpers.ts';
 
@@ -123,17 +127,63 @@ describe('复杂结构：服务端（接口、静态资源）', () => {
   });
 
   test('组件库资源：目录穿越读不到包外文件', async () => {
+    const root = shoelaceRoot();
+    assert.ok(root, '需要先 npm install 装好 @shoelace-style/shoelace');
     const base = '/s/st-vendor/structure/vendor/shoelace';
+    // 正向对照：合法文件能读到，下面的非 200 才说明是防护挡住的，而不是路由坏了
+    const good = await rawGet(`${base}/custom-elements.json`);
+    assert.equal(good.status, 200, '合法资源应能读到');
+    // 靶子必须真实存在（包自己的 package.json、仓库根的 package.json），否则不论有没有防护都是 404
     const attacks = [
-      `${base}/..%2f..%2f..%2fpackage.json`,
-      `${base}/%2e%2e%2f%2e%2e%2fpackage.json`,
-      `${base}/..%5c..%5cpackage.json`,
+      '..%2fpackage.json',
+      '%2e%2e%2fpackage.json',
+      '..%2f..%2f..%2f..%2fpackage.json',
+      '%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fpackage.json',
     ];
-    for (const path of attacks) {
-      const r = await rawGet(path);
-      assert.notEqual(r.status, 200, `${path} 不应读到文件`);
-      assert.doesNotMatch(r.body, /"name"\s*:|root:/, `${path} 不应泄露文件内容`);
+    for (const a of attacks) {
+      assert.ok(existsSync(resolve(root, decodeURIComponent(a))), `${a} 的靶子文件应真实存在`);
+      const r = await rawGet(`${base}/${a}`);
+      assert.notEqual(r.status, 200, `${a} 不应读到文件`);
+      assert.doesNotMatch(r.body, /"name"\s*:|root:/, `${a} 不应泄露文件内容`);
     }
+    // 反斜杠变体在 POSIX 上不是真路径，只作冒烟；防护本身由下面的 safeResolve 用例保证
+    const bs = await rawGet(`${base}/..%5c..%5cpackage.json`);
+    assert.notEqual(bs.status, 200);
+    assert.doesNotMatch(bs.body, /"name"\s*:|root:/);
+  });
+
+  test('组件库资源：指向目录外的符号链接读不到', async () => {
+    const root = shoelaceRoot();
+    assert.ok(root, '需要先 npm install 装好 @shoelace-style/shoelace');
+    // 包外放一个真实文件当靶子，再在 cdn 目录里放一个指向它所在目录的临时链接（用完删除）
+    const outside = mkdtempSync(join(tmpdir(), 'obact-vendor-'));
+    const name = `obact-escape-${process.pid}`;
+    const link = join(root, name);
+    writeFileSync(join(outside, 'secret.json'), '{"name":"outside-secret"}');
+    symlinkSync(outside, link, 'dir');
+    try {
+      const r = await rawGet(`/s/st-vendor/structure/vendor/shoelace/${name}/secret.json`);
+      assert.notEqual(r.status, 200, '符号链接不应带出 cdn 目录');
+      assert.doesNotMatch(r.body, /outside-secret/);
+    } finally {
+      rmSync(link, { force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test('safeResolve：拒绝 . .. 空段与含分隔符、NUL 的段，合法段落在根目录内', () => {
+    const root = resolve('/srv/root');
+    const bad: string[][] = [
+      [],
+      ['..', 'x.js'],
+      ['a', '.', 'x.js'],
+      ['a', '', 'x.js'],
+      ['a/b.js'],
+      ['..\\x.js'],
+      ['a\0.js'],
+    ];
+    for (const segs of bad) assert.equal(safeResolve(root, segs), null, JSON.stringify(segs));
+    assert.equal(safeResolve(root, ['a', 'x.js']), join(root, 'a', 'x.js'));
   });
 });
 
