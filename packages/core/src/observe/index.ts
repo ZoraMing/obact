@@ -1,5 +1,6 @@
 import type { ObservedElement, ObserveParams, ObserveResult, PageSignature } from '@obact/schemas';
 import type { ElementHandle, Frame, Page } from 'puppeteer-core';
+import { dialogBlocked, pendingOf, raceDialog, stateOf, watchPage } from '../act/state.ts';
 import { asObactError, ObactError } from '../errors.ts';
 import { markPage } from '../mark.ts';
 import { bundle } from '../page/bundle.ts';
@@ -25,11 +26,15 @@ export type ObserveOptions = {
   signatures?: PageSignature[];
   /** 截图类视图（screenshot、som）的保存目录；省略时用系统临时目录下的 obact-shots/。 */
   outDir?: string;
+  /** 页面无响应（如被对话框挂起）时的等待上限（毫秒），默认 30000；超时报 timeout，不等 CDP 的协议超时。 */
+  timeoutMs?: number;
 };
 
 /** 字符预算默认值（FR-05）与下限（契约 observe.json）。 */
 const DEFAULT_MAX_CHARS = 40000;
 const MIN_MAX_CHARS = 1000;
+/** 观察的等待上限：正常页面远小于它，页面主线程被对话框、长任务占住时不用等到 CDP 的 180 秒协议超时。 */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * Canvas 告警阈值（FR-11）：可见 canvas 覆盖视口面积的比例。常见后台页里单个图表一般不到视口的 30%；
@@ -295,8 +300,30 @@ export async function observe(
       max_chars: maxChars,
     });
   }
+  const page = s.pages.get(params.pageId);
+  // 页面上有未处理的对话框时脚本被挂起，页面内的求值要等对话框处理后才返回：先查记录，立即报错（与 act 一致）
+  const st = stateOf(s);
+  watchPage(st, page);
+  const pend = pendingOf(st, page);
+  if (pend) throw dialogBlocked(pend);
+  return raceDialog(
+    s,
+    st,
+    page,
+    () => observePage(s, page, params, views, maxChars, opts),
+    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+}
+
+async function observePage(
+  s: Session,
+  page: Page,
+  params: ObserveParams,
+  views: Set<string>,
+  maxChars: number,
+  opts: ObserveOptions,
+): Promise<ObserveResult> {
   const { pageId } = params;
-  const page = s.pages.get(pageId);
   const main = page.mainFrame();
   const marked = await markPage(s, pageId);
   const geos = await frameGeometry(

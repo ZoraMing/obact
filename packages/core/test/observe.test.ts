@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import type { ServerResponse } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import type { ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { observe, resolveRef } from '../src/index.ts';
+import { act, type ObactError, observe, resolveRef } from '../src/index.ts';
 import { type Handler, rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
 
 const contracts = new Contracts();
@@ -23,8 +24,17 @@ const byName = (r: ObserveResult, name: string): ObservedElement => {
 
 describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
   let env: TestEnv;
+  /** /api/hold 的请求挂起，直到测试放行：页面用同步请求占住主线程。 */
+  const held: ServerResponse[] = [];
+  let onHold: () => void = () => {};
   before(async () => {
-    env = await setup({ '/api/strict': strictPage });
+    env = await setup({
+      '/api/strict': strictPage,
+      '/api/hold': (_req, res) => {
+        held.push(res);
+        onHold();
+      },
+    });
   });
   after(async () => {
     await env?.close();
@@ -383,6 +393,53 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
       observe(env.session, { pageId, views: ['dom' as 'text'] }),
       'invalid_params',
     );
+  });
+
+  test('页面有未处理的对话框：observe 立即报 dialog_blocking，处理后恢复；主线程无响应时按上限报 timeout', {
+    timeout: 30_000,
+  }, async () => {
+    const pageId = await env.open('/pages/act-main.html');
+    const clicked = await act(env.session, { op: 'click', pageId, target: { css: '#alert' } });
+    assert.equal(clicked.status, 'ok');
+    assert.equal(clicked.effects.dialogs[0]?.handled, 'pending');
+    // 对话框期间页面内的求值不会返回：observe 不能等到 CDP 的协议超时（180 秒）
+    const t = Date.now();
+    await assert.rejects(observe(env.session, { pageId }), (e: ObactError) => {
+      assert.equal(e.code, 'dialog_blocking');
+      assert.deepEqual(e.details?.dialog, { type: 'alert', message: '提示一下' });
+      return true;
+    });
+    assert.ok(Date.now() - t < 3000, `耗时 ${Date.now() - t}`);
+    await act(env.session, { op: 'handle_dialog', pageId, action: 'accept' });
+    contracts.assert('observe.Result', await observe(env.session, { pageId }));
+
+    // 没有对话框记录、页面主线程却被占住：到期报 timeout，提示可能被对话框挂起
+    const page = env.session.pages.get(pageId);
+    const arrived = new Promise<void>((resolve) => {
+      onHold = resolve;
+    });
+    const blocked = page
+      .evaluate(() => {
+        const x = new XMLHttpRequest();
+        x.open('GET', '/api/hold', false);
+        x.send();
+      })
+      .catch(() => {});
+    try {
+      await arrived;
+      await assert.rejects(
+        observe(env.session, { pageId }, { timeoutMs: 500 }),
+        (e: ObactError) => {
+          assert.equal(e.code, 'timeout');
+          assert.match(e.message, /无响应.*handle_dialog.*close_page/);
+          return true;
+        },
+      );
+    } finally {
+      for (const res of held.splice(0)) res.writeHead(200).end('ok');
+      await blocked;
+    }
+    contracts.assert('observe.Result', await observe(env.session, { pageId }));
   });
 
   test('大表性能：5000 行（1 万个可交互元素）', async () => {

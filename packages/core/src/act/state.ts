@@ -1,5 +1,6 @@
 import type { ActResult } from '@obact/schemas';
 import type { Dialog, Page, Target } from 'puppeteer-core';
+import { ObactError } from '../errors.ts';
 import type { Session } from '../session.ts';
 
 export type DialogInfo = ActResult['effects']['dialogs'][number];
@@ -70,6 +71,70 @@ export function pendingOf(st: ActState, page: Page): PendingDialog | undefined {
 
 export function dropPending(st: ActState, d: PendingDialog): void {
   st.pending = st.pending.filter((x) => x !== d);
+}
+
+/** 页面上有未处理对话框时的错误（act 与 observe 共用）：页面脚本被挂起，要先 handle_dialog。 */
+export function dialogBlocked(d: PendingDialog): ObactError {
+  return new ObactError(
+    'dialog_blocking',
+    `页面上有未处理的 ${d.type} 对话框：“${d.message}”，请先 handle_dialog`,
+    { dialog: { type: d.type, message: d.message } },
+  );
+}
+
+/**
+ * 页面主线程无响应的超时错误。没有本页的对话框记录时，多半是别的标签页的对话框（同进程的弹窗会连带挂住打开者）
+ * 或页面里的长任务：别的标签页有未处理的对话框时，在 details 里带上它们的 pageId 与类型。
+ */
+export function stalledError(s: Session, st: ActState, page: Page, ms: number): ObactError {
+  const others = st.pending
+    .filter((d) => d.page !== page)
+    .map((d) => ({ pageId: s.pages.idOf(d.page), type: d.type, message: d.message }));
+  let msg = `等待 ${ms} 毫秒后页面主线程仍无响应，可能被对话框挂起，可 handle_dialog 或 close_page`;
+  if (others.length) {
+    const who = others.map((d) => `${d.pageId}（${d.type}）`).join('、');
+    msg += `；其他标签页有未处理的对话框：${who}，同进程的页面会被它挂住，请先在该页 handle_dialog`;
+  }
+  return new ObactError('timeout', msg, others.length ? { dialogs: others } : undefined);
+}
+
+/**
+ * 页面内的调用在页面被对话框挂起时不会返回（直到 CDP 的协议超时）：与本页出现对话框、期限竞争，先到者胜出。
+ * 对话框先出现报 dialog_blocking；到期仍没结束报 timeout。被放弃的调用仍在后台跑完，结果与错误都丢弃。
+ */
+export function raceDialog<T>(
+  s: Session,
+  st: ActState,
+  page: Page,
+  start: () => Promise<T>,
+  ms: number,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const done = () => {
+      st.hooks.delete(onDialog);
+      clearTimeout(timer);
+    };
+    const onDialog = (d: PendingDialog) => {
+      if (d.page !== page) return;
+      done();
+      reject(dialogBlocked(d));
+    };
+    const timer = setTimeout(() => {
+      done();
+      reject(stalledError(s, st, page, ms));
+    }, ms);
+    st.hooks.add(onDialog);
+    start().then(
+      (v) => {
+        done();
+        resolve(v);
+      },
+      (e) => {
+        done();
+        reject(e);
+      },
+    );
+  });
 }
 
 /** 当前的动作序号（接口缓存等模块读取；还没有动作时为 0）。 */

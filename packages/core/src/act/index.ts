@@ -6,7 +6,7 @@ import type { Session } from '../session.ts';
 import { checkAssertions } from './assert.ts';
 import { Aborted, type ActOptions, type Ctx, Effects, fail, makeCtx } from './ctx.ts';
 import { HANDLERS, newPage, shotPath } from './ops.ts';
-import { pendingOf, stateOf, watchPage } from './state.ts';
+import { dialogBlocked, pendingOf, stateOf, watchPage } from './state.ts';
 import { sleep, within } from './util.ts';
 
 export type { ActOptions, ObscuredInfo } from './ctx.ts';
@@ -174,13 +174,7 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
       watchPage(st, page);
       const pend = pendingOf(st, page);
       if (pend && action.op !== 'handle_dialog' && action.op !== 'close_page') {
-        fail(
-          'dialog_blocking',
-          `页面上有未处理的 ${pend.type} 对话框：“${pend.message}”，请先 handle_dialog`,
-          {
-            dialog: { type: pend.type, message: pend.message },
-          },
-        );
+        throw dialogBlocked(pend);
       }
       if (!pend && POINTER_OPS.has(action.op)) await ensureForeground(page);
       fx = new Effects(ctx, page);
