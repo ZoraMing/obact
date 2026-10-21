@@ -32,7 +32,8 @@ node --test "lab/test/**/*.test.ts"
 | `drop_rate` | 丢弃响应（直接断开连接）的比例；`commit` 写接口先照常执行并落库再断开（客户端只看到连接重置，状态未明），读接口直接断开 |
 | `commit_timeout` | 提交超时但已落库：写接口照常执行并记录，然后不返回响应 |
 | `session_ttl_ms` | 会话有效期；过期后访问需要登录的页面被跳到登录页 |
-| `redesign` | 改版变体：0 为原版，1 起为各模块定义的改版（改 id、改文案、改层级） |
+| `redesign` | 改版变体：0 为原版，1 起为各模块定义的改版（改 id、改文案、改层级）。目前 auth 登录页和 orders 列表各有 1~4，structure、noise 没有改版（设了也没有变化） |
+| `redesign_after_requests`、`redesign_after_ms`、`redesign_to` | 定时改版（PRD 的“运行中途改版”），默认关闭。设置 `redesign_after_requests: N` 后，之后的 N 个模块请求（页面和 `/api/` 都算，控制接口不算）仍是旧版，第 N+1 个请求起 `redesign` 切到 `redesign_to`（默认 1）；`redesign_after_ms: T` 是从设置起 T 毫秒后的下一个请求切。两个谁先到谁生效，只切一次，切换记入事件日志（`redesign_switch`）；设为 `null` 取消 |
 | `popup_rate` | 随机弹窗：每个页面加载按此概率弹出广告层（按空间的随机序列，结果可复现） |
 
 写接口用幂等键记录每一次提交（页面生成键，状态未明后重试沿用同一个键）；`state.submissions[].count` 大于 1 就是重复提交；`payload` 始终是首次提交的内容，同一个键后来带了不同操作或载荷时 `conflict` 为 true（服务端仍只按首次处理）。

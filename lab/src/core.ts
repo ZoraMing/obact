@@ -25,8 +25,14 @@ export type Faults = {
   commit_timeout: boolean;
   /** 会话有效期（毫秒）；null 为不过期。 */
   session_ttl_ms: number | null;
-  /** 改版变体：0 为原版，1 起为各模块定义的改版（改 id、改文案、改层级、移位置等）。 */
+  /** 改版变体：0 为原版，1 起为各模块定义的改版（改 id、改文案、改层级、移位置等）。structure、noise 不定义变体。 */
   redesign: number;
+  /** 定时改版切到的变体。 */
+  redesign_to: number;
+  /** 定时改版：之后经过这么多个模块请求（页面和 /api/ 都算，控制接口不算），下一个请求起 redesign 切到 redesign_to；null 为关闭。 */
+  redesign_after_requests: number | null;
+  /** 定时改版：设置之后经过这么多毫秒，下一个请求起 redesign 切到 redesign_to；null 为关闭。 */
+  redesign_after_ms: number | null;
   /** 随机弹窗：每次加载页面按此概率弹出广告层（按空间的随机序列，结果可复现）。 */
   popup_rate: number;
 };
@@ -38,6 +44,9 @@ export const DEFAULT_FAULTS: Faults = {
   commit_timeout: false,
   session_ttl_ms: null,
   redesign: 0,
+  redesign_to: 1,
+  redesign_after_requests: null,
+  redesign_after_ms: null,
   popup_rate: 0,
 };
 
@@ -77,6 +86,25 @@ const FAULT_RULES: {
       return n !== undefined && Number.isInteger(n) ? n : undefined;
     },
     expect: '不小于 0 的整数',
+  },
+  redesign_to: {
+    parse: (v) => {
+      const n = nonNegative(v);
+      return n !== undefined && Number.isInteger(n) ? n : undefined;
+    },
+    expect: '不小于 0 的整数',
+  },
+  redesign_after_requests: {
+    parse: (v) => {
+      if (v === null || v === 'null') return null;
+      const n = nonNegative(v);
+      return n !== undefined && Number.isInteger(n) && n >= 1 ? n : undefined;
+    },
+    expect: '不小于 1 的整数或 null',
+  },
+  redesign_after_ms: {
+    parse: (v) => (v === null || v === 'null' ? null : nonNegative(v)),
+    expect: '不小于 0 的数字或 null',
   },
   popup_rate: { parse: (v) => rate(v), expect: '0~1 的数字' },
 };
@@ -163,6 +191,8 @@ export type Space = {
   autoKey: number;
   /** 重置时传入的整数参数（见 LabModule.resetOptions），模块在 init 里读；没传的键取模块自己的默认值。 */
   options: Record<string, number>;
+  /** 定时改版的运行状态（配置在 faults.redesign_after_*）：剩余请求数、到点的时间戳；null 为未设置。 */
+  redesign: { left: number | null; at: number | null };
   /** 本空间的确定性随机数（种子 + 调用次序）。 */
   rng(): number;
   /** 事件日志（最近 500 条），用于调试与对账。 */

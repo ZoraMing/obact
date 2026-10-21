@@ -117,6 +117,8 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
       ['{"commit_timeout":"yes"}', '非布尔'],
       ['{"redesign":1.5}', '非整数'],
       ['{"delay_ms":-1}', '负数'],
+      ['{"redesign_after_requests":0}', '请求数从 1 起'],
+      ['{"redesign_after_ms":"soon"}', '非数字'],
       ['{"drop_rate":0.5,"popup_rate":"x"}', '一项非法时前面合法的也不能生效'],
       ['null', 'JSON null'],
       ['[1]', '数组'],
@@ -221,6 +223,62 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     const s = await c.state();
     assert.ok(s.log.some((x) => x.type === 'fault_500'));
     assert.ok(s.log.some((x) => x.type === 'fault_drop'));
+  });
+
+  test('故障：定时改版按“第 N 个请求后”或“T 毫秒后”自动切换，只切一次，控制接口不计数，默认关闭', async () => {
+    const c = control(lab, 'rd');
+    const hit = () => fetch(`${lab.url('rd')}/api/counter`);
+    const redesign = async () => (await c.state()).faults.redesign;
+    assert.deepEqual(
+      [
+        (await c.state()).faults.redesign_after_requests,
+        (await c.state()).faults.redesign_after_ms,
+      ],
+      [null, null],
+      '默认关闭',
+    );
+    for (let i = 0; i < 3; i++) await hit();
+    assert.equal(await redesign(), 0, '没设置时不会自己切');
+
+    // 之后的 2 个请求仍是旧版，第 3 个请求起是新版；读 state 和改 faults 都不算请求
+    await c.faults({ redesign_after_requests: 2, redesign_to: 3 });
+    await hit();
+    await c.state();
+    await hit();
+    assert.equal(await redesign(), 0);
+    await hit();
+    const s = await c.state();
+    assert.equal(s.faults.redesign, 3);
+    assert.equal(s.faults.redesign_after_requests, null, '切完即关闭');
+    assert.deepEqual(
+      s.log.filter((x) => x.type === 'redesign_switch').map((x) => x.detail),
+      [{ from: 0, to: 3, by: 'requests' }],
+    );
+    await hit();
+    const again = await c.state();
+    assert.equal(again.log.filter((x) => x.type === 'redesign_switch').length, 1, '只切一次');
+
+    // 时间：还没到点不切；到点后的下一个请求切（0 毫秒即下一个请求）
+    await c.faults({ redesign: 0, redesign_after_ms: 3_600_000, redesign_to: 1 });
+    await hit();
+    assert.equal(await redesign(), 0);
+    await c.faults({ redesign_after_ms: 0 });
+    await hit();
+    const t = await c.state();
+    assert.equal(t.faults.redesign, 1);
+    assert.equal(t.faults.redesign_after_ms, null);
+    assert.deepEqual(t.log.filter((x) => x.type === 'redesign_switch').at(-1)?.detail, {
+      from: 0,
+      to: 1,
+      by: 'ms',
+    });
+
+    // 改成 null 即取消
+    await c.faults({ redesign: 0, redesign_after_requests: 1 });
+    await c.faults({ redesign_after_requests: null });
+    await hit();
+    await hit();
+    assert.equal(await redesign(), 0);
   });
 
   test('故障：提交超时但已落库', async () => {

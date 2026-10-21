@@ -73,6 +73,7 @@ function newSpace(
     sessions: new Map(),
     submissions: new Map(),
     autoKey: 0,
+    redesign: { left: null, at: null },
     rng: seeded(seed),
     log: [],
   };
@@ -181,6 +182,32 @@ export async function createLab(
     return true;
   };
 
+  /**
+   * 定时改版：每个模块请求（含 /api/，不含控制接口）到达时检查，请求数用完或时间到就把 redesign 切到 redesign_to，只切一次。
+   * 设置 redesign_after_requests = N 时，之后的 N 个请求仍是旧版，第 N+1 个请求起是新版。
+   */
+  const tickRedesign = (space: Space): void => {
+    const s = space.redesign;
+    let by: 'requests' | 'ms' | null = null;
+    if (s.left !== null) {
+      if (s.left <= 0) by = 'requests';
+      else s.left--;
+    }
+    if (by === null && s.at !== null && Date.now() >= s.at) by = 'ms';
+    if (by === null) return;
+    const f = space.faults;
+    space.log.push({
+      at: new Date().toISOString(),
+      type: 'redesign_switch',
+      detail: { from: f.redesign, to: f.redesign_to, by },
+    });
+    f.redesign = f.redesign_to;
+    f.redesign_after_requests = null;
+    f.redesign_after_ms = null;
+    s.left = null;
+    s.at = null;
+  };
+
   const control = async (ctx: Ctx, action: string): Promise<boolean> => {
     const { space } = ctx;
     if (action === 'state' && ctx.req.method === 'GET') {
@@ -215,6 +242,10 @@ export async function createLab(
       const parsed = parseFaults(await bodyOrNull(ctx));
       if ('error' in parsed) return badRequest(ctx, parsed.error);
       Object.assign(space.faults, parsed.faults);
+      // 定时改版从设置的这一刻开始计
+      const { redesign_after_requests: n, redesign_after_ms: ms } = parsed.faults;
+      if (n !== undefined) space.redesign.left = n;
+      if (ms !== undefined) space.redesign.at = ms === null ? null : Date.now() + ms;
       space.log.push({ at: new Date().toISOString(), type: 'faults', detail: parsed.faults });
       ctx.json(space.faults);
       return true;
@@ -341,6 +372,7 @@ export async function createLab(
       ctx.params[k] = v;
     }
     const isApi = rest.startsWith('/api/');
+    tickRedesign(space);
 
     if (route.opts.auth && !ctx.user) {
       if (isApi) return ctx.json({ error: 'unauthorized' }, 401);
