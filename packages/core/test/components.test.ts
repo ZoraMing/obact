@@ -1,4 +1,4 @@
-// 组件识别验收（用户重点）：components.html 中约 40 种常见组件都应被识别为可操作功能，
+// 组件识别验收（用户重点）：components.html 中带期望值的常见组件都应被识别为可操作功能，
 // 角色、名称、可用操作正确；纯网页信息不被编号。observe 实现后，同一页面还用于验收 observe 的输出。
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';

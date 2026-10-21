@@ -267,7 +267,7 @@ P0 为第一阶段必须交付，P1 为第一阶段应交付、可以延后。�
 
 ```json
 {"pageId":"main","url":"https://example.com/orders","signature":"order\_list","canvas\_warning":false,
- "snapshot\_text":"\[12] button \\"查询\\"\\n\[13] textbox \\"订单号\\" value=\\"\\"\\n\[15] button \\"审核\\" within=row(\\"88231\\")",
+ "snapshot\_text":"\[12] button \\"查询\\"\\n\[13] textbox \\"订单号\\" value=\\"\\"\\n\[15] button \\"审核\\" within=tr\[data-id='88231']",
  "elements":\[{"ref":15,"role":"button","name":"审核","bbox":\[1020,420,64,28],"within":"tr\[data-id='88231']"}],
  "text\_md":"订单列表，共 238 条 …","truncated":false}
 ```
@@ -426,7 +426,7 @@ workspace/
 |夹具|内容|覆盖|
 |-|-|-|
 |动态属性|每次加载都变化的 id 和哈希类名；每行一个同名按钮|FR-06、FR-07|
-|改版变体|同一页面的四个版本：改 id、改文案、改层级、移动位置|FR-07、FR-20|
+|改版变体|同一页面的原版与多个改版：改 id、改文案、改层级、移动位置|FR-07、FR-20|
 |页面结构|Shadow DOM、同源和跨域 iframe、新标签页|FR-04、FR-05|
 |遮挡与弹窗|透明遮罩、Cookie 提示条、随机弹出的广告层|FR-13、FR-23|
 |时序|动画按钮、布局偏移、延迟渲染、骨架屏|FR-13、FR-14|
