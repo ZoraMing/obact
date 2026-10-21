@@ -95,7 +95,7 @@ M1 需要承接的预研结论：编号表以 backendNodeId 为准、克隆节�
 **已完成并推送**：M0 全部；M1 的 observe、act、定位器、浏览器池、12 类夹具、Lab 四个模块（auth、orders、structure、noise）及三个控制接口、BW-3 与 BW-7 本地基准脚本。MiniWoB++ 10 个任务 50/50；BW-14（取 observe 的元素表，142 页）召回 638/638。M1 过程中测试发现并修复了 15 个内核问题。
 
 **没做完**
-0. 版本策略已改（PRD 8.3、FR-29）：不做扩展侧边栏，运行时支持版本区间，测试固定基准版本；开发环境与 CI 已统一用 Chrome for Testing 141.0.7390.122，本机可复现 CI 失败。官方 Chrome 稳定版上的抽测还没做。
+0. 版本策略已改（PRD 8.3、FR-29）：不做扩展侧边栏，运行时支持版本区间，测试固定基准版本；开发环境与 CI 已统一用 Chrome for Testing 141.0.7390.122，本机可复现 CI 失败。官方 Chrome 稳定版上的抽测还没跑通：任务 `compat-stable` 已写在 `.github/workflows/live.yml`，但它装的是 chrome-headless-shell 却跑全套测试，池的有头用例需要完整 Chrome，按现在的写法必然失败；PRD 8.3 的约定是只跑核心测试，修好前不算做完。
 1. 完整 Chrome（有头 / 新无头）点击导航后输入失效：无头已改用 chrome-headless-shell 规避，Lab 登录流程稳定通过；有头仍有风险，待在带窗口管理器的真实桌面上确认（见 M0-spikes 第 6 节）。
 2. BW-6、BW-12 基准脚本：本地全场景已通过（act 已能滚动被祖先容器裁掉的目标）；`--live` 公开站点版本未实测。
 3. `bench/test` 还没纳入 `npm test`（约 60 秒以上）；BW-3、BW-7 的 `--live` 公开站点版本只在本地桩站点验证过，真站未实测（容器访问不了），需要在能联网的 CI 里跑。
