@@ -64,6 +64,7 @@ function newSpace(id: string, modules: readonly LabModule[], seed = seedOf(id)):
     faults: { ...DEFAULT_FAULTS },
     sessions: new Map(),
     submissions: new Map(),
+    autoKey: 0,
     rng: seeded(seed),
     log: [],
   };
@@ -112,7 +113,6 @@ export async function createLab(
   }
   const spaces = new Map<string, Space>();
   const faultRng = new Map<string, () => number>();
-  let autoKey = 0;
 
   const getSpace = (id: string): Space => {
     let s = spaces.get(id);
@@ -271,7 +271,7 @@ export async function createLab(
         ctx.user = null;
       },
       record(op, key, payload) {
-        const k = key || `auto-${++autoKey}`;
+        const k = key || `auto-${++space.autoKey}`;
         const now = new Date().toISOString();
         const prev = space.submissions.get(k);
         // 重复提交保留首次的载荷（实际落库的是它）；同键但操作或载荷不同的标 conflict，对账时能看出键被复用

@@ -144,6 +144,8 @@ export type Space = {
   faults: Faults;
   sessions: Map<string, SessionInfo>;
   submissions: Map<string, Submission>;
+  /** 无键提交的自动幂等键序号（auto-N）：按空间计数，reset 随新空间归零。 */
+  autoKey: number;
   /** 本空间的确定性随机数（种子 + 调用次序）。 */
   rng(): number;
   /** 事件日志（最近 500 条），用于调试与对账。 */
