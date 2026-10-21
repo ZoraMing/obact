@@ -83,7 +83,7 @@ describe('observe：组件陈列验收', { skip: SKIP }, () => {
     }
   });
 
-  test('透明的原生控件（没有可见 label）：act 判不可见，标 transparent、不可点击；有 label 代点的仍可点击', async () => {
+  test('透明的原生控件（没有可见 label）：act 按命中测试操作，observe 照普通控件列为可点击，不标 transparent；有 label 代点的仍可点击', async () => {
     // 陈列页比视口长：先滚到这些控件处，不在视口内的元素只显示 offscreen
     await env.session.pages
       .get(pageId)
@@ -91,10 +91,9 @@ describe('observe：组件陈列验收', { skip: SKIP }, () => {
     const seen = await observe(env.session, { pageId });
     const bare = seen.elements.find((e) => e.name === '选择此行');
     assert.ok(bare);
-    assert.equal(bare.clickable, false);
+    assert.equal(bare.clickable, true);
     const line = (seen.snapshot_text ?? '').split('\n').find((l) => l.startsWith(`[${bare.ref}] `));
-    assert.match(line ?? '', / transparent /);
-    assert.doesNotMatch(line ?? '', /covered/);
+    assert.doesNotMatch(line ?? '', /transparent|covered/);
     assert.equal(seen.elements.find((e) => e.name === '自动续费')?.clickable, true);
   });
 

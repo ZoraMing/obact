@@ -99,9 +99,16 @@ export function obActDisabled(el: Element): boolean {
   );
 }
 
-/** 视觉上可见：未被 display/visibility/opacity 隐藏，且有尺寸。 */
-export function obActVisible(el: Element): boolean {
-  if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+/**
+ * 视觉上可见：未被 display/visibility/opacity 隐藏，且有尺寸。
+ * 原生表单控件（INPUT、SELECT、TEXTAREA、BUTTON）不看 opacity（与 Playwright 的可见性定义一致）：
+ * 组件库的复选框、单选框、开关、文本框常把透明的原生控件铺在自绘外观上，能不能点中由命中测试与落点防护决定
+ * （透明的蜜罐输入框不在点击点最上层照样被拒）；strict 为 true 时仍按 opacity 判断（obActLabelProxy 用它）。
+ */
+export function obActVisible(el: Element, strict = false): boolean {
+  const control = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(el.tagName);
+  const opacityProperty = strict || !control;
+  if (!el.checkVisibility({ opacityProperty, visibilityProperty: true })) return false;
   const r = el.getBoundingClientRect();
   return r.width > 0 && r.height > 0;
 }
@@ -115,7 +122,7 @@ export function obActLabelProxy(el: Element): Element | null {
   const type = (el as HTMLInputElement).type;
   if (type !== 'checkbox' && type !== 'radio') return null;
   const r = el.getBoundingClientRect();
-  if (obActVisible(el) && r.width >= 4 && r.height >= 4) return null;
+  if (obActVisible(el, true) && r.width >= 4 && r.height >= 4) return null;
   for (const l of (el as HTMLInputElement).labels ?? []) {
     const lr = l.getBoundingClientRect();
     if (obActVisible(l) && lr.width >= 4 && lr.height >= 4) return l;

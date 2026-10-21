@@ -241,6 +241,29 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.match(env.session.pages.get(pageId).url(), /act-main\.html$/);
   });
 
+  test('opacity:0 的原生控件（铺在自绘外观上、没有 label）：点击、填写都真正生效；点击点上不是它的透明蜜罐照样被拒', async () => {
+    const pageId = await env.open('/pages/act-opacity.html');
+    await ok({ op: 'click', pageId, target: { css: '#cb' } });
+    await ok({ op: 'click', pageId, target: { role: 'switch', name: '消息通知' } });
+    await ok({ op: 'fill', pageId, target: { css: '#rd' }, value: true });
+    await ok({ op: 'fill', pageId, target: { css: '#tx' }, value: '月付' });
+    assert.deepEqual(await events(pageId), [
+      'cb:true:true',
+      'sw:true:true',
+      'rd:true:true',
+      'tx:月付:true',
+    ]);
+    // 可见性断言与动作同一判据：透明但铺在外观上的控件算存在
+    await ok({
+      op: 'assert',
+      pageId,
+      checks: [{ element_present: { role: 'checkbox', name: '选择此行' } }],
+    });
+    // 蜜罐同样透明，但点击点上是别的元素：落点防护拦下，页面没有收到任何事件
+    await err({ op: 'click', pageId, target: { css: '#trap' }, timeout_ms: 1500 }, 'obscured');
+    assert.equal((await events(pageId)).length, 4);
+  });
+
   test('被遮挡：重试 3 次后报 obscured；onObscured 处理后成功', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);

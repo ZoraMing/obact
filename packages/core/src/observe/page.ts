@@ -53,7 +53,7 @@ export type RawElement = {
   proxy?: boolean;
   /** 没有可访问名称的图标类元素的提示词（obHint）。 */
   hint?: string;
-  /** 命中测试落在它上面，但它（或祖先）opacity:0，act 判“不可见”操作不了：clickable 因此为 false。 */
+  /** 命中测试落在它上面，但它（或祖先）opacity:0，act 判“不可见”操作不了：clickable 因此为 false（原生表单控件不受影响）。 */
   transparent?: boolean;
 };
 
@@ -421,7 +421,9 @@ export function obsElement(
   let clickable = false;
   let pt: [number, number] | null = null;
   let blocked = false;
-  const transparent = !proxy && shown && !el.checkVisibility({ opacityProperty: true });
+  // 透明（opacity:0，含祖先透明）：act 对原生表单控件不看 opacity（命中测试说了算），只有其他元素仍判“不可见”
+  const transparent =
+    !proxy && shown && !formControl && !el.checkVisibility({ opacityProperty: true });
   if (proxy || shown) {
     const fixed = getComputedStyle(geo).position === 'fixed';
     const outer = fixed ? null : obsClipFor(obsParent(geo), clipCache);
@@ -452,18 +454,17 @@ export function obsElement(
           break;
         }
       }
-      // 透明元素（opacity:0）：只有它本身是命中目标（透明覆盖在自绘外观上的原生控件）时才列出
-      if (transparent && !onTarget && !formControl) return null;
+      // 透明的非表单元素：只有它本身是命中目标时才列出
+      if (transparent && !onTarget) return null;
       if (onTarget && !states.disabled) {
-        // act 对 opacity:0 的元素一律判“不可见”（没有可见 label 可代点时）：标不可点击并注明原因，不让 observe 与 act 说法相反；
-        // 文件框例外，upload_file 不要求可见
-        if (transparent && type !== 'file') blocked = true;
+        // act 对这类元素判“不可见”：标不可点击并注明原因，不让 observe 与 act 说法相反
+        if (transparent) blocked = true;
         else {
           clickable = true;
           pt = [x, y];
         }
       }
-    } else if (transparent && !formControl) return null;
+    } else if (transparent) return null;
   }
   const name = obName(el);
   const out: RawElement = {
