@@ -8,11 +8,12 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from '
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLab } from '../lab/src/app.ts';
 import { launchBrowser, observe, Session } from '../packages/core/src/index.ts';
 import { testChrome } from '../tools/browser.ts';
+import { resolveStatic } from '../tools/static.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
@@ -52,15 +53,23 @@ const TYPES: Record<string, string> = {
   '.json': 'application/json',
 };
 const server = createServer(async (req, res) => {
-  const path = new URL(req.url ?? '/', 'http://x').pathname;
+  let path: string;
+  try {
+    path = new URL(req.url ?? '/', 'http://x').pathname;
+  } catch {
+    // 请求目标不合法：回 400，异常冒出去会让整个基准进程退出
+    return void res.writeHead(400).end();
+  }
   const mount = Object.keys(MOUNTS).find((m) => path.startsWith(m));
   if (!mount) return void res.writeHead(404).end();
-  const root = MOUNTS[mount] as string;
-  const file = normalize(join(root, decodeURIComponent(path.slice(mount.length))));
-  if (!file.startsWith(root)) return void res.writeHead(403).end();
+  const target = resolveStatic(MOUNTS[mount] as string, path.slice(mount.length));
+  if ('status' in target) return void res.writeHead(target.status).end();
   try {
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
-    res.end(await readFile(file));
+    const body = await readFile(target.file);
+    res.writeHead(200, {
+      'content-type': TYPES[extname(target.file)] ?? 'application/octet-stream',
+    });
+    res.end(body);
   } catch {
     res.writeHead(404).end();
   }

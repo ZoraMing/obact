@@ -11,9 +11,10 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveStatic } from '../tools/static.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const PAGES = join(here, 'pages');
@@ -78,8 +79,14 @@ async function loadApi(): Promise<{
 
 export async function startFixtures(opts: { port?: number } = {}): Promise<FixtureServer> {
   const { routes, upgrades } = await loadApi();
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://x');
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://x');
+    } catch {
+      // 请求目标不合法（如 GET //）：回 400，不能让异常冒出去
+      return void res.writeHead(400).end();
+    }
     const handler = routes[url.pathname];
     if (handler) {
       const ctx: FixtureCtx = {
@@ -104,22 +111,35 @@ export async function startFixtures(opts: { port?: number } = {}): Promise<Fixtu
       }
       return;
     }
-    let path = decodeURIComponent(url.pathname);
+    let path = url.pathname;
     if (path.endsWith('/')) path += 'index.html';
-    const file = normalize(join(PAGES, path));
-    if (!file.startsWith(PAGES)) return void res.writeHead(403).end();
+    const target = resolveStatic(PAGES, path);
+    if ('status' in target) return void res.writeHead(target.status).end();
     try {
-      const body = await readFile(file);
-      res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+      const body = await readFile(target.file);
+      res.writeHead(200, {
+        'content-type': TYPES[extname(target.file)] ?? 'application/octet-stream',
+      });
       res.end(body);
     } catch {
       res.writeHead(404).end();
     }
+  };
+  // 异步回调里的异常不会被 Node 接住，会直接结束整个进程：所有失败都在这里收口
+  const server = createServer((req, res) => {
+    handle(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
   });
   server.on('upgrade', (req, socket, head) => {
-    const h = upgrades[new URL(req.url ?? '/', 'http://x').pathname];
-    if (h) h(req, socket, head);
-    else socket.destroy();
+    try {
+      const h = upgrades[new URL(req.url ?? '/', 'http://x').pathname];
+      if (h) return h(req, socket, head);
+    } catch {
+      // 地址不合法或升级处理出错：按不支持处理
+    }
+    socket.destroy();
   });
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, '127.0.0.1', resolve));
   const addr = server.address();

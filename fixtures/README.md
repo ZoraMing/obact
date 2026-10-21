@@ -22,4 +22,4 @@ node --test fixtures/test/*.test.ts
 | `canvas` | 大面积 Canvas 柱状图，点击柱子记日志 | FR-11、FR-31、FR-32、BW-12 | 3 项通过 |
 | `forms-files` | 密码框、对话框、上传、下载（UTF-8 BOM、中文文件名） | FR-12、FR-22、FR-26 | 10 项通过 |
 
-页面在 `pages/<夹具名>/`，接口在 `api/<夹具名>.ts`（启动时自动加载，路径以 `/api/<夹具名>/` 开头），测试在 `test/`。
+页面在 `pages/<夹具名>/`，接口在 `api/<夹具名>.ts`（启动时自动加载，路径以 `/api/<夹具名>/` 开头），测试在 `test/`（`test/server.test.ts` 测夹具服务本身：畸形请求回 400 而不是让进程退出，静态路径不能逃出 `pages/`，不需要浏览器）。
