@@ -73,12 +73,19 @@ export function dropPending(st: ActState, d: PendingDialog): void {
   st.pending = st.pending.filter((x) => x !== d);
 }
 
-/** 页面上有未处理对话框时的错误（act 与 observe 共用）：页面脚本被挂起，要先 handle_dialog。 */
-export function dialogBlocked(d: PendingDialog): ObactError {
+/**
+ * 页面上有未处理对话框时的错误（act 与 observe 共用）：页面脚本被挂起，要先 handle_dialog。
+ * note 说明当时动作进行到哪一步（默认只提示先处理对话框），extra 并入 details。
+ */
+export function dialogBlocked(
+  d: PendingDialog,
+  note = '请先 handle_dialog',
+  extra?: Record<string, unknown>,
+): ObactError {
   return new ObactError(
     'dialog_blocking',
-    `页面上有未处理的 ${d.type} 对话框：“${d.message}”，请先 handle_dialog`,
-    { dialog: { type: d.type, message: d.message } },
+    `页面上有未处理的 ${d.type} 对话框：“${d.message}”，${note}`,
+    { dialog: { type: d.type, message: d.message }, ...extra },
   );
 }
 

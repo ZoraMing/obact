@@ -485,6 +485,43 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'handle_dialog', pageId, action: 'accept' }, 'invalid_params');
   });
 
+  test('等待与后置检查期间弹出对话框：wait_for、post 报 dialog_blocking（条件未验证），不返回 ok、不等到超时', async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    const later = () =>
+      page.evaluate(() => {
+        setTimeout(() => alert('稍后的提示'), 600);
+      });
+    // wait_for 没有页面副作用：对话框中途弹出时条件没验证出结果，不能当作“已执行”按 ok 返回
+    await later();
+    const t = Date.now();
+    const w = await err(
+      { op: 'wait_for', pageId, until: [{ text_present: '永远不会出现' }], timeout_ms: 8000 },
+      'dialog_blocking',
+    );
+    assert.ok(Date.now() - t < 5000, `耗时 ${Date.now() - t}`);
+    assert.deepEqual(w.effects.dialogs, [
+      { type: 'alert', message: '稍后的提示', handled: 'pending' },
+    ]);
+    await ok({ op: 'handle_dialog', pageId, action: 'accept' });
+    // 动作已派发、后置检查轮询时才弹出：检查的求值被挂起，不等满超时再报 assertion_failed
+    await later();
+    const t2 = Date.now();
+    const p = await err(
+      {
+        op: 'press_key',
+        pageId,
+        key: 'Shift',
+        post: [{ text_present: '永远不会出现' }],
+        timeout_ms: 8000,
+      },
+      'dialog_blocking',
+    );
+    assert.ok(Date.now() - t2 < 5000, `耗时 ${Date.now() - t2}`);
+    assert.equal(p.error?.details?.dispatched, true, '动作已执行，调用方不能当作可重试');
+    await ok({ op: 'handle_dialog', pageId, action: 'accept' });
+  });
+
   test('新标签页与导航效果', async () => {
     const pageId = await open();
     const r = await ok({ op: 'click', pageId, target: { css: '#newtab' } });

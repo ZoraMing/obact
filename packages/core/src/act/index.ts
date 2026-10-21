@@ -70,7 +70,6 @@ async function pollChecks(
 async function waitFor(ctx: Ctx): Promise<void> {
   const a = ctx.action as Action & WaitFor;
   ctx.wait = 'none';
-  ctx.dispatched = true;
   const r = await pollChecks(ctx, a.until, Date.now() + ctx.timeout);
   ctx.assertions = r.results;
   if (!r.pass) {
@@ -89,7 +88,6 @@ async function waitFor(ctx: Ctx): Promise<void> {
 async function assertOnce(ctx: Ctx): Promise<void> {
   const a = ctx.action as Action & Assert;
   ctx.wait = 'none';
-  ctx.dispatched = true;
   const results = await checkAssertions(ctx.s, ctx.pageId, a.checks, {
     signatures: ctx.opts.signatures,
     matchSignature: ctx.opts.matchSignature,
@@ -127,7 +125,8 @@ function emptyEffects(ctx: Ctx): ActResult['effects'] {
  * 流程：校验参数 → 页面上有未处理的对话框则除 handle_dialog 外一律报 dialog_blocking →
  * 执行（定位、可操作性检查、可信输入）→ 等待（有后置检查就轮询到通过；否则按动作类型做短时稳定等待
  * 或只等一帧）→ 汇总效果（导航、新标签页、对话框、页面变化、可选的文本差异与截图）。
- * 动作执行中弹出对话框时（页面脚本被挂起），只要输入已经派发就算执行完成，对话框记为 pending。
+ * 动作执行中弹出对话框时（页面脚本被挂起），只要输入已经派发就算执行完成，对话框记为 pending；
+ * 输入还没派发、或 wait_for / assert / 后置检查正在判定条件时，报 dialog_blocking（条件未验证）。
  */
 export async function act(s: Session, action: Action, opts: ActOptions = {}): Promise<ActResult> {
   const started = Date.now();
@@ -185,21 +184,39 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
       }
 
       const run = runOp(ctx, fx);
-      const first = await Promise.race([
-        run.then(() => 'done' as const),
-        fx.dialogOpened.then(() => 'dialog' as const),
-      ]);
-      if (first === 'dialog') {
+      const first = await Promise.race([run.then(() => null), fx.dialogOpened]);
+      if (first) {
         // 页面脚本被对话框挂起，输入派发要等对话框处理后才返回：留给 handle_dialog 收尾
         ctx.aborted = true;
         st.inflight.set(
           page,
           run.catch(() => {}),
         );
-        if (!ctx.dispatched)
-          fail('dialog_blocking', '动作执行前页面弹出了对话框，请先 handle_dialog');
+        // wait_for、assert 没有页面副作用，不算已执行：条件没验证出结果，处理对话框后重新判定
+        if (!ctx.dispatched) {
+          const poll = action.op === 'wait_for' || action.op === 'assert';
+          throw dialogBlocked(
+            first,
+            poll
+              ? '条件尚未验证，请先 handle_dialog 再重新判定'
+              : '动作尚未执行，请先 handle_dialog',
+          );
+        }
       } else if (action.post?.length) {
-        const r = await pollChecks(ctx, action.post, Date.now() + ctx.timeout);
+        // 轮询期间页面弹出对话框：检查的求值要等对话框处理后才返回，不等到期
+        const polled = pollChecks(ctx, action.post, Date.now() + ctx.timeout);
+        const r = await Promise.race([polled, fx.dialogOpened]);
+        if (!('results' in r)) {
+          ctx.aborted = true;
+          polled.catch(() => {});
+          throw dialogBlocked(
+            r,
+            '动作已执行，后置检查尚未验证，请先 handle_dialog，不要重复执行动作',
+            {
+              dispatched: true,
+            },
+          );
+        }
         ctx.assertions = r.results;
         if (!r.pass) fail('assertion_failed', '后置检查未通过');
       } else if (ctx.wait === 'action') {
