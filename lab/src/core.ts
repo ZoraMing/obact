@@ -106,18 +106,33 @@ export function parseFaults(body: unknown): { faults: Partial<Faults> } | { erro
   return { faults: faults as Partial<Faults> };
 }
 
-/** 校验 _lab/reset 的请求体：对象，可选 seed（整数，表单里的数字字符串也行）；未知键拒绝。 */
-export function parseReset(body: unknown): { seed?: number } | { error: string } {
+/**
+ * 校验 _lab/reset 的请求体：对象，可选 seed（整数）和各模块声明的 resetOptions（整数且在范围内）；
+ * 表单里的数字字符串也行；未知键拒绝。
+ */
+export function parseReset(
+  body: unknown,
+  declared: Record<string, { min: number; max: number }> = {},
+): { seed?: number; options: Record<string, number> } | { error: string } {
   if (!isRecord(body)) return { error: '请求体必须是 JSON 对象或表单' };
-  for (const k of Object.keys(body)) {
-    if (k !== 'seed') return { error: `未知的重置参数 ${k}，可用：seed` };
+  const ranges = {
+    ...declared,
+    seed: { min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER },
+  };
+  const out: { seed?: number; options: Record<string, number> } = { options: {} };
+  for (const [k, v] of Object.entries(body)) {
+    const range = Object.hasOwn(ranges, k) ? ranges[k as keyof typeof ranges] : undefined;
+    if (!range) return { error: `未知的重置参数 ${k}，可用：${Object.keys(ranges).join('、')}` };
+    const n = toNumber(v);
+    if (n === undefined || !Number.isSafeInteger(n) || n < range.min || n > range.max) {
+      return {
+        error: `${k} 的值 ${JSON.stringify(v)} 不合法，应为 ${range.min} ~ ${range.max} 的整数`,
+      };
+    }
+    if (k === 'seed') out.seed = n;
+    else out.options[k] = n;
   }
-  if (body.seed === undefined) return {};
-  const seed = toNumber(body.seed);
-  if (seed === undefined || !Number.isSafeInteger(seed)) {
-    return { error: `seed 的值 ${JSON.stringify(body.seed)} 不合法，应为整数` };
-  }
-  return { seed };
+  return out;
 }
 
 export type Submission = {
@@ -146,6 +161,8 @@ export type Space = {
   submissions: Map<string, Submission>;
   /** 无键提交的自动幂等键序号（auto-N）：按空间计数，reset 随新空间归零。 */
   autoKey: number;
+  /** 重置时传入的整数参数（见 LabModule.resetOptions），模块在 init 里读；没传的键取模块自己的默认值。 */
+  options: Record<string, number>;
   /** 本空间的确定性随机数（种子 + 调用次序）。 */
   rng(): number;
   /** 事件日志（最近 500 条），用于调试与对账。 */
@@ -253,6 +270,8 @@ export type LabModule = {
   nav?: string;
   /** 初始化或重置本模块数据（写 space.data[name]）。用 space.rng() 取随机数。 */
   init(space: Space): void;
+  /** 本模块接受的重置参数（POST _lab/reset 的 body，如订单数量 orders）：名字 → 整数取值范围；值放在 space.options。 */
+  resetOptions?: Record<string, { min: number; max: number }>;
   routes(r: Router): void;
   /** 状态查询里本模块的部分（评分点判定、对账用）。 */
   state?(space: Space): unknown;

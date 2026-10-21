@@ -18,7 +18,8 @@
  * 故障注入：commit_timeout 时审核照常落库并记录，但不返回响应（C-4 的前提）；error_rate 等让页面给出可见的错误提示。
  * 改版变体（faults.redesign）：1 改 id 与类名，2 改按钮文案，3 表格改卡片列表，4 起三项叠加；见 orders/view.ts。
  *
- * 随机性：init 用 space.rng() 生成 200 条订单（顺序固定：订单号递增、下单时间递增）。
+ * 随机性：init 用 space.rng() 生成订单（顺序固定：订单号递增、下单时间递增）。默认 200 条；
+ * POST _lab/reset 可带 {orders: N}（1~2000）改数量，约 62% 是待审核，BW-9 要逐条审核 500 条时用 1000 条左右。
  * 注意 rng 是各模块共用的序列，前面的模块（按文件名排序，auth 在最前）如果也消耗它，这里的数据会随之变化；
  * 所以测试都不写死具体订单，只和接口、状态对账。
  */
@@ -26,6 +27,7 @@ import type { LabModule } from '../core.ts';
 import {
   approveOrders,
   initOrders,
+  ORDER_COUNT_RANGE,
   ordersCsv,
   ordersOf,
   parsePaging,
@@ -44,6 +46,7 @@ const mod: LabModule = {
   nav: '/orders',
 
   init: initOrders,
+  resetOptions: { orders: ORDER_COUNT_RANGE },
 
   routes(r) {
     r.get('/orders', (ctx) => ctx.html(listPage(ctx, mod)), { auth: true });

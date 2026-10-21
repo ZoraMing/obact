@@ -58,10 +58,16 @@ export async function loadModules(): Promise<LabModule[]> {
   return mods.sort((a, b) => Number(b.name === 'auth') - Number(a.name === 'auth'));
 }
 
-function newSpace(id: string, modules: readonly LabModule[], seed = seedOf(id)): Space {
+function newSpace(
+  id: string,
+  modules: readonly LabModule[],
+  seed = seedOf(id),
+  options: Record<string, number> = {},
+): Space {
   const space: Space = {
     id,
     seed,
+    options,
     data: {},
     faults: { ...DEFAULT_FAULTS },
     sessions: new Map(),
@@ -132,6 +138,8 @@ export async function createLab(
     m.routes(r);
     routes.push(...r.routes);
   }
+  // 各模块声明的重置参数（如 orders 的订单数量）合并后交给 parseReset 校验
+  const resetOptions = Object.assign({}, ...modules.map((m) => m.resetOptions));
   const spaces = new Map<string, Space>();
   const faultRng = new Map<string, () => number>();
 
@@ -181,6 +189,7 @@ export async function createLab(
       ctx.json({
         space: space.id,
         seed: space.seed,
+        options: space.options,
         faults: space.faults,
         sessions: [...space.sessions.values()].map((s) => ({
           user: s.user,
@@ -193,13 +202,13 @@ export async function createLab(
       return true;
     }
     if (action === 'reset' && ctx.req.method === 'POST') {
-      const parsed = parseReset(await bodyOrNull(ctx));
+      const parsed = parseReset(await bodyOrNull(ctx), resetOptions);
       if ('error' in parsed) return badRequest(ctx, parsed.error);
       const seed = parsed.seed ?? seedOf(space.id);
-      const fresh = newSpace(space.id, modules, seed);
+      const fresh = newSpace(space.id, modules, seed, parsed.options);
       spaces.set(space.id, fresh);
       faultRng.set(space.id, seeded(seed ^ 0x5bd1e995));
-      ctx.json({ ok: true, space: space.id, seed });
+      ctx.json({ ok: true, space: space.id, seed, options: parsed.options });
       return true;
     }
     if (action === 'faults' && ctx.req.method === 'POST') {

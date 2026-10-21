@@ -122,6 +122,43 @@ describe('订单后台：数据与接口', () => {
     await lab?.close();
   });
 
+  test('reset 可指定订单数量：BW-9 要逐条审核 500 条，1000 条里待审核足够；默认仍是 200 条；越界和未知参数回 400', async () => {
+    const space = 'ord-size';
+    const c = control(lab, space);
+    const reset = (body: unknown) =>
+      fetch(`${lab.url(space)}/_lab/reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    assert.equal(ordersOf(await c.state()).total, 200, '不带参数时仍是 200 条');
+
+    const r = await reset({ orders: 1000 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(((await r.json()) as { options: unknown }).options, { orders: 1000 });
+    const st = await c.state();
+    assert.deepEqual(st.options, { orders: 1000 });
+    assert.equal(ordersOf(st).total, 1000);
+    assert.ok(
+      (ordersOf(st).counts.待审核 as number) >= 500,
+      `待审核 ${ordersOf(st).counts.待审核} 条，不够逐条审核 500 条`,
+    );
+    const api = apiOf(lab, space, await loginCookie(lab, space));
+    const page2 = await api.list('page_size=500&page=2');
+    assert.equal(page2.total, 1000);
+    assert.equal(page2.items.length, 500);
+    assert.equal(new Set((await api.all()).concat(page2.items).map((o) => o.id)).size, 1000);
+
+    for (const body of [{ orders: 0 }, { orders: 2001 }, { orders: 1.5 }, { order: 10 }]) {
+      assert.equal((await reset(body)).status, 400, JSON.stringify(body));
+    }
+    assert.equal(ordersOf(await c.state()).total, 1000, '被拒绝的请求没有重置空间');
+    await reset({});
+    const back = await c.state();
+    assert.equal(ordersOf(back).total, 200, '不带参数的 reset 回到默认');
+    assert.deepEqual(back.options, {});
+  });
+
   test('审核接口：只有待审核会变更；已审核、已驳回、不存在被跳过；同一个幂等键再次提交只计数、不重复改数据', async () => {
     const space = 'ord-approve-api';
     const c = control(lab, space);
