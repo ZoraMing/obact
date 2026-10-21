@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import { createLab, type Lab } from '../src/app.ts';
-import { type LabModule, page } from '../src/core.ts';
+import { type LabModule, LOG_MAX, MAX_BODY, page, Router } from '../src/core.ts';
 import { control } from './helpers.ts';
 
 /** 测试用的最小模块：一个计数器、一个需要登录的页面和一个写接口。 */
@@ -22,6 +23,9 @@ const counter: LabModule = {
       ctx.redirect(`${ctx.base}/counter`);
     });
     r.get('/api/counter', (ctx) => ctx.json(ctx.space.data.counter));
+    r.get('/api/boom', () => {
+      throw new Error('boom-secret');
+    });
     r.post(
       '/api/counter/:step',
       async (ctx) => {
@@ -36,6 +40,16 @@ const counter: LabModule = {
   },
   state: (space) => space.data.counter,
 };
+
+describe('Lab 公共部分：路由注册', () => {
+  test('commit 路由不在 /api/ 下时注册即报错（否则故障注入不生效，用例会在没有故障时通过）', () => {
+    const r = new Router('t');
+    assert.throws(() => r.post('/pay', () => {}, { commit: true }), /\/api\//);
+    r.post('/api/pay', () => {}, { commit: true });
+    r.post('/pay-form', () => {});
+    assert.equal(r.routes.length, 2);
+  });
+});
 
 describe('Lab 公共部分：数据空间、控制接口、登录态、故障注入', () => {
   let lab: Lab;
@@ -67,6 +81,160 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal(s.submissions.length, 0);
     await a.reset(42);
     assert.notEqual(((await a.state()).modules.counter as { start: number }).start, start);
+  });
+
+  test('同一个键再次提交：保留首次载荷；操作或载荷不同标 conflict，相同则不标', async () => {
+    const c = control(lab, 'reuse');
+    await post('reuse', '/api/counter/1', { key: 'k' });
+    await post('reuse', '/api/counter/1', { key: 'k' });
+    const same = (await c.state()).submissions.find((x) => x.key === 'k');
+    assert.equal(same?.count, 2);
+    assert.equal(same?.conflict, undefined, '载荷相同的重试不是冲突');
+    await post('reuse', '/api/counter/7', { key: 'k' });
+    const reused = (await c.state()).submissions.find((x) => x.key === 'k');
+    assert.equal(reused?.count, 3);
+    assert.deepEqual(reused?.payload, { step: '1' }, '载荷保持首次提交的内容，不被后来的覆盖');
+    assert.equal(reused?.conflict, true);
+  });
+
+  test('控制接口校验输入：表单里的数字与布尔会转换，未知键、非法值、非对象体回 400 且不改任何开关', async () => {
+    const c = control(lab, 'cv');
+    const raw = (path: string, body: string, type: string) =>
+      fetch(`${lab.url('cv')}/_lab/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': type },
+        body,
+      });
+    const form = 'application/x-www-form-urlencoded';
+    // 表单编码里 commit_timeout=false 必须是关闭，redesign=1 必须是数字 1
+    const ok = await raw('faults', 'commit_timeout=false&redesign=1&error_rate=0.25', form);
+    assert.equal(ok.status, 200);
+    const faults = (await ok.json()) as Record<string, unknown>;
+    assert.equal(faults.commit_timeout, false);
+    assert.equal(faults.redesign, 1);
+    assert.equal(faults.error_rate, 0.25);
+
+    for (const [body, what] of [
+      ['{"delay":500}', '拼错的键'],
+      ['{"error_rate":"abc"}', '非数字'],
+      ['{"error_rate":2}', '超出 0~1'],
+      ['{"commit_timeout":"yes"}', '非布尔'],
+      ['{"redesign":1.5}', '非整数'],
+      ['{"delay_ms":-1}', '负数'],
+      ['{"redesign_after_requests":0}', '请求数从 1 起'],
+      ['{"redesign_after_ms":"soon"}', '非数字'],
+      ['{"drop_rate":0.5,"popup_rate":"x"}', '一项非法时前面合法的也不能生效'],
+      ['null', 'JSON null'],
+      ['[1]', '数组'],
+      ['{', 'JSON 不合法'],
+    ] as const) {
+      const r = await raw('faults', body, 'application/json');
+      assert.equal(r.status, 400, what);
+      assert.equal(((await r.json()) as { error: string }).error, 'bad_request');
+    }
+    const after = (await c.state()).faults;
+    assert.deepEqual(after, faults, '被拒绝的请求没有改动任何开关');
+    assert.equal((await raw('faults', 'session_ttl_ms=null', form)).status, 200);
+    assert.equal((await c.state()).faults.session_ttl_ms, null);
+
+    assert.equal((await raw('reset', '{"seed":1.5}', 'application/json')).status, 400);
+    assert.equal((await raw('reset', 'null', 'application/json')).status, 400);
+    assert.equal((await raw('reset', '{"sead":1}', 'application/json')).status, 400);
+    const seeded = await raw('reset', 'seed=5', form);
+    assert.equal(seeded.status, 200);
+    assert.equal(((await seeded.json()) as { seed: number }).seed, 5, '表单里的 seed 也生效');
+    assert.equal((await c.state()).seed, 5);
+  });
+
+  test('百分号编码不合法的 Cookie、空间名、路径参数回正常响应或 400，不是 500', async () => {
+    const c = control(lab, 'pct');
+    // 别处残留的 cookie 不能让整个空间（含控制接口）对这个浏览器全部失败
+    const withCookie = await fetch(`${lab.url('pct')}/_lab/state`, {
+      headers: { cookie: 'foo=%zz; bar=100%' },
+    });
+    assert.equal(withCookie.status, 200);
+    assert.equal((await fetch(`${lab.base}/s/%E0%A4%A/_lab/state`)).status, 400);
+    const param = await post('pct', '/api/counter/%E0%A4%A', {});
+    assert.equal(param.status, 400);
+    assert.equal(((await c.state()).modules.counter as { n: number }).n, 0, '请求没有被执行');
+  });
+
+  test('请求体超过 1 MiB 回 413，不缓存也不执行；之后的请求照常', async () => {
+    const c = control(lab, 'big');
+    const r = await post('big', '/api/counter/1', { key: 'big', pad: 'x'.repeat(MAX_BODY + 1) });
+    assert.equal(r.status, 413);
+    assert.deepEqual(await r.json(), { error: 'payload_too_large' });
+    // 控制接口同样有上限，不会被当成“不是对象”回 400
+    assert.equal((await post('big', '/_lab/faults', { pad: 'x'.repeat(MAX_BODY) })).status, 413);
+    const s = await c.state();
+    assert.equal((s.modules.counter as { n: number }).n, 0, '超限的写请求没有执行');
+    assert.equal(s.submissions.length, 0);
+    assert.equal((await post('big', '/api/counter/1', { key: 'small' })).status, 200);
+  });
+
+  test('事件日志只保留最近 500 条，丢掉最早的', async () => {
+    const c = control(lab, 'logcap');
+    for (let i = 0; i < LOG_MAX + 10; i++) await c.faults({ delay_ms: i });
+    await c.faults({ delay_ms: 0 });
+    const log = (await c.state()).log;
+    assert.equal(log.length, LOG_MAX);
+    assert.deepEqual(log.at(-1)?.detail, { delay_ms: 0 }, '最后一条是最新的');
+    assert.deepEqual(log[0]?.detail, { delay_ms: 11 }, '最早的 11 条已被丢掉');
+  });
+
+  test('只接受本机两个站点的 Host；控制接口不接受跨站 POST；500 不回堆栈', async (t) => {
+    const u = new URL(lab.base);
+    const raw = (method: string, path: string, headers: Record<string, string>, body?: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request({ host: u.hostname, port: u.port, path, method, headers }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d }));
+        });
+        req.on('error', reject);
+        req.end(body);
+      });
+    const c = control(lab, 'sec');
+
+    assert.equal((await raw('GET', '/s/sec/_lab/state', { host: 'evil.example' })).status, 403);
+    assert.equal(
+      (await raw('GET', '/s/sec/_lab/state', { host: `evil.example:${u.port}` })).status,
+      403,
+    );
+    assert.equal(
+      (await raw('GET', '/s/sec/_lab/state', { host: `localhost:${u.port}` })).status,
+      200,
+    );
+    assert.equal((await fetch(`${lab.crossBase}/s/sec/_lab/state`)).status, 200);
+
+    const form = { 'content-type': 'application/x-www-form-urlencoded' };
+    for (const site of ['cross-site', 'same-site']) {
+      const r = await raw(
+        'POST',
+        '/s/sec/_lab/faults',
+        { ...form, 'sec-fetch-site': site },
+        'error_rate=1',
+      );
+      assert.equal(r.status, 403, site);
+    }
+    assert.equal((await c.state()).faults.error_rate, 0, '跨站请求没有改动开关');
+    const same = await raw(
+      'POST',
+      '/s/sec/_lab/faults',
+      { ...form, 'sec-fetch-site': 'same-origin' },
+      'delay_ms=5',
+    );
+    assert.equal(same.status, 200, '同源页面发来的可以');
+    assert.equal((await c.state()).faults.delay_ms, 5);
+    await c.faults({ delay_ms: 0 });
+
+    // 服务端出错只回固定文案，堆栈（含绝对路径）写日志
+    const logged = t.mock.method(console, 'error', () => {});
+    const boom = await fetch(`${lab.url('sec')}/api/boom`);
+    assert.equal(boom.status, 500);
+    const text = await boom.text();
+    assert.equal(text, '内部错误');
+    assert.equal(logged.mock.callCount(), 1);
   });
 
   test('提交按幂等键计数', async () => {
@@ -126,6 +294,62 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.ok(s.log.some((x) => x.type === 'fault_drop'));
   });
 
+  test('故障：定时改版按“第 N 个请求后”或“T 毫秒后”自动切换，只切一次，控制接口不计数，默认关闭', async () => {
+    const c = control(lab, 'rd');
+    const hit = () => fetch(`${lab.url('rd')}/api/counter`);
+    const redesign = async () => (await c.state()).faults.redesign;
+    assert.deepEqual(
+      [
+        (await c.state()).faults.redesign_after_requests,
+        (await c.state()).faults.redesign_after_ms,
+      ],
+      [null, null],
+      '默认关闭',
+    );
+    for (let i = 0; i < 3; i++) await hit();
+    assert.equal(await redesign(), 0, '没设置时不会自己切');
+
+    // 之后的 2 个请求仍是旧版，第 3 个请求起是新版；读 state 和改 faults 都不算请求
+    await c.faults({ redesign_after_requests: 2, redesign_to: 3 });
+    await hit();
+    await c.state();
+    await hit();
+    assert.equal(await redesign(), 0);
+    await hit();
+    const s = await c.state();
+    assert.equal(s.faults.redesign, 3);
+    assert.equal(s.faults.redesign_after_requests, null, '切完即关闭');
+    assert.deepEqual(
+      s.log.filter((x) => x.type === 'redesign_switch').map((x) => x.detail),
+      [{ from: 0, to: 3, by: 'requests' }],
+    );
+    await hit();
+    const again = await c.state();
+    assert.equal(again.log.filter((x) => x.type === 'redesign_switch').length, 1, '只切一次');
+
+    // 时间：还没到点不切；到点后的下一个请求切（0 毫秒即下一个请求）
+    await c.faults({ redesign: 0, redesign_after_ms: 3_600_000, redesign_to: 1 });
+    await hit();
+    assert.equal(await redesign(), 0);
+    await c.faults({ redesign_after_ms: 0 });
+    await hit();
+    const t = await c.state();
+    assert.equal(t.faults.redesign, 1);
+    assert.equal(t.faults.redesign_after_ms, null);
+    assert.deepEqual(t.log.filter((x) => x.type === 'redesign_switch').at(-1)?.detail, {
+      from: 0,
+      to: 1,
+      by: 'ms',
+    });
+
+    // 改成 null 即取消
+    await c.faults({ redesign: 0, redesign_after_requests: 1 });
+    await c.faults({ redesign_after_requests: null });
+    await hit();
+    await hit();
+    assert.equal(await redesign(), 0);
+  });
+
   test('故障：提交超时但已落库', async () => {
     const c = control(lab, 'ct');
     await c.faults({ commit_timeout: true });
@@ -133,5 +357,19 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     const s = await c.state();
     assert.equal((s.modules.counter as { n: number }).n, 3, '已落库');
     assert.equal(s.submissions.find((x) => x.key === 'once')?.count, 1);
+  });
+
+  test('故障：丢弃响应对写接口是“已落库但连接被断开”，重试同一个键才会被记成重复', async () => {
+    const c = control(lab, 'dw');
+    await c.faults({ drop_rate: 1 });
+    await assert.rejects(post('dw', '/api/counter/4', { key: 'dropped' }));
+    await c.faults({ drop_rate: 0 });
+    const s = await c.state();
+    assert.equal((s.modules.counter as { n: number }).n, 4, '写操作已执行，不是请求没到服务端');
+    assert.equal(s.submissions.find((x) => x.key === 'dropped')?.count, 1);
+    assert.ok(s.log.some((x) => x.type === 'fault_drop'));
+    // 盲目重试的实现在对账里会露馅
+    await post('dw', '/api/counter/4', { key: 'dropped' });
+    assert.equal((await c.state()).submissions.find((x) => x.key === 'dropped')?.count, 2);
   });
 });

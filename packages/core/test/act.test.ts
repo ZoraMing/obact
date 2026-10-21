@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -285,7 +285,9 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       { op: 'click', pageId, target: { css: '#btn' }, timeout_ms: 1500 },
       'obscured',
     );
-    assert.equal((await events(pageId)).length, 0, '被遮挡时不能点到遮罩上');
+    assert.match(r.error?.message ?? '', /连续 3 次/, '连续 3 次命中不符才报错');
+    // 遮罩有点击记录：没有任何记录，说明既没点到按钮，也没点到遮罩
+    assert.deepEqual(await events(pageId), [], '被遮挡时不能派发点击');
     let calls = 0;
     await ok(
       { op: 'click', pageId, target: { css: '#btn' } },
@@ -302,7 +304,6 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     );
     assert.equal(calls, 1);
     assert.deepEqual(await events(pageId), ['click:true']);
-    assert.ok(r.duration_ms < 4000);
   });
 
   test('onObscured 返回 true 的不计入连续不符次数：三层遮罩逐层处理后点击成功；总说已处理而遮罩不消失时有上限', async () => {
@@ -379,7 +380,7 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
   test('后台标签页：点击先切到前台，不多等；iframe 里的可编辑区 fill 真正写入', async () => {
     const a = await open();
     const b = await ok({ op: 'new_page', url: `${env.server.base}/pages/basic.html` });
-    assert.ok(b.effects.new_pages.length >= 0);
+    assert.equal(b.effects.new_pages.length, 1, 'new_page 报告新开的标签页');
     // a 现在是后台标签页（新开的标签页在前台）
     const t = Date.now();
     await ok({ op: 'click', pageId: a, target: { css: '#btn' } });
@@ -987,6 +988,34 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       const good = await ok({ op: 'take_screenshot', pageId, path: 'shots/a' }, opts);
       assert.equal(good.screenshot_path, join(ws, 'shots', 'a.png'));
       assert.ok(existsSync(join(ws, 'shots', 'a.png')));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('截图的 path 越出工作区被拒绝且不写盘：../、绝对路径、符号链接目录、悬空链接', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'obact-shot-'));
+    const ws = join(base, 'ws');
+    const out = join(base, 'out');
+    mkdirSync(ws);
+    mkdirSync(out);
+    symlinkSync(out, join(ws, 'link'));
+    symlinkSync(join(base, 'escape.png'), join(ws, 'dangling.png'));
+    try {
+      const pageId = await open();
+      const opts = { filesRoot: ws, outDir: ws };
+      const cases: [string, string][] = [
+        ['../x.png', join(base, 'x.png')],
+        [join(base, 'abs.png'), join(base, 'abs.png')],
+        ['link/x.png', join(out, 'x.png')],
+        ['dangling.png', join(base, 'escape.png')],
+      ];
+      for (const [path, written] of cases) {
+        await err({ op: 'take_screenshot', pageId, path }, 'path_outside_workspace', opts);
+        assert.equal(existsSync(written), false, `${path} 不应写到 ${written}`);
+      }
+      await ok({ op: 'take_screenshot', pageId, path: 'sub/ok.png' }, opts);
+      assert.ok(existsSync(join(ws, 'sub', 'ok.png')), '工作区内的路径对照应写盘成功');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

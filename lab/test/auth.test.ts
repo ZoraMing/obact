@@ -118,6 +118,53 @@ class Client {
 }
 
 describe('登录与账号：协议层', () => {
+  test('登录时间属于当前会话：同一账号在另一个浏览器后来登录，先登录的会话仍显示自己的时间', async () => {
+    const sp = 'auth-session-time';
+    const a = new Client(sp);
+    const b = new Client(sp);
+    await a.login('alice');
+    // 等到毫秒数前进，保证两次登录的时间戳不同（条件等待，不是固定延时）
+    const t0 = Date.now();
+    while (Date.now() === t0) await new Promise((r) => setTimeout(r, 1));
+    await b.login('alice');
+    const loginAt = async (c: Client) =>
+      ((await (await c.get('/api/auth/me')).json()) as { logged_in_at: string }).logged_in_at;
+    const [ta, tb] = [await loginAt(a), await loginAt(b)];
+    assert.ok(Date.parse(ta) < Date.parse(tb), `A ${ta} 应早于 B ${tb}`);
+    // 账号页显示的也是各自会话的时间
+    assert.match(await (await a.get('/account')).text(), new RegExp(`datetime="${ta}"`));
+    assert.match(await (await b.get('/account')).text(), new RegExp(`datetime="${tb}"`));
+  });
+
+  test('next 含中文等非 ASCII 字符：登录成功后按 UTF-8 百分号编码跳回，已有的 %xx 保持原样', async () => {
+    const sp = 'auth-next-utf8';
+    const r = await new Client(sp).login('alice', undefined, '/vault?q=订单#位置');
+    assert.equal(r.status, 303, '之前这里是 500，而且会话已经建立');
+    assert.equal(
+      r.headers.get('location'),
+      `/s/${sp}/vault?q=%E8%AE%A2%E5%8D%95#%E4%BD%8D%E7%BD%AE`,
+    );
+    const r2 = await new Client(sp).login('alice', undefined, '/vault?q=%E8%AE%A2');
+    assert.equal(r2.headers.get('location'), `/s/${sp}/vault?q=%E8%AE%A2`);
+  });
+
+  test('next 只接受本空间内的路径：外站地址和 . / .. 段（含 %2e）回账号页，文件名里的 .. 不受影响', async () => {
+    const sp = 'auth-next-dots';
+    for (const next of [
+      '/../other/orders',
+      '/%2e%2e/other/orders',
+      '/orders/%2E/x',
+      `/s/${sp}/../other/orders`,
+      '//evil.example/x',
+      'http://evil.example/x',
+    ]) {
+      const r = await new Client(sp).login('alice', undefined, next);
+      assert.equal(r.headers.get('location'), `/s/${sp}/account`, next);
+    }
+    const r = await new Client(sp).login('alice', undefined, '/vault/a..b?tab=1&from=..');
+    assert.equal(r.headers.get('location'), `/s/${sp}/vault/a..b?tab=1&from=..`);
+  });
+
   test('锁定：连续 3 次错误锁定，锁定后密码对也进不去；成功登录清零计数；各账号互不影响', async () => {
     const sp = 'auth-lock';
     const c = new Client(sp);

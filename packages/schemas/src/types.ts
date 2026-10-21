@@ -370,7 +370,7 @@ export interface ObactContracts {
   Action_Click?: Click;
   Action_Hover?: Hover;
   /**
-   * 文本框填文本；下拉框填选项文本或值；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
+   * 文本框填文本；下拉框填选项文本或值，多选下拉框用逗号（半角或全角）分隔多项，选中恰好这些项，空串取消全部；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
    */
   Action_FillValue?: string | number | boolean;
   Action_Fill?: Fill;
@@ -585,7 +585,7 @@ export interface Fill {
   op: 'fill';
   target: Target;
   /**
-   * 文本框填文本；下拉框填选项文本或值；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
+   * 文本框填文本；下拉框填选项文本或值，多选下拉框用逗号（半角或全角）分隔多项，选中恰好这些项，空串取消全部；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
    */
   value: string | number | boolean;
 }
@@ -598,14 +598,14 @@ export interface FillForm {
     {
       target: Target;
       /**
-       * 文本框填文本；下拉框填选项文本或值；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
+       * 文本框填文本；下拉框填选项文本或值，多选下拉框用逗号（半角或全角）分隔多项，选中恰好这些项，空串取消全部；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
        */
       value: string | number | boolean;
     },
     ...{
       target: Target;
       /**
-       * 文本框填文本；下拉框填选项文本或值；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
+       * 文本框填文本；下拉框填选项文本或值，多选下拉框用逗号（半角或全角）分隔多项，选中恰好这些项，空串取消全部；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。
        */
       value: string | number | boolean;
     }[],

@@ -5,11 +5,12 @@ import { mkdtempSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, normalize } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Action, ActResult, ObservedElement } from '@obact/schemas';
 import { act, launchBrowser, observe, Session } from '../packages/core/src/index.ts';
 import { testChrome } from '../tools/browser.ts';
+import { resolveStatic } from '../tools/static.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
@@ -18,16 +19,22 @@ const epArg = process.argv.indexOf('--episodes');
 const EPISODES = epArg > 0 ? Number(process.argv[epArg + 1]) : 5;
 
 const server = createServer(async (req, res) => {
-  const path = new URL(req.url ?? '/', 'http://x').pathname;
-  const file = normalize(join(MINIWOB, decodeURIComponent(path)));
-  if (!file.startsWith(MINIWOB)) return void res.writeHead(403).end();
+  let path: string;
   try {
-    const body = await readFile(file);
+    path = new URL(req.url ?? '/', 'http://x').pathname;
+  } catch {
+    // 请求目标不合法：回 400，异常冒出去会让整个基准进程退出
+    return void res.writeHead(400).end();
+  }
+  const target = resolveStatic(MINIWOB, path);
+  if ('status' in target) return void res.writeHead(target.status).end();
+  try {
+    const body = await readFile(target.file);
     const type = {
       '.html': 'text/html; charset=utf-8',
       '.js': 'text/javascript',
       '.css': 'text/css',
-    }[extname(file)];
+    }[extname(target.file)];
     res.writeHead(200, { 'content-type': type ?? 'application/octet-stream' });
     res.end(body);
   } catch {

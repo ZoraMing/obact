@@ -12,7 +12,7 @@
   - 延迟渲染：“显示延迟按钮”800 毫秒后才出现“延迟按钮”；
   - 骨架屏：“加载订单”先显示骨架（aria-busy，带一个 aria-disabled 的“全部导出”），接口 /api/timing/orders
     返回后整块换成真实表格与新的“全部导出”；?delay= 调整接口延时（默认 700 毫秒）；
-  - 进度条：“开始导出”每 100 毫秒前进 5%，到 100% 显示“导出完成”和“下载报表”；“停止”可中途停下。
+  - 进度条：“开始导出”每 100 毫秒前进 5%，到 100% 显示“导出完成”和“下载报表”；“停止”可中途停下，再点“开始导出”接着走，走完后再点则从 0 重新开始。
   点击记录：window.__log（如 anim-target:still、view:SO-31002）。
 -->
 <style>
@@ -156,17 +156,30 @@
 
   // 进度条
   let timer = null;
+  // 停止和走完都要把 timer 清成 null，否则再点“开始导出”会被 if (timer) 静默忽略
+  const stopTimer = () => {
+    clearInterval(timer);
+    timer = null;
+  };
   $('start-export').onclick = () => {
     if (timer) return;
+    if ($('progress').value >= 100) {
+      // 上次已走完：从头再来，清掉“导出完成”和旧的“下载报表”
+      $('progress').value = 0;
+      $('pct').textContent = '0%';
+      $('export-result').textContent = '';
+      $('download-report')?.remove();
+    }
     timer = setInterval(() => {
       const p = $('progress');
       p.value = Math.min(100, p.value + 5);
       $('pct').textContent = `${p.value}%`;
       if (p.value >= 100) {
-        clearInterval(timer);
+        stopTimer();
         $('export-result').textContent = '导出完成';
         const b = document.createElement('button');
         b.type = 'button';
+        b.id = 'download-report';
         b.textContent = '下载报表';
         b.onclick = () => log('download');
         $('export-result').after(b);
@@ -174,7 +187,7 @@
     }, 100);
   };
   $('stop-export').onclick = () => {
-    clearInterval(timer);
+    stopTimer();
     log(`stopped:${$('progress').value}`);
   };
 </script>

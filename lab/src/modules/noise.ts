@@ -44,7 +44,7 @@
  *
  * 随机性：init 不消耗 space.rng()。改版变体（faults.redesign）：本模块不定义变体，按原版渲染。
  */
-import { type Ctx, esc, type LabModule, page, type Space } from '../core.ts';
+import { BodyTooLarge, type Ctx, esc, type LabModule, page, type Space } from '../core.ts';
 
 /** 广告层在页面加载后多久出现（毫秒）。 */
 export const AD_DELAY_MS = 500;
@@ -376,7 +376,8 @@ const mod: LabModule = {
         let b: Record<string, unknown>;
         try {
           b = await ctx.body();
-        } catch {
+        } catch (e) {
+          if (e instanceof BodyTooLarge) throw e;
           return ctx.json({ error: 'bad_request' }, 400);
         }
         const name = typeof b.name === 'string' ? b.name.slice(0, MAX_NAME) : '';

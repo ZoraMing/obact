@@ -8,14 +8,19 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  BodyTooLarge,
   type Ctx,
   DEFAULT_FAULTS,
   esc,
-  type Faults,
   type LabModule,
+  LOG_MAX,
+  MAX_BODY,
   page,
+  parseFaults,
+  parseReset,
   type Route,
   Router,
+  type SessionInfo,
   type Space,
   type Submission,
   seeded,
@@ -55,14 +60,22 @@ export async function loadModules(): Promise<LabModule[]> {
   return mods.sort((a, b) => Number(b.name === 'auth') - Number(a.name === 'auth'));
 }
 
-function newSpace(id: string, modules: readonly LabModule[], seed = seedOf(id)): Space {
+function newSpace(
+  id: string,
+  modules: readonly LabModule[],
+  seed = seedOf(id),
+  options: Record<string, number> = {},
+): Space {
   const space: Space = {
     id,
     seed,
+    options,
     data: {},
     faults: { ...DEFAULT_FAULTS },
     sessions: new Map(),
     submissions: new Map(),
+    autoKey: 0,
+    redesign: { left: null, at: null },
     rng: seeded(seed),
     log: [],
   };
@@ -70,18 +83,37 @@ function newSpace(id: string, modules: readonly LabModule[], seed = seedOf(id)):
   return space;
 }
 
+/** 百分号解码；编码不合法返回 null（调用方回 400 或保留原文，不能让异常变成 500）。 */
+function decode(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
 function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (header ?? '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    // 别的本地服务或浏览器配置里残留的 cookie 可能不是百分号编码（foo=100%）：解码失败保留原文
+    if (i > 0) {
+      const raw = part.slice(i + 1).trim();
+      out[part.slice(0, i).trim()] = decode(raw) ?? raw;
+    }
   }
   return out;
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let size = 0;
+  // 超过上限后继续读完但不再缓存：内存有界，客户端也能收到 413 而不是连接重置
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size <= MAX_BODY) chunks.push(c as Buffer);
+  }
+  if (size > MAX_BODY) throw new BodyTooLarge(`请求体超过 ${MAX_BODY} 字节`);
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) return {};
   const type = req.headers['content-type'] ?? '';
@@ -109,9 +141,10 @@ export async function createLab(
     m.routes(r);
     routes.push(...r.routes);
   }
+  // 各模块声明的重置参数（如 orders 的订单数量）合并后交给 parseReset 校验
+  const resetOptions = Object.assign({}, ...modules.map((m) => m.resetOptions));
   const spaces = new Map<string, Space>();
   const faultRng = new Map<string, () => number>();
-  let autoKey = 0;
 
   const getSpace = (id: string): Space => {
     let s = spaces.get(id);
@@ -123,7 +156,7 @@ export async function createLab(
     return s;
   };
 
-  const userOf = (space: Space, token: string | undefined): string | null => {
+  const sessionOf = (space: Space, token: string | undefined): SessionInfo | null => {
     if (!token) return null;
     const s = space.sessions.get(token);
     if (!s) return null;
@@ -133,7 +166,48 @@ export async function createLab(
       space.log.push({ at: new Date().toISOString(), type: 'session_expired', detail: s.user });
       return null;
     }
-    return s.user;
+    return s;
+  };
+
+  /** 读控制接口的请求体；JSON 不合法按“不是对象”处理（交给 parseFaults / parseReset 回 400）。 */
+  const bodyOrNull = async (ctx: Ctx): Promise<unknown> => {
+    try {
+      return await ctx.body();
+    } catch (e) {
+      if (e instanceof BodyTooLarge) throw e;
+      return null;
+    }
+  };
+
+  const badRequest = (ctx: Ctx, message: string): true => {
+    ctx.json({ error: 'bad_request', message }, 400);
+    return true;
+  };
+
+  /**
+   * 定时改版：每个模块请求（含 /api/，不含控制接口）到达时检查，请求数用完或时间到就把 redesign 切到 redesign_to，只切一次。
+   * 设置 redesign_after_requests = N 时，之后的 N 个请求仍是旧版，第 N+1 个请求起是新版。
+   */
+  const tickRedesign = (space: Space): void => {
+    const s = space.redesign;
+    let by: 'requests' | 'ms' | null = null;
+    if (s.left !== null) {
+      if (s.left <= 0) by = 'requests';
+      else s.left--;
+    }
+    if (by === null && s.at !== null && Date.now() >= s.at) by = 'ms';
+    if (by === null) return;
+    const f = space.faults;
+    space.log.push({
+      at: new Date().toISOString(),
+      type: 'redesign_switch',
+      detail: { from: f.redesign, to: f.redesign_to, by },
+    });
+    f.redesign = f.redesign_to;
+    f.redesign_after_requests = null;
+    f.redesign_after_ms = null;
+    s.left = null;
+    s.at = null;
   };
 
   const control = async (ctx: Ctx, action: string): Promise<boolean> => {
@@ -144,39 +218,57 @@ export async function createLab(
       ctx.json({
         space: space.id,
         seed: space.seed,
+        options: space.options,
         faults: space.faults,
         sessions: [...space.sessions.values()].map((s) => ({
           user: s.user,
           created: new Date(s.created).toISOString(),
         })),
         submissions: [...space.submissions.values()],
-        log: space.log.slice(-100),
+        log: space.log.slice(-LOG_MAX),
         modules: mods,
       });
       return true;
     }
+    // 别的网站里的页面用表单或 fetch 发来的 POST 不接受（浏览器会带 Sec-Fetch-Site）；测试脚本不带这个头
+    const site = ctx.req.headers['sec-fetch-site'];
+    if (ctx.req.method === 'POST' && site && site !== 'same-origin' && site !== 'none') {
+      ctx.json({ error: 'forbidden', message: '控制接口不接受跨站请求' }, 403);
+      return true;
+    }
     if (action === 'reset' && ctx.req.method === 'POST') {
-      const body = await ctx.body();
-      const seed = typeof body.seed === 'number' ? body.seed : seedOf(space.id);
-      const fresh = newSpace(space.id, modules, seed);
+      const parsed = parseReset(await bodyOrNull(ctx), resetOptions);
+      if ('error' in parsed) return badRequest(ctx, parsed.error);
+      const seed = parsed.seed ?? seedOf(space.id);
+      const fresh = newSpace(space.id, modules, seed, parsed.options);
       spaces.set(space.id, fresh);
       faultRng.set(space.id, seeded(seed ^ 0x5bd1e995));
-      ctx.json({ ok: true, space: space.id, seed });
+      ctx.json({ ok: true, space: space.id, seed, options: parsed.options });
       return true;
     }
     if (action === 'faults' && ctx.req.method === 'POST') {
-      const body = (await ctx.body()) as Partial<Faults>;
-      for (const k of Object.keys(DEFAULT_FAULTS) as (keyof Faults)[]) {
-        if (k in body) (space.faults as Record<string, unknown>)[k] = body[k];
-      }
-      space.log.push({ at: new Date().toISOString(), type: 'faults', detail: body });
+      const parsed = parseFaults(await bodyOrNull(ctx));
+      if ('error' in parsed) return badRequest(ctx, parsed.error);
+      Object.assign(space.faults, parsed.faults);
+      // 定时改版从设置的这一刻开始计
+      const { redesign_after_requests: n, redesign_after_ms: ms } = parsed.faults;
+      if (n !== undefined) space.redesign.left = n;
+      if (ms !== undefined) space.redesign.at = ms === null ? null : Date.now() + ms;
+      space.log.push({ at: new Date().toISOString(), type: 'faults', detail: parsed.faults });
       ctx.json(space.faults);
       return true;
     }
     return false;
   };
 
+  // 允许的 Host（listen 之后才知道端口）：只认本机两个站点，挡住 DNS 重绑定之类拿别的域名指到本机的请求
+  let allowedHosts = new Set<string>();
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!allowedHosts.has(req.headers.host ?? '')) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      return void res.end('Host 不被允许：Lab 只接受 127.0.0.1 和 localhost');
+    }
     const url = new URL(req.url ?? '/', 'http://x');
     if (url.pathname === '/_lab/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -191,17 +283,21 @@ export async function createLab(
       res.writeHead(302, { location: '/s/default/' });
       return void res.end();
     }
-    const id = decodeURIComponent(m[1] as string);
-    if (!SPACE_ID.test(id)) return void res.writeHead(400).end('空间名只能用字母、数字、_ 和 -');
+    const id = decode(m[1] as string);
+    if (id === null || !SPACE_ID.test(id))
+      return void res.writeHead(400).end('空间名只能用字母、数字、_ 和 -');
     if (m[2] === undefined) {
       res.writeHead(302, { location: `/s/${id}/` });
       return void res.end();
     }
     const rest = m[2];
     const space = getSpace(id);
+    // 事件日志只留最近 LOG_MAX 条：长时间不 reset 的浸泡里不能无限增长
+    if (space.log.length > LOG_MAX) space.log.splice(0, space.log.length - LOG_MAX);
     const base = `/s/${id}`;
     const cookies = parseCookies(req.headers.cookie);
     let bodyCache: Promise<Record<string, unknown>> | null = null;
+    const session = sessionOf(space, cookies[SESSION_COOKIE]);
     const ctx: Ctx = {
       req,
       res,
@@ -210,7 +306,8 @@ export async function createLab(
       base,
       modules,
       params: {},
-      user: userOf(space, cookies[SESSION_COOKIE]),
+      user: session?.user ?? null,
+      session,
       body: () => {
         bodyCache ??= readBody(req);
         return bodyCache;
@@ -244,9 +341,11 @@ export async function createLab(
       cookie: (name) => cookies[name],
       signIn(user) {
         const token = randomBytes(16).toString('hex');
-        space.sessions.set(token, { token, user, created: Date.now() });
+        const created: SessionInfo = { token, user, created: Date.now() };
+        space.sessions.set(token, created);
         ctx.setCookie(SESSION_COOKIE, token);
         ctx.user = user;
+        ctx.session = created;
         space.log.push({ at: new Date().toISOString(), type: 'login', detail: user });
       },
       signOut() {
@@ -254,13 +353,17 @@ export async function createLab(
         if (t) space.sessions.delete(t);
         ctx.setCookie(SESSION_COOKIE, '', { maxAge: 0 });
         ctx.user = null;
+        ctx.session = null;
       },
       record(op, key, payload) {
-        const k = key || `auto-${++autoKey}`;
+        const k = key || `auto-${++space.autoKey}`;
         const now = new Date().toISOString();
         const prev = space.submissions.get(k);
+        // 重复提交保留首次的载荷（实际落库的是它）；同键但操作或载荷不同的标 conflict，对账时能看出键被复用
+        const reused =
+          prev && (prev.op !== op || JSON.stringify(prev.payload) !== JSON.stringify(payload));
         const sub: Submission = prev
-          ? { ...prev, count: prev.count + 1, last_at: now, payload }
+          ? { ...prev, count: prev.count + 1, last_at: now, ...(reused ? { conflict: true } : {}) }
           : { key: k, op, count: 1, first_at: now, last_at: now, payload };
         space.submissions.set(k, sub);
         space.log.push({ at: now, type: 'submit', detail: { key: k, op, count: sub.count } });
@@ -284,10 +387,14 @@ export async function createLab(
       return ctx.html(page(ctx, modules, '未找到', '<h1>页面不存在</h1>'), 404);
     }
     const hit = route.pattern.exec(rest) as RegExpExecArray;
-    route.keys.forEach((k, i) => {
-      ctx.params[k] = decodeURIComponent(hit[i + 1] as string);
-    });
+    for (const [i, k] of route.keys.entries()) {
+      const v = decode(hit[i + 1] as string);
+      if (v === null)
+        return ctx.json({ error: 'bad_request', message: `路径参数 ${k} 的百分号编码不合法` }, 400);
+      ctx.params[k] = v;
+    }
     const isApi = rest.startsWith('/api/');
+    tickRedesign(space);
 
     if (route.opts.auth && !ctx.user) {
       if (isApi) return ctx.json({ error: 'unauthorized' }, 401);
@@ -298,8 +405,19 @@ export async function createLab(
       const f = space.faults;
       const rng = faultRng.get(space.id) as () => number;
       if (f.delay_ms > 0) await sleep(f.delay_ms);
+      // 提交超时与丢弃响应都是“写操作已执行、客户端拿不到响应”：把响应函数换成空操作再执行
+      const swallowResponse = () => {
+        ctx.json = () => {};
+        ctx.html = () => {};
+        ctx.redirect = () => {};
+      };
       if (f.drop_rate > 0 && rng() < f.drop_rate) {
         space.log.push({ at: new Date().toISOString(), type: 'fault_drop', detail: rest });
+        if (route.opts.commit) {
+          // 写接口照常执行并落库，再断开连接：客户端看到的是连接重置，状态未明
+          swallowResponse();
+          await route.handler(ctx);
+        }
         return void req.socket.destroy();
       }
       if (f.error_rate > 0 && rng() < f.error_rate) {
@@ -313,9 +431,7 @@ export async function createLab(
           type: 'fault_commit_timeout',
           detail: rest,
         });
-        ctx.json = () => {};
-        ctx.html = () => {};
-        ctx.redirect = () => {};
+        swallowResponse();
         await route.handler(ctx);
         return;
       }
@@ -325,8 +441,14 @@ export async function createLab(
 
   const server = createServer((req, res) => {
     handle(req, res).catch((e) => {
+      if (e instanceof BodyTooLarge) {
+        if (!res.headersSent) res.writeHead(413, { 'content-type': 'application/json' });
+        return void res.end('{"error":"payload_too_large"}');
+      }
+      // 堆栈只写日志，不回给客户端：它带着服务端的绝对路径
+      console.error('[lab]', e);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end(String((e as Error).stack ?? e));
+      res.end('内部错误');
     });
   });
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, '127.0.0.1', resolve));
@@ -334,6 +456,7 @@ export async function createLab(
   if (!addr || typeof addr === 'string') throw new Error('无法获取端口');
   const base = `http://127.0.0.1:${addr.port}`;
   const crossBase = `http://localhost:${addr.port}`;
+  allowedHosts = new Set([`127.0.0.1:${addr.port}`, `localhost:${addr.port}`]);
   return {
     base,
     crossBase,

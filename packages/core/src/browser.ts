@@ -9,9 +9,9 @@ export type LaunchOptions = {
   profileDir: string;
   /** 默认有头（FR-01）；无显示器的 Linux 用 Xvfb 运行有头。 */
   mode?: Mode;
-  /** Chrome for Testing 可执行文件；省略时读环境变量 CHROME_PATH。 */
+  /** Chrome / Chromium 可执行文件；省略时读环境变量 CHROME_PATH，都没有就报错（不探测系统里已有的浏览器，FR-01 的探测排在 M4）。 */
   chromePath?: string;
-  /** 要加载的扩展目录（只做界面，PRD 8.1）；用 --load-extension 加载（M0 预研结论）。 */
+  /** 要加载的扩展目录：仅 M0 预研用（--load-extension），产品不加载扩展（PRD 8.1、FR-29）。 */
   extensions?: string[];
   args?: string[];
   /** 追加到浏览器进程环境的变量（如池自起 Xvfb 时的 DISPLAY）；与本进程环境合并。 */
@@ -35,6 +35,7 @@ export function browserEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Process
   return { ...env, LC_ALL: 'C.UTF-8' };
 }
 
+/** 浏览器路径：显式传入的，否则环境变量 CHROME_PATH；都没有就报 invalid_params。测试用的路径来自 tools/browser.ts。 */
 export function resolveChromePath(explicit?: string): string {
   const path = explicit ?? process.env.CHROME_PATH;
   if (!path) {

@@ -8,7 +8,7 @@
 
 ## 1. 服务管理浏览器 + 元素编号
 
-脚本：`node spikes/browser/service.ts`（有头：`HEADED=1 xvfb-run -a node spikes/browser/service.ts`）
+脚本：`node spikes/browser/service.ts`（有头：`HEADED=1 xvfb-run -a node spikes/browser/service.ts`）。复跑要用完整 Chrome：默认无头用的是 chrome-headless-shell，脚本能跑完，但 `oopifAx` 一栏会是“找不到 OOPIF 的 target”，与下面写的 OOPIF 结论不一致；加 `HEADED=1 xvfb-run -a`，或把 `CHROME_PATH` 设成完整 Chrome（CI `spikes-cft` 的做法）。
 
 ### 1.1 进程模型（PRD 8.1、FR-02、FR-03）
 
@@ -71,7 +71,7 @@
 
 ## 2. MV3 扩展加载（已取消：第一阶段不做扩展，结论仅留档）
 
-脚本：`node spikes/extension/load.ts`（有头：`HEADED=1 xvfb-run -a node spikes/extension/load.ts`）
+脚本：`node spikes/extension/load.ts`（有头：`HEADED=1 xvfb-run -a node spikes/extension/load.ts`）。同样要用完整 Chrome：chrome-headless-shell 不能加载扩展，默认无头运行会输出“方式 A（--load-extension）在此浏览器上不可用”并以退出码 1 结束；加 `HEADED=1 xvfb-run -a`，或把 `CHROME_PATH` 设成完整 Chrome。
 
 | 方式 | 结果 |
 |---|---|
@@ -131,7 +131,7 @@
 ## 4. 在开发机上用 CfT 复跑（可选）
 
 ```bash
-npx @puppeteer/browsers install chrome@<固定版本>   # 记下输出的可执行文件路径
+npx @puppeteer/browsers install chrome@<固定版本>   # 完整 Chrome（不是 headless-shell），记下输出的可执行文件路径
 export CHROME_PATH=<上一步的路径>
 node spikes/browser/service.ts
 node spikes/extension/load.ts

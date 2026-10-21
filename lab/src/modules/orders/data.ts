@@ -1,5 +1,5 @@
 /**
- * 订单后台的数据与查询逻辑（与页面无关）：确定性生成 200 条订单、筛选、排序、分页、CSV。
+ * 订单后台的数据与查询逻辑（与页面无关）：确定性生成订单（默认 200 条，reset 的 orders 参数可改）、筛选、排序、分页、CSV。
  *
  * 排序规则要和页面里的前端排序（client.js）完全一致，测试会比较两边的结果：
  *   - 金额按数值，状态按“待审核、已审核、已驳回”的顺序，其余按字符串码点比较；
@@ -48,6 +48,8 @@ export type OrdersData = {
 };
 
 export const ORDER_COUNT = 200;
+/** reset 可指定的订单数量范围（orders 参数）；订单号从 88000 起，2000 条仍是 5 位数字。 */
+export const ORDER_COUNT_RANGE = { min: 1, max: 2000 };
 export const PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 500;
 export const REGIONS = ['华北', '华东', '华南', '华中', '西南', '西北', '东北'] as const;
@@ -114,7 +116,7 @@ export function ordersOf(space: Space): OrdersData {
 }
 
 export function initOrders(space: Space): void {
-  const orders = generateOrders(space.rng);
+  const orders = generateOrders(space.rng, space.options.orders ?? ORDER_COUNT);
   const data: OrdersData = {
     orders,
     byId: new Map(orders.map((o) => [o.id, o])),

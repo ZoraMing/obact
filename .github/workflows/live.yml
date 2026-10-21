@@ -1,5 +1,7 @@
 name: Live
 
+# Actions 固定到具体版本号（不用 v5 这类会移动的主版本标签）；compat-stable 里的 chrome-headless-shell@stable 是有意浮动的。
+
 # 需要访问公开站点或下载最新稳定版 Chrome 的检查。开发容器访问不了这些，所以放在这里：
 # 手动触发，或每周一次。不阻塞合并，结果看各步骤和上传的 bench/out。
 on:
@@ -12,8 +14,8 @@ jobs:
   bench-live:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -31,7 +33,7 @@ jobs:
         continue-on-error: true
       - run: node bench/bw12.ts --live
         continue-on-error: true
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v5.0.0
         if: always()
         with:
           name: bench-live-out
@@ -41,8 +43,8 @@ jobs:
   compat-stable:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
           cache: npm
