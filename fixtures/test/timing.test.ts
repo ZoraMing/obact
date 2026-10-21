@@ -174,4 +174,39 @@ describe('夹具 timing（FR-13、FR-14、BW-3）', { skip: SKIP }, () => {
     assert.ok(stopped >= 50 && stopped < 90, `停在 ${stopped}%`);
     await close(b);
   });
+
+  test('进度条：停止后“开始导出”接着走，走完后再点从头再来（旧的“下载报表”被清掉）', async () => {
+    const pageId = await env.open('/timing/');
+    const value = "Number(document.getElementById('progress').value)";
+    await ok({ op: 'click', pageId, target: btn('开始导出') });
+    await ok({ op: 'wait_for', pageId, until: [{ expr: `${value} >= 15` }] });
+    await ok({ op: 'click', pageId, target: btn('停止') });
+    const stopped = Number(/^stopped:(\d+)$/.exec((await log(pageId))[0] ?? '')?.[1]);
+    // 之前停止后 timer 没清，再点“开始导出”被静默忽略，进度停在原地
+    await ok({
+      op: 'click',
+      pageId,
+      target: btn('开始导出'),
+      post: [{ text_present: '导出完成' }],
+    });
+    assert.ok(stopped < 100);
+
+    // 走完之后再点：进度回到 0 重新走，“导出完成”和“下载报表”都先清掉
+    await ok({ op: 'click', pageId, target: btn('开始导出') });
+    await ok({
+      op: 'wait_for',
+      pageId,
+      until: [{ expr: `${value} < 100 && !document.getElementById('export-result').textContent` }],
+    });
+    await ok({ op: 'click', pageId, target: btn('停止') });
+    const again = await env.session.pages
+      .get(pageId)
+      .evaluate(
+        () =>
+          [...document.querySelectorAll('button')].filter((b) => b.textContent === '下载报表')
+            .length,
+      );
+    assert.equal(again, 0, '重新开始后不留旧的“下载报表”');
+    await close(pageId);
+  });
 });
