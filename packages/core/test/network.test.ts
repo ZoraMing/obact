@@ -1,6 +1,7 @@
 // 接口响应缓存（FR-10，PRD 5.6）：不错过约 20 毫秒的响应、按动作序号排除常驻轮询的旧响应、
 // 每页淘汰与大小上限、超时。用 fixtures 的 fast-response、polling、virtual-table 夹具。
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import {
   act,
@@ -128,5 +129,36 @@ describe('接口响应缓存（FR-10）', { skip: SKIP }, () => {
     assert.equal(cache.list(b).length, 1, '另一个标签页不受影响');
     assert.equal(cache.get(listed[0]?.id as string)?.url, listed[0]?.url);
     assert.equal(cache.get(oldest.id), undefined, '被淘汰的条目取不到');
+  });
+
+  test('超过安全整数范围的整数（订单号、雪花 ID）以字符串保留，其余数字照常', async () => {
+    // 原文：19 位的 id、负数、数组里的 20 位整数都超出 2^53；安全整数的边界值、小数、字符串本来就精确
+    const text =
+      '{"id":1234567890123456789,"neg":-9007199254740993,"safe":9007199254740991,' +
+      '"price":0.1,"list":[{"sn":18446744073709551615}],"str":"9007199254740993"}';
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(text);
+    });
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok));
+    try {
+      const cache = await cacheWith({ rules: [/\/big-int$/] });
+      const pageId = await env.session.pages.newPage();
+      await cache.ready();
+      const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      await env.session.pages.get(pageId).goto(`${base}/big-int`, { waitUntil: 'load' });
+      const e = await cache.wait(pageId, { url: /big-int$/, afterSeq: 0, timeoutMs: 5000 });
+      assert.deepEqual(e.body, {
+        id: '1234567890123456789',
+        neg: '-9007199254740993',
+        safe: 9007199254740991,
+        price: 0.1,
+        list: [{ sn: '18446744073709551615' }],
+        str: '9007199254740993',
+      });
+      assert.equal(NetworkCache.getByPath(e.body, 'list[0].sn'), '18446744073709551615');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((ok) => server.close(() => ok()));
+    }
   });
 });

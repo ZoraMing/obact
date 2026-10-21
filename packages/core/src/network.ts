@@ -23,7 +23,11 @@ const DEFAULT_MAX_BYTES = 1024 * 1024;
 /** 同时记着的“未完成请求的方法”上限，防止页面异常时无限增长。 */
 const MAX_TRACKED_REQUESTS = 5000;
 
-/** 缓存里的一条接口响应。body 是解析后的 JSON，由缓存和调用方共享，只读。 */
+/**
+ * 缓存里的一条接口响应。body 是解析后的 JSON，由缓存和调用方共享，只读。
+ * 超出安全整数范围（±2^53-1）的整数（订单号、雪花 ID）不能用 number 精确表示，以原文的十进制字符串保留；
+ * 其余数字照常。
+ */
 export type NetworkEntry = {
   id: string;
   pageId: string;
@@ -110,6 +114,20 @@ function positiveInt(v: number | undefined, dflt: number, what: string): number 
 }
 
 const isJsonMime = (mime: string | undefined): boolean => /json/i.test(mime ?? '');
+
+/**
+ * 解析 JSON。超出安全整数范围的整数字面量用 JSON.parse 会静默改写成最近的浮点数（1234567890123456789 变成
+ * 1234567890123456800），所以按 reviver 的源文本（Node ≥ 22 的 context.source）以字符串保留；BigInt 过不了 JSON.stringify。
+ * 安全整数最多 16 位，文本里没有连续 16 位数字就不可能有这种数，直接解析（带 reviver 的解析慢一个数量级）。
+ */
+function parseJson(text: string): unknown {
+  if (!/\d{16}/.test(text)) return JSON.parse(text);
+  return JSON.parse(text, (_key, value, ctx?: { source: string }) =>
+    typeof value === 'number' && ctx && /^-?\d+$/.test(ctx.source) && !Number.isSafeInteger(value)
+      ? ctx.source
+      : value,
+  );
+}
 
 /** 响应的 mime：优先用 CDP 解析好的 mimeType，没有时取 content-type 头。 */
 function mimeOf(r: Protocol.Network.Response): string {
@@ -360,7 +378,7 @@ export class NetworkCache {
       const r = await tap.cdp.send('Network.getResponseBody', { requestId: e.requestId });
       const raw = r.base64Encoded ? Buffer.from(r.body, 'base64') : Buffer.from(r.body, 'utf8');
       if (raw.length > cfg.maxBytes) return;
-      body = JSON.parse(raw.toString('utf8').replace(/^﻿/, ''));
+      body = parseJson(raw.toString('utf8').replace(/^﻿/, ''));
     } catch {
       // 取不到（页面已跳转、响应被回收）或不是合法 JSON：丢弃
       return;
