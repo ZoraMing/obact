@@ -2,6 +2,7 @@
 // 角色、名称、可用操作正确；纯网页信息不被编号。observe 实现后，同一页面还用于验收 observe 的输出。
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import { ACT_DEPS, obActInfo } from '../src/act/page.ts';
 import { markPage } from '../src/index.ts';
 import { bundle } from '../src/page/bundle.ts';
 import { DOM_LIB, obActions, obHint, obName, obOptions, obRole } from '../src/page/dom.ts';
@@ -59,6 +60,13 @@ const UNEXPECTED = bundle((attr: string) => {
     .map((el) => `${el.tagName.toLowerCase()} "${(el.textContent ?? '').trim().slice(0, 20)}"`);
 }, DOM_LIB);
 
+/** 清单里列了 fill、act 却没有填写方式的元素（按清单操作会被 act 拒绝）。 */
+const FILL_GAP = bundle(() => {
+  return [...document.querySelectorAll('[data-x-actions]')]
+    .filter((el) => obActions(el).includes('fill') && obActInfo(el).fill === null)
+    .map((el) => `${el.closest('section')?.id}/${el.getAttribute('data-x-name')}`);
+}, ACT_DEPS);
+
 describe('组件识别：可操作功能与纯网页信息', { skip: SKIP }, () => {
   let env: TestEnv;
   let got: Got[] = [];
@@ -94,6 +102,11 @@ describe('组件识别：可操作功能与纯网页信息', { skip: SKIP }, () 
       .filter((g) => [...g.actions].sort().join() !== [...g.expect.actions].sort().join())
       .map((g) => `${g.label}: ${g.actions.join(',')}（期望 ${g.expect.actions.join(',')}）`);
     assert.deepEqual(wrong, []);
+  });
+
+  test('清单里的 fill，act 都填得了（actions 与 act 的填写能力一致）', async () => {
+    const pageId = env.session.pages.list().at(-1)?.pageId as string;
+    assert.deepEqual(await env.session.pages.get(pageId).evaluate(FILL_GAP), []);
   });
 
   test('下拉框、列表框、datalist 的选项', () => {

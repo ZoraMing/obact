@@ -37,11 +37,12 @@ const MIN_MAX_CHARS = 1000;
  */
 export const CANVAS_WARN_RATIO = 0.4;
 
-/** 页面内收集的限制：选项数（契约上限 100）、名称与值长度、表格与列表保留的行数、卡片类文字阈值。 */
+/** 页面内收集的限制：选项数（契约上限 100）、名称、值与链接长度、表格与列表保留的行数、卡片类文字阈值。 */
 const LIMITS = {
   optionLimit: 100,
   nameMax: 150,
   valueMax: 200,
+  hrefMax: 2000,
   tableRows: 20,
   listItems: 30,
   // 与 snapshot_text 里名称的显示上限一致：文字超过它时名称在快照里是截断的，内容仍作为信息输出
@@ -63,6 +64,9 @@ type Geo = {
   /** 本 frame 视口原点在顶层视口中的坐标。 */
   ox: number;
   oy: number;
+  /** 本 frame 的 1 个 CSS 像素在顶层视口中占多少（iframe 受 CSS 缩放时不是 1，逐级相乘）。 */
+  sx: number;
+  sy: number;
   /** 顶层坐标中的可见区域（逐级与 iframe 内容区、祖先裁剪求交）。 */
   clip: Rect;
   rendered: boolean;
@@ -100,6 +104,8 @@ async function frameGeometry(page: Page, frames: Frame[]): Promise<Map<Frame, Ge
     owner: null,
     ox: 0,
     oy: 0,
+    sx: 1,
+    sy: 1,
     clip: [0, 0, vw as number, vh as number],
     rendered: true,
     chain: [],
@@ -113,17 +119,27 @@ async function frameGeometry(page: Page, frames: Frame[]): Promise<Map<Frame, Ge
     if (!pf || !it) return null;
     const p = resolve(pf);
     if (!p) return null;
-    const { box, clip, rendered, selector, index } = it.info;
-    const ox = p.ox + box[0];
-    const oy = p.oy + box[1];
-    let c = obsIntersect(p.clip, [ox, oy, box[2], box[3]]);
-    if (clip) c = obsIntersect(c, [clip[0] + p.ox, clip[1] + p.oy, clip[2], clip[3]]);
+    const { box, scale, clip, rendered, selector, index } = it.info;
+    // box、clip 是父 frame 坐标，换算到顶层要乘父 frame 的缩放
+    const ox = p.ox + box[0] * p.sx;
+    const oy = p.oy + box[1] * p.sy;
+    let c = obsIntersect(p.clip, [ox, oy, box[2] * p.sx, box[3] * p.sy]);
+    if (clip) {
+      c = obsIntersect(c, [
+        clip[0] * p.sx + p.ox,
+        clip[1] * p.sy + p.oy,
+        clip[2] * p.sx,
+        clip[3] * p.sy,
+      ]);
+    }
     const g: Geo = {
       frame: f,
       parent: p,
       owner: it.owner,
       ox,
       oy,
+      sx: p.sx * scale[0],
+      sy: p.sy * scale[1],
       clip: c,
       rendered: p.rendered && rendered,
       chain: [...p.chain, selector],
@@ -152,7 +168,10 @@ async function recheckFrameHits(geos: Map<Frame, Geo>, outs: Map<Frame, FrameCol
         const p = cur.parent;
         const pts = idx.map((i) => {
           const pt = (out.elements[i] as RawElement).pt as [number, number];
-          return [pt[0] + g.ox - p.ox, pt[1] + g.oy - p.oy] as [number, number];
+          return [(g.ox + pt[0] * g.sx - p.ox) / p.sx, (g.oy + pt[1] * g.sy - p.oy) / p.sy] as [
+            number,
+            number,
+          ];
         });
         const res = await cur.owner.evaluate(HIT_OWNER, pts).catch(() => null);
         ok = ok.map((v, k) => v && res?.[k] === true);
@@ -179,10 +198,10 @@ function toItem(raw: RawElement, g: Geo): Item {
   if (raw.omitted) el.options_omitted = raw.omitted;
   if (raw.states) el.states = raw.states as ObservedElement['states'];
   el.bbox = [
-    round1(raw.rect[0] + g.ox),
-    round1(raw.rect[1] + g.oy),
-    round1(raw.rect[2]),
-    round1(raw.rect[3]),
+    round1(raw.rect[0] * g.sx + g.ox),
+    round1(raw.rect[1] * g.sy + g.oy),
+    round1(raw.rect[2] * g.sx),
+    round1(raw.rect[3] * g.sy),
   ];
   el.visible_ratio = raw.ratio;
   el.clickable = raw.clickable;
@@ -192,6 +211,7 @@ function toItem(raw: RawElement, g: Geo): Item {
   if (raw.kind) item.kind = raw.kind;
   if (raw.placeholder) item.placeholder = raw.placeholder;
   if (raw.scroll) item.scroll = raw.scroll;
+  if (raw.transparent) item.transparent = true;
   if (raw.hint) {
     el.hint = raw.hint;
     item.hint = raw.hint;
@@ -289,7 +309,12 @@ export async function observe(
       marked.map(async ({ frame, refs }) => {
         const g = geos.get(frame);
         if (!g?.rendered) return;
-        const clip: Rect = [g.clip[0] - g.ox, g.clip[1] - g.oy, g.clip[2], g.clip[3]];
+        const clip: Rect = [
+          (g.clip[0] - g.ox) / g.sx,
+          (g.clip[1] - g.oy) / g.sy,
+          g.clip[2] / g.sx,
+          g.clip[3] / g.sy,
+        ];
         try {
           const out = await frame.evaluate(COLLECT, {
             attr: s.attr,

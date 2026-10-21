@@ -53,6 +53,8 @@ export type RawElement = {
   proxy?: boolean;
   /** 没有可访问名称的图标类元素的提示词（obHint）。 */
   hint?: string;
+  /** 命中测试落在它上面，但它（或祖先）opacity:0，act 判“不可见”操作不了：clickable 因此为 false。 */
+  transparent?: boolean;
 };
 
 /**
@@ -71,6 +73,7 @@ export type CollectOptions = {
   optionLimit: number;
   nameMax: number;
   valueMax: number;
+  hrefMax: number;
   tableRows: number;
   listItems: number;
   longText: number;
@@ -90,8 +93,10 @@ export type FrameCollect = {
 
 export type OwnerInfo = {
   rendered: boolean;
-  /** iframe 内容区（子 frame 视口）在父 frame 中的位置。 */
+  /** iframe 内容区（子 frame 视口）在父 frame 中的位置（父 frame 坐标，含 iframe 自身受到的 CSS 缩放）。 */
   box: Rect;
+  /** 子 frame 的 1 个 CSS 像素在父 frame 中占多少（iframe 或其祖先有 CSS scale 时不是 1）。 */
+  scale: [number, number];
   /** iframe 受到的祖先 overflow 裁剪（父 frame 坐标），null 为不裁剪。 */
   clip: Rect | null;
   selector: string;
@@ -233,6 +238,18 @@ export function obsContains(a: Element, b: Element): boolean {
     if (n === a) return true;
     const slot: Element | null = (n as Element).assignedSlot ?? null;
     n = slot ?? n.parentNode ?? (n instanceof ShadowRoot ? n.host : null);
+  }
+  return false;
+}
+
+/** host 是否是 el 所在 Shadow 树的宿主（逐级向上）。 */
+export function obsIsHostOf(host: Element, el: Element): boolean {
+  let n: Element = el;
+  for (let i = 0; i < 32; i++) {
+    const root = n.getRootNode();
+    if (!(root instanceof ShadowRoot)) return false;
+    if (root.host === host) return true;
+    n = root.host;
   }
   return false;
 }
@@ -403,6 +420,7 @@ export function obsElement(
   let ratio = 0;
   let clickable = false;
   let pt: [number, number] | null = null;
+  let blocked = false;
   const transparent = !proxy && shown && !el.checkVisibility({ opacityProperty: true });
   if (proxy || shown) {
     const fixed = getComputedStyle(geo).position === 'fixed';
@@ -412,9 +430,11 @@ export function obsElement(
       ratio = Math.max(0.001, Math.round(((vis[2] * vis[3]) / (r.width * r.height)) * 1000) / 1000);
       let x = vis[0] + vis[2] / 2;
       let y = vis[1] + vis[3] / 2;
+      // 命中元素是目标所在 Shadow 树的宿主也算（slot 投影进来的文字属于宿主，如 Shoelace 按钮上的标签），与 act 的落点判定一致
+      const lands = (t: Element, hit: Element) => obsContains(t, hit) || obsIsHostOf(hit, t);
       const hitsTarget = (px: number, py: number) => {
         const hit = obsHit(px, py);
-        return hit !== null && (obsContains(geo, hit) || obsContains(el, hit));
+        return hit !== null && (lands(geo, hit) || lands(el, hit));
       };
       let onTarget = hitsTarget(x, y);
       // 折行的内联元素（段落里换行的长链接）：包围盒中心可能落在两行之间，再逐个行盒取可见部分的中心试
@@ -432,11 +452,16 @@ export function obsElement(
           break;
         }
       }
-      // 透明元素（opacity:0）：只有它本身是命中目标（透明覆盖在自绘外观上的原生控件）时才算可操作
+      // 透明元素（opacity:0）：只有它本身是命中目标（透明覆盖在自绘外观上的原生控件）时才列出
       if (transparent && !onTarget && !formControl) return null;
       if (onTarget && !states.disabled) {
-        clickable = true;
-        pt = [x, y];
+        // act 对 opacity:0 的元素一律判“不可见”（没有可见 label 可代点时）：标不可点击并注明原因，不让 observe 与 act 说法相反；
+        // 文件框例外，upload_file 不要求可见
+        if (transparent && type !== 'file') blocked = true;
+        else {
+          clickable = true;
+          pt = [x, y];
+        }
       }
     } else if (transparent && !formControl) return null;
   }
@@ -452,6 +477,7 @@ export function obsElement(
   };
   if (pt) out.pt = pt;
   if (proxy) out.proxy = true;
+  if (blocked) out.transparent = true;
   if (!name) {
     const hint = obHint(el);
     if (hint) out.hint = hint;
@@ -461,9 +487,13 @@ export function obsElement(
   if (input) out.inputType = type;
   if ((tag === 'A' || tag === 'AREA') && el.hasAttribute('href')) {
     const href = (el as HTMLAnchorElement).href;
-    if (href && !/^javascript:/i.test(href)) out.href = href;
+    if (href && !/^javascript:/i.test(href)) {
+      // data:/blob: 链接（客户端导出的下载）可能有几兆，只留开头；其他链接也设上限，结果体积不能由页面决定
+      const cap = /^(data|blob):/i.test(href) ? 100 : o.hrefMax;
+      out.href = href.length > cap ? `${href.slice(0, cap)}…` : href;
+    }
   }
-  const opts = obOptions(el, o.optionLimit);
+  const opts = obOptions(el, o.optionLimit, o.valueMax);
   if (opts) {
     out.options = opts.options;
     if (opts.omitted > 0) out.omitted = opts.omitted;
@@ -620,14 +650,22 @@ export function obsOwnerInfo(owner: Element): OwnerInfo {
   const pt = Number.parseFloat(st.paddingTop) || 0;
   const pr = Number.parseFloat(st.paddingRight) || 0;
   const pb = Number.parseFloat(st.paddingBottom) || 0;
+  // iframe 或祖先有 CSS 缩放时：边框盒的显示尺寸 / 布局尺寸（offsetWidth）就是缩放系数；接近 1 的是取整误差，按 1
+  const ratio = (shown: number, layout: number) => {
+    const k = layout > 0 && shown > 0 ? shown / layout : 1;
+    return Math.abs(k - 1) > 0.01 ? k : 1;
+  };
+  const sx = ratio(r.width, (owner as HTMLElement).offsetWidth);
+  const sy = ratio(r.height, (owner as HTMLElement).offsetHeight);
   return {
     rendered: obsShown(owner),
     box: [
-      r.left + owner.clientLeft + pl,
-      r.top + owner.clientTop + pt,
-      Math.max(0, owner.clientWidth - pl - pr),
-      Math.max(0, owner.clientHeight - pt - pb),
+      r.left + (owner.clientLeft + pl) * sx,
+      r.top + (owner.clientTop + pt) * sy,
+      Math.max(0, owner.clientWidth - pl - pr) * sx,
+      Math.max(0, owner.clientHeight - pt - pb) * sy,
     ],
+    scale: [sx, sy],
     clip: st.position === 'fixed' ? null : obsClipFor(obsParent(owner), new Map()),
     selector: obsFrameSelector(owner),
     index: obDeepAll(document, 'iframe, frame').indexOf(owner),
@@ -642,7 +680,11 @@ export function obsHitOwner(owner: Element, points: [number, number][]): boolean
   });
 }
 
-/** 编号框覆盖层（view=som）：position:fixed、pointer-events:none，放在封闭 Shadow DOM 里不受页面样式影响。 */
+/**
+ * 编号框覆盖层（view=som）：position:fixed、pointer-events:none，放在封闭 Shadow DOM 里不受页面样式影响。
+ * 全部用 DOM API 和 CSSOM 构造（与 banner.ts 一致）：不用 innerHTML（页面启用 Trusted Types 时会抛错）、
+ * 不用 <style> 和 style 属性的标记（页面 CSP 的 style-src 会拦掉，编号全堆在左上角）。
+ */
 export function obsSomShow(boxes: { ref: number; x: number; y: number; w: number; h: number }[]) {
   const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#008080', '#9a6324'];
   const host = document.createElement('obact-som');
@@ -652,19 +694,22 @@ export function obsSomShow(boxes: { ref: number; x: number; y: number; w: number
     'width:0!important;height:0!important;overflow:visible!important;pointer-events:none!important;' +
     'z-index:2147483647!important;display:block!important;';
   const root = host.attachShadow({ mode: 'closed' });
-  const parts: string[] = [
-    '<style>div{position:fixed;box-sizing:border-box;pointer-events:none}',
-    'span{position:fixed;font:bold 11px/13px monospace;color:#fff;padding:0 2px;pointer-events:none;white-space:nowrap}</style>',
-  ];
+  const sheet = new CSSStyleSheet(); // 构造样式表不受页面 CSP 限制
+  sheet.replaceSync(
+    'div{position:fixed;box-sizing:border-box;pointer-events:none}' +
+      'span{position:fixed;font:bold 11px/13px monospace;color:#fff;padding:0 2px;pointer-events:none;white-space:nowrap}',
+  );
+  root.adoptedStyleSheets = [sheet];
   for (const b of boxes) {
     const c = COLORS[b.ref % COLORS.length];
     const ly = b.y >= 13 ? b.y - 13 : b.y;
-    parts.push(
-      `<div style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;border:2px solid ${c}"></div>`,
-      `<span style="left:${b.x}px;top:${ly}px;background:${c}">${b.ref}</span>`,
-    );
+    const frame = document.createElement('div');
+    frame.style.cssText = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;border:2px solid ${c}`;
+    const tag = document.createElement('span');
+    tag.style.cssText = `left:${b.x}px;top:${ly}px;background:${c}`;
+    tag.textContent = String(b.ref);
+    root.append(frame, tag);
   }
-  root.innerHTML = parts.join('');
   document.documentElement.appendChild(host);
   return boxes.length;
 }
@@ -716,6 +761,7 @@ export const OBS_LIB = [
   obsClipFor,
   obsHit,
   obsContains,
+  obsIsHostOf,
   obsVisuallyHidden,
   obsIsMirrorField,
   obsValue,

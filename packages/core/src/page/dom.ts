@@ -323,17 +323,24 @@ export function obContentText(el: Element): string {
  */
 export function obHint(el: Element): string {
   const GENERIC =
-    /^(icon|icons|btn|button|fa|fas|far|fab|material-icons|iconfont|svg|img|image|active|clicked|selected|disabled|left|right|small|large|sm|lg|md)$/i;
+    /^(icon|icons|btn|button|fa|fas|far|fab|anticon|glyphicon|bi|mdi|material-icons|iconfont|svg|img|image|active|clicked|selected|disabled|left|right|small|large|sm|lg|md)$/i;
+  // 图标库的类名前缀：去掉前缀就是图标名（fa-trash、el-icon-delete、anticon-plus、glyphicon-search、bi-gear）
+  const ICON = /^(icon|ico|fa|el-icon|ant-icon|anticon|glyphicon|bi|mdi)[-_]/i;
+  // 框架给按钮自身的样式类（btn-primary、el-button--danger、ant-btn-primary、is-circle）：前缀之后只是颜色、尺寸、形状，不是图标含义
+  const STYLE = /^(?:btn|button|el-button|ant-btn|is|has)(?:[-_]+|$)/i;
+  const MODIFIER =
+    /^(?:primary|secondary|success|danger|warning|info|light|dark|default|link|block|circle|round|plain|outline|ghost|dashed|text)(?:[-_]|$)/i;
   const fileWord = (url: string) => {
     const m = /([A-Za-z][\w-]*?)(?:[-_.]?\d+)?\.(png|svg|gif|jpe?g|webp)/i.exec(url);
     return m ? (m[1] as string) : '';
   };
   const words: string[] = [];
-  const push = (w: string) => {
-    const t = w
-      .replace(/^(icon|ico|fa|el-icon|ant-icon|mdi)[-_]/i, '')
-      .replace(/[-_]+/g, ' ')
-      .trim();
+  const push = (word: string) => {
+    // 样式类去掉框架前缀，剩下的若只是修饰词（primary、circle）就丢弃，否则（btn-delete）留下后半
+    const style = STYLE.exec(word);
+    const w = style ? word.slice(style[0].length) : word;
+    if (style && (!w || GENERIC.test(w) || MODIFIER.test(w))) return;
+    const t = w.replace(ICON, '').replace(/[-_]+/g, ' ').trim();
     if (t && !GENERIC.test(t) && !words.includes(t)) words.push(t);
   };
   const nodes = [el, ...el.querySelectorAll('*')].slice(0, 6);
@@ -347,7 +354,16 @@ export function obHint(el: Element): string {
     const st = getComputedStyle(n);
     for (const v of [st.content, st.backgroundImage]) if (v?.includes('url(')) push(fileWord(v));
   }
-  for (const n of nodes) for (const c of n.classList) if (obIsStableToken(c)) push(c);
+  // 类名的优先级：图标库的类（fa-trash）> 后代元素的类 > 元素自身的类（多是按钮的样式类，不能挤掉图标词）
+  const classes = [...nodes.slice(1).flatMap((n) => [...n.classList]), ...el.classList].filter(
+    obIsStableToken,
+  );
+  for (const c of [
+    ...classes.filter((c) => ICON.test(c)),
+    ...classes.filter((c) => !ICON.test(c)),
+  ]) {
+    push(c);
+  }
   return words.slice(0, 3).join(' ').slice(0, 40);
 }
 
@@ -495,7 +511,10 @@ export function obActions(el: Element): string[] {
     (role === 'combobox' && tag === 'input')
   ) {
     if (readonly) add('click');
-    else add('click', 'fill', 'type_text', 'press_key');
+    // fill 只给 act 填得了的：原生输入框、textarea、可编辑区域；只有 ARIA 角色的自绘输入区（div role=textbox）点击后键入
+    else if (tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable) {
+      add('click', 'fill', 'type_text', 'press_key');
+    } else add('click', 'type_text', 'press_key');
   } else if (['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio'].includes(role)) {
     add('click');
     if (tag === 'input') add('fill');
@@ -516,10 +535,11 @@ export function obActions(el: Element): string[] {
   return out;
 }
 
-/** 下拉框、列表框、带 datalist 的输入框的选项（最多 limit 个），以及未列出的数量。 */
+/** 下拉框、列表框、带 datalist 的输入框的选项（最多 limit 个，选项文字与值最长 max 个字符），以及未列出的数量。 */
 export function obOptions(
   el: Element,
   limit: number,
+  max = 200,
 ): {
   options: { label: string; value: string; selected?: boolean; disabled?: boolean }[];
   omitted: number;
@@ -529,10 +549,11 @@ export function obOptions(
   else if (el.tagName === 'INPUT' && (el as HTMLInputElement).list) {
     list = [...((el as HTMLInputElement).list as HTMLDataListElement).options];
   } else return null;
+  const cut = (s: string) => (s.length > max ? `${s.slice(0, max)}…` : s);
   const options = list.slice(0, limit).map((o) => {
     const item: { label: string; value: string; selected?: boolean; disabled?: boolean } = {
-      label: obNorm(o.label || o.text || o.value),
-      value: o.value,
+      label: cut(obNorm(o.label || o.text || o.value)),
+      value: cut(o.value),
     };
     if (o.selected && el.tagName === 'SELECT') item.selected = true;
     if (o.disabled) item.disabled = true;

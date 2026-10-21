@@ -4,9 +4,17 @@ import { after, before, describe, test } from 'node:test';
 import type { ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
 import { observe, resolveRef } from '../src/index.ts';
-import { rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
+import { type Handler, rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
 
 const contracts = new Contracts();
+/** 严格的页面策略：Trusted Types（禁 innerHTML 这类字符串写入）加 style-src（禁 <style> 与 style 属性的标记）。 */
+const strictPage: Handler = (_req, res) => {
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': "require-trusted-types-for 'script'; style-src 'self'",
+  });
+  res.end('<!doctype html><body><button>按钮一</button><a href="/x">链接二</a></body>');
+};
 const byName = (r: ObserveResult, name: string): ObservedElement => {
   const e = r.elements.find((x) => x.name === name);
   assert.ok(e, `找不到元素：${name}`);
@@ -16,7 +24,7 @@ const byName = (r: ObserveResult, name: string): ObservedElement => {
 describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
   let env: TestEnv;
   before(async () => {
-    env = await setup();
+    env = await setup({ '/api/strict': strictPage });
   });
   after(async () => {
     await env?.close();
@@ -145,6 +153,47 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     const line = r.snapshot_text?.split('\n').find((l) => l.startsWith(`[${free.ref}] `));
     assert.ok(line && !line.includes('covered'), line);
     assert.equal(blocked.clickable, false);
+  });
+
+  test('Web Component 按钮的标签文字是宿主的 slot 文本：命中宿主也是点中按钮；真被盖住的仍是 covered', async () => {
+    const r = await observeHtml(
+      `<script>customElements.define('x-btn', class extends HTMLElement { constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<button part="base" style="padding:8px 16px"><slot></slot></button>'; } });</script>
+       <x-btn>下一步</x-btn>
+       <div style="position:relative;margin-top:20px"><x-btn>被遮住</x-btn><div style="position:absolute;inset:0"></div></div>`,
+    );
+    assert.equal(byName(r, '下一步').clickable, true);
+    assert.equal(byName(r, '被遮住').clickable, false);
+  });
+
+  test('链接地址与选项的文字、值有长度上限：data: 下载链接、超长选项不能撑大结果', async () => {
+    const opts = [0, 1, 2].map(
+      (i) => `<option value="${'v'.repeat(1000)}${i}">${'选项'.repeat(500)}${i}</option>`,
+    );
+    const r = await observeHtml(
+      `<a href="data:text/csv;base64,${'QUJD'.repeat(50000)}" download="x.csv">导出</a>
+       <a href="/${'p'.repeat(5000)}">长地址</a><select aria-label="大下拉">${opts.join('')}</select>`,
+    );
+    contracts.assert('observe.Result', r);
+    const href = byName(r, '导出').href as string;
+    assert.ok(href.startsWith('data:text/csv;base64,QUJD') && href.length <= 101, `${href.length}`);
+    assert.ok((byName(r, '长地址').href as string).length <= 2001);
+    const options = byName(r, '大下拉').options ?? [];
+    assert.equal(options.length, 3);
+    for (const o of options) {
+      assert.ok(o.label.length <= 201 && (o.value ?? '').length <= 201, `${o.label.length}`);
+    }
+  });
+
+  test('iframe 在 CSS 缩放里：内部元素的 bbox 按缩放换算到顶层视口', async () => {
+    // 外层 scale(0.5)：iframe 内容区从 (205,105) 起，内按钮在 iframe 内 (100,100) 80x20，显示出来是 (255,155) 40x10
+    const r = await observeHtml(
+      `<div style="position:absolute;left:200px;top:100px;transform:scale(0.5);transform-origin:0 0">
+         <iframe style="width:400px;height:300px;border:10px solid #888" srcdoc="<body style='margin:0'><button style='position:absolute;left:100px;top:100px;width:80px;height:20px'>缩放内按钮</button></body>"></iframe>
+       </div>`,
+    );
+    const e = byName(r, '缩放内按钮');
+    assert.deepEqual(e.bbox.map(Math.round), [255, 155, 40, 10]);
+    assert.equal(e.clickable, true);
   });
 
   test('textarea 的值含换行：snapshot_text 仍是一行一个元素，不能冒充别的元素行', async () => {
@@ -277,6 +326,24 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     assert.equal(r.signature, 'login');
     const none = await observe(env.session, { pageId }, { signatures: sigs.slice(0, 2) });
     assert.equal(none.signature, null);
+  });
+
+  test('编号框截图：页面启用 Trusted Types 与严格 style-src 时照常生成，覆盖层不触发 CSP 违规', async () => {
+    const pageId = await env.open('/api/strict');
+    const page = env.session.pages.get(pageId);
+    await page.evaluate(() => {
+      const w = window as unknown as { violations: string[] };
+      w.violations = [];
+      document.addEventListener('securitypolicyviolation', (e) =>
+        w.violations.push(e.violatedDirective),
+      );
+    });
+    const r = await observe(env.session, { pageId, views: ['text', 'som'] });
+    assert.ok(r.som_path && existsSync(r.som_path));
+    const seen = await page.evaluate(
+      () => (window as unknown as { violations: string[] }).violations,
+    );
+    assert.deepEqual(seen, []);
   });
 
   test('Canvas 大面积覆盖时告警', async () => {

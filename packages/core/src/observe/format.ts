@@ -14,6 +14,8 @@ export type Item = {
   scroll?: [number, number];
   /** 没有名称的图标类元素的提示词。 */
   hint?: string;
+  /** 命中它，但它（或祖先）opacity:0，act 判“不可见”操作不了：快照里注明 transparent，不是被遮挡。 */
+  transparent?: boolean;
 };
 
 /**
@@ -87,7 +89,7 @@ export function snapshotLine(item: Item, pageUrl: string): string {
   // 位置提示：不在视口内（需滚动）、未渲染（如隐藏的文件框）、被遮挡
   const [, , w, h] = e.bbox as number[];
   if (e.visible_ratio === 0) parts.push((w ?? 0) > 0 && (h ?? 0) > 0 ? 'offscreen' : 'hidden');
-  else if (!e.clickable && !st.disabled) parts.push('covered');
+  else if (!e.clickable && !st.disabled) parts.push(item.transparent ? 'transparent' : 'covered');
   // 页面来源的字符串（textarea 的值、文件名、iframe 的 title）里的换行显示成 \n：不能把一行拆开，冒充别的元素行
   const line = `${parts.join(' ')} → ${e.actions.join(',')}`;
   return line.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, '\\n');
