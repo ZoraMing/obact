@@ -16,7 +16,7 @@ export const DEFAULT_BANNER_TEXT = 'Obact 正在操作';
 
 /**
  * 在页面内放置（或更新文字）提示条。自包含：同时用于 evaluateOnNewDocument（此时可能还没有根元素）
- * 和 evaluate（当前文档）。只放在顶层文档，子 frame 里不放。
+ * 和 evaluate（当前文档）。只放在顶层的 HTML 文档，子 frame、SVG/XML 文档里不放。
  */
 function obBannerInstall(text: string, attr: string): void {
   if (window !== window.top) return;
@@ -28,6 +28,8 @@ function obBannerInstall(text: string, attr: string): void {
     return;
   }
   const host = document.createElement('obact-banner');
+  // SVG、XML 等非 HTML 文档里建出来的不是 HTML 元素（没有 style，也显示不出来）：不放，也不报错
+  if (!(host instanceof HTMLElement)) return;
   host.setAttribute(attr, '');
   host.setAttribute('aria-hidden', 'true');
   // 内联样式用 !important 压过页面的 * 或标签选择器；经 CSSOM 设置，不受页面 CSP 的 style-src 限制

@@ -66,4 +66,22 @@ describe('页面提示条（FR-29）', { skip: SKIP }, () => {
     await page.goto(`${env.server.base}/pages/banner.html`, { waitUntil: 'load' });
     assert.equal(await state(), null, '移除后新文档里不再出现');
   });
+
+  test('当前页是 SVG 等非 HTML 文档时：showBanner 不抛错、不放提示条，页面脚本也不报错；换到 HTML 页面后提示条照常出现', async () => {
+    const pageId = await env.open('/pages/star.svg');
+    const page = env.session.pages.get(pageId);
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    const present = () =>
+      page.evaluate((attr) => !!document.querySelector(`[${attr}]`), BANNER_ATTR);
+
+    await showBanner(page, 'Obact 正在操作');
+    assert.equal(await present(), false, 'SVG 文档里没有 HTML 元素，不放提示条');
+    await page.goto(`${env.server.base}/pages/star.svg`, { waitUntil: 'load' });
+    assert.equal(await present(), false);
+    await page.goto(`${env.server.base}/pages/basic.html`, { waitUntil: 'load' });
+    assert.equal(await present(), true, '注入脚本仍然登记着，HTML 页面里照常出现');
+    assert.deepEqual(errors, [], 'SVG 文档里的注入脚本不报错');
+    await hideBanner(page);
+  });
 });
