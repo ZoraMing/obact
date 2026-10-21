@@ -115,6 +115,16 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'fill', pageId, target: { css: '#ro' }, value: 'x' }, 'not_actionable');
     await err({ op: 'fill', pageId, target: { css: '#btn' }, value: 'x' }, 'not_actionable');
     await err({ op: 'fill', pageId, target: { css: '#sel' }, value: '不存在' }, 'not_found');
+    // 填错目标的报错不回显调用方给的值（可能是密码），只给长度
+    const secret = 'S3cr3t-PW!';
+    for (const [css, code] of [
+      ['#sel', 'not_found'],
+      ['#cb', 'invalid_params'],
+    ] as const) {
+      const r = await err({ op: 'fill', pageId, target: { css }, value: secret }, code);
+      assert.ok(!JSON.stringify(r.error).includes(secret), `${css} 的报错回显了值`);
+      assert.equal(r.error?.details?.value_length, secret.length);
+    }
   });
 
   /** 取出并清空页面记录的事件（act-fill.html：类型:控件:值:是否可信）。 */
@@ -191,10 +201,11 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     );
     assert.equal(await value('#date'), '2026-01-05', '写错格式不能清掉原有的值');
     const bad = await err(
-      { op: 'fill', pageId, target: { css: '#color' }, value: 'red' },
+      { op: 'fill', pageId, target: { css: '#color' }, value: 'S3cr3t-PW!' },
       'invalid_params',
     );
     assert.equal(bad.error?.details?.actual, '#000000');
+    assert.ok(!JSON.stringify(bad.error).includes('S3cr3t-PW!'), '报错不回显调用方给的值');
     await err({ op: 'fill', pageId, target: { css: '#range' }, value: 99 }, 'invalid_params');
     assert.deepEqual(await drain(pageId), [], '被拒绝的值不派发事件');
     assert.equal(await value('#range'), '5');

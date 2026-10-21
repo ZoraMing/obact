@@ -334,7 +334,14 @@ function toBool(v: string | number | boolean): boolean {
   const s = String(v).trim().toLowerCase();
   if (['true', '1', 'on', 'yes', 'checked'].includes(s)) return true;
   if (['false', '0', 'off', 'no', 'unchecked', ''].includes(s)) return false;
-  throw new ObactError('invalid_params', `复选框/单选框的值应为布尔值：${v}`, { value: v });
+  // 错误信息与 details 不回显调用方给的值（可能是密码）：只给长度
+  throw new ObactError(
+    'invalid_params',
+    '复选框/单选框的值应为布尔值（true/false、on/off、yes/no、1/0）',
+    {
+      value_length: String(v).length,
+    },
+  );
 }
 
 /** 聚焦：先用页面脚本聚焦；被拒绝时（如跨域 iframe）用可信点击聚焦。 */
@@ -393,8 +400,8 @@ async function fillElement(
           'invalid_params',
           r.got === ''
             ? `值格式不符：${info.type} 需要 ${fmt[info.type] ?? '有效的值'}`
-            : `值不被接受：${info.type} 会把“${want}”调整为“${r.got}”（格式不符或超出范围）`,
-          { value: want, actual: r.got },
+            : `值不被接受：${info.type} 会把所给的值调整为“${r.got}”（格式不符或超出范围）`,
+          { value_length: want.length, actual: r.got },
         );
       }
       return;
@@ -431,8 +438,8 @@ async function planOption(ctx: Ctx, loc: Located, want: string, index: number | 
   let plan = await loc.handle.evaluate(SELECT_PLAN, want, index);
   while (plan.index < 0) {
     if (Date.now() >= ctx.deadline) {
-      fail('not_found', `下拉框中没有选项“${want}”，可选：${plan.labels.join('、')}`, {
-        value: want,
+      fail('not_found', `下拉框中没有与所给值相符的选项，可选：${plan.labels.join('、')}`, {
+        value_length: want.length,
         options: plan.labels,
       });
     }
