@@ -130,6 +130,19 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal((await c.state()).seed, 5);
   });
 
+  test('百分号编码不合法的 Cookie、空间名、路径参数回正常响应或 400，不是 500', async () => {
+    const c = control(lab, 'pct');
+    // 别处残留的 cookie 不能让整个空间（含控制接口）对这个浏览器全部失败
+    const withCookie = await fetch(`${lab.url('pct')}/_lab/state`, {
+      headers: { cookie: 'foo=%zz; bar=100%' },
+    });
+    assert.equal(withCookie.status, 200);
+    assert.equal((await fetch(`${lab.base}/s/%E0%A4%A/_lab/state`)).status, 400);
+    const param = await post('pct', '/api/counter/%E0%A4%A', {});
+    assert.equal(param.status, 400);
+    assert.equal(((await c.state()).modules.counter as { n: number }).n, 0, '请求没有被执行');
+  });
+
   test('提交按幂等键计数', async () => {
     const c = control(lab, 'idem');
     await post('idem', '/api/counter/1', { key: 'same' });

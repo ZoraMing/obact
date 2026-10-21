@@ -72,11 +72,24 @@ function newSpace(id: string, modules: readonly LabModule[], seed = seedOf(id)):
   return space;
 }
 
+/** 百分号解码；编码不合法返回 null（调用方回 400 或保留原文，不能让异常变成 500）。 */
+function decode(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
 function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (header ?? '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    // 别的本地服务或浏览器配置里残留的 cookie 可能不是百分号编码（foo=100%）：解码失败保留原文
+    if (i > 0) {
+      const raw = part.slice(i + 1).trim();
+      out[part.slice(0, i).trim()] = decode(raw) ?? raw;
+    }
   }
   return out;
 }
@@ -206,8 +219,9 @@ export async function createLab(
       res.writeHead(302, { location: '/s/default/' });
       return void res.end();
     }
-    const id = decodeURIComponent(m[1] as string);
-    if (!SPACE_ID.test(id)) return void res.writeHead(400).end('空间名只能用字母、数字、_ 和 -');
+    const id = decode(m[1] as string);
+    if (id === null || !SPACE_ID.test(id))
+      return void res.writeHead(400).end('空间名只能用字母、数字、_ 和 -');
     if (m[2] === undefined) {
       res.writeHead(302, { location: `/s/${id}/` });
       return void res.end();
@@ -302,9 +316,12 @@ export async function createLab(
       return ctx.html(page(ctx, modules, '未找到', '<h1>页面不存在</h1>'), 404);
     }
     const hit = route.pattern.exec(rest) as RegExpExecArray;
-    route.keys.forEach((k, i) => {
-      ctx.params[k] = decodeURIComponent(hit[i + 1] as string);
-    });
+    for (const [i, k] of route.keys.entries()) {
+      const v = decode(hit[i + 1] as string);
+      if (v === null)
+        return ctx.json({ error: 'bad_request', message: `路径参数 ${k} 的百分号编码不合法` }, 400);
+      ctx.params[k] = v;
+    }
     const isApi = rest.startsWith('/api/');
 
     if (route.opts.auth && !ctx.user) {
