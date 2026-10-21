@@ -471,6 +471,22 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.ok((await events(pageId)).includes('far:true'));
   });
 
+  test('怪异模式（无 doctype）页面：视口是窗口大小不是内容高度，折叠线以下的按钮先滚动再点，不报 obscured', async () => {
+    const pageId = await env.open('/pages/act-quirks.html');
+    const page = env.session.pages.get(pageId);
+    assert.deepEqual(
+      await page.evaluate(() => [
+        document.compatMode,
+        document.documentElement.clientHeight > innerHeight,
+      ]),
+      ['BackCompat', true],
+      '夹具页处于怪异模式：documentElement.clientHeight 是内容高度',
+    );
+    await ok({ op: 'click', pageId, target: { css: '#far' } });
+    assert.deepEqual(await events(pageId), ['far:true']);
+    assert.ok((await page.evaluate(() => scrollY)) > 0, '先把页面滚动到按钮处');
+  });
+
   test('目标被祖先滚动容器裁掉时先滚动容器再点；position:fixed 的元素不算被裁掉', async () => {
     const pageId = await env.open('/pages/act-clip.html');
     const page = env.session.pages.get(pageId);

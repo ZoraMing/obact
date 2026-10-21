@@ -130,9 +130,12 @@ export function obActLabelProxy(el: Element): Element | null {
   return null;
 }
 
-/** 本 frame 视口（不含滚动条）。 */
+/**
+ * 本 frame 视口（不含滚动条）。怪异模式（无 doctype）下 documentElement.clientHeight 是内容高度而不是视口高度，
+ * 按规范此时视口尺寸取 body 的 client 尺寸。
+ */
 export function obActViewport(): { w: number; h: number } {
-  const de = document.documentElement;
+  const de = document.compatMode === 'BackCompat' ? document.body : document.documentElement;
   return { w: de?.clientWidth || innerWidth, h: de?.clientHeight || innerHeight };
 }
 

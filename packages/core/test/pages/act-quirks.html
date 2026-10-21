@@ -1,0 +1,22 @@
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>怪异模式</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  .spacer { height: 1500px; }
+</style>
+</head>
+<body>
+  <!-- 刻意没有 doctype：页面处于怪异模式，documentElement.clientHeight 是内容高度而不是视口高度 -->
+  <button type="button" id="top">顶部按钮</button>
+  <div class="spacer"></div>
+  <button type="button" id="far">底部按钮</button>
+  <script>
+    window.events = [];
+    for (const id of ['top', 'far']) {
+      document.getElementById(id).addEventListener('click', (e) => window.events.push(`${id}:${e.isTrusted}`));
+    }
+  </script>
+</body>
+</html>
