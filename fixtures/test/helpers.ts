@@ -2,7 +2,7 @@
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { launchBrowser, Session } from '@obact/core';
 import type { Browser } from 'puppeteer-core';
 import { skipIfNoBrowser, testChrome } from '../../tools/browser.ts';
@@ -28,6 +28,8 @@ export async function setup(): Promise<FixtureEnv> {
     profileDir,
     chromePath: CHROME,
     mode: process.env.HEADED === '1' ? 'headed' : 'headless',
+    // 浏览器进程的 TMPDIR 含 .. 片段（如 /x/a/../b）时，Chrome 会取消所有下载；先规范化
+    env: { TMPDIR: resolve(tmpdir()) },
   });
   const session = await Session.attach(browser);
   return {

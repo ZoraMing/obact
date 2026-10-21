@@ -365,11 +365,20 @@ describe('表单与文件夹具（FR-12、FR-22、FR-26）', { skip: SKIP }, () 
       const begin = new Promise<{ guid: string; suggestedFilename: string; url: string }>(
         (resolve) => cdp.on('Browser.downloadWillBegin', (e) => resolve(e)),
       );
-      const done = new Promise<{ guid: string }>((resolve) =>
+      // 下载被取消要立即报错：事件里没有原因，只能列出常见的几种（浏览器进程的 TMPDIR 含 .. 就会这样）
+      const done = new Promise<{ guid: string }>((resolve, reject) =>
         cdp.on('Browser.downloadProgress', (e) => {
           if (e.state === 'completed') resolve(e);
+          else if (e.state === 'canceled') {
+            reject(
+              new Error(
+                `下载被取消（guid ${e.guid}）：常见原因是浏览器进程的 TMPDIR 含 ..、下载目录不可写、磁盘已满`,
+              ),
+            );
+          }
         }),
       );
+      done.catch(() => {}); // 取消可能发生在 await 之前，先挂上处理，避免未处理的 rejection
       const ob = await observe(env.session, { pageId });
       const link = ob.elements.find((e) => e.role === 'link' && e.name === '下载订单报表（CSV）');
       assert.ok(link, '下载链接在元素表中');
