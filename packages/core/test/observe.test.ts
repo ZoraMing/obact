@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import type { ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
 import { act, type ObactError, observe, resolveRef } from '../src/index.ts';
+import { defaultShotDir } from '../src/observe/views.ts';
 import { type Handler, rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
 
 const contracts = new Contracts();
@@ -354,6 +357,32 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
       () => (window as unknown as { violations: string[] }).violations,
     );
     assert.deepEqual(seen, []);
+  });
+
+  test('截图默认目录是本进程私有的（0700、名字随机）；被换成符号链接后不沿用', async () => {
+    const pageId = await openMisc();
+    const first = await observe(env.session, { pageId, views: ['screenshot'] });
+    const dir = dirname(first.screenshot_path as string);
+    assert.notEqual(dir, join(tmpdir(), 'obact-shots'), '不是共享的固定路径');
+    assert.match(basename(dir), /^obact-shots-.+/);
+    assert.equal(statSync(dir).mode & 0o077, 0, 'group 与 other 没有权限');
+    assert.match(basename(first.screenshot_path as string), /-[0-9a-f]{8}\.png$/);
+    assert.equal(defaultShotDir(), dir);
+    // 目录被换成指向别处的符号链接：不沿用，另建新目录，截图不会落到链接目标里
+    const aside = mkdtempSync(join(tmpdir(), 'obact-aside-'));
+    let dir2: string | undefined;
+    try {
+      rmSync(dir, { recursive: true });
+      symlinkSync(aside, dir);
+      const again = await observe(env.session, { pageId, views: ['screenshot'] });
+      dir2 = dirname(again.screenshot_path as string);
+      assert.notEqual(dir2, dir);
+      assert.deepEqual(readdirSync(aside), []);
+    } finally {
+      rmSync(aside, { recursive: true, force: true });
+      rmSync(dir, { force: true });
+      if (dir2) rmSync(dir2, { recursive: true, force: true });
+    }
   });
 
   test('Canvas 大面积覆盖时告警', async () => {

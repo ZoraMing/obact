@@ -1,5 +1,4 @@
 import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -24,6 +23,7 @@ import type {
 } from '@obact/schemas';
 import type { ElementHandle, HTTPResponse, KeyInput, MouseButton, Page } from 'puppeteer-core';
 import { ObactError } from '../errors.ts';
+import { defaultShotDir, shotRandom } from '../observe/views.ts';
 import { bundle } from '../page/bundle.ts';
 import { type Ctx, type Effects, fail } from './ctx.ts';
 import {
@@ -919,11 +919,12 @@ const SHOT_TYPES: Record<string, 'png' | 'jpeg' | 'webp'> = {
 
 /** 截图保存路径：给定 path 时限制在工作区（filesRoot，未配置时为 outDir）内；否则在 outDir 下自动命名。 */
 export function shotPath(ctx: Ctx, path?: string): { path: string; type: 'png' | 'jpeg' | 'webp' } {
-  const outDir = ctx.opts.outDir ?? join(tmpdir(), 'obact-shots');
-  const root = ctx.opts.filesRoot ?? outDir;
+  const outDir = () => ctx.opts.outDir ?? defaultShotDir();
+  const root = ctx.opts.filesRoot ?? outDir();
   let full: string;
   if (path) full = resolveInside(root, path, false);
-  else full = join(outDir, `${ctx.pageId || 'page'}-${ctx.seq}-${Date.now()}.png`);
+  else
+    full = join(outDir(), `${ctx.pageId || 'page'}-${ctx.seq}-${Date.now()}-${shotRandom()}.png`);
   let type = SHOT_TYPES[extname(full).toLowerCase()];
   if (!type) {
     // 补后缀后的路径要重新校验：path 解析到工作区根目录本身时，补出来的文件在根目录的同级（工作区外）

@@ -2,6 +2,8 @@
  * observe 的附加视图（FR-31）：视口截图、编号框截图、可访问性树文本。
  * 截图坐标与 bbox 同一坐标系（顶层视口 CSS 像素），截图像素 = CSS 像素 × viewport.scale。
  */
+import { randomBytes } from 'node:crypto';
+import { lstatSync, mkdtempSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,9 +15,31 @@ import { OBS_LIB, obsSomHide, obsSomShow } from './page.ts';
 const SOM_SHOW = bundle(obsSomShow, [...DOM_LIB, ...OBS_LIB]);
 const SOM_HIDE = bundle(obsSomHide, [...DOM_LIB, ...OBS_LIB]);
 
-/** 截图默认目录：系统临时目录下的 obact-shots/。 */
+let shotDir: string | undefined;
+
+/** 目录是本进程的属主自己的、真目录（不是符号链接）、group 与 other 没有权限。 */
+function isPrivateDir(d: string): boolean {
+  try {
+    const st = lstatSync(d);
+    const uid = process.getuid?.();
+    return st.isDirectory() && (uid === undefined || (st.uid === uid && (st.mode & 0o077) === 0));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 截图默认目录：本进程私有的临时目录（mkdtemp 新建，权限 0700）。
+ * 不用共享的、名字固定的 <tmpdir>/obact-shots：多用户机器上别人能读，也能预先放符号链接把截图引到别处。
+ */
 export function defaultShotDir(): string {
-  return join(tmpdir(), 'obact-shots');
+  if (!shotDir || !isPrivateDir(shotDir)) shotDir = mkdtempSync(join(tmpdir(), 'obact-shots-'));
+  return shotDir;
+}
+
+/** 截图文件名里的随机后缀。 */
+export function shotRandom(): string {
+  return randomBytes(4).toString('hex');
 }
 
 let seq = 0;
@@ -23,7 +47,7 @@ let seq = 0;
 async function shotFile(dir: string | undefined, pageId: string, suffix: string): Promise<string> {
   const d = resolve(dir ?? defaultShotDir());
   await mkdir(d, { recursive: true });
-  return join(d, `${pageId}-${Date.now()}-${++seq}${suffix}.png`);
+  return join(d, `${pageId}-${Date.now()}-${++seq}-${shotRandom()}${suffix}.png`);
 }
 
 /** 视口截图，返回文件路径。 */
