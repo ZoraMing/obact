@@ -83,6 +83,53 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal(reused?.conflict, true);
   });
 
+  test('控制接口校验输入：表单里的数字与布尔会转换，未知键、非法值、非对象体回 400 且不改任何开关', async () => {
+    const c = control(lab, 'cv');
+    const raw = (path: string, body: string, type: string) =>
+      fetch(`${lab.url('cv')}/_lab/${path}`, {
+        method: 'POST',
+        headers: { 'content-type': type },
+        body,
+      });
+    const form = 'application/x-www-form-urlencoded';
+    // 表单编码里 commit_timeout=false 必须是关闭，redesign=1 必须是数字 1
+    const ok = await raw('faults', 'commit_timeout=false&redesign=1&error_rate=0.25', form);
+    assert.equal(ok.status, 200);
+    const faults = (await ok.json()) as Record<string, unknown>;
+    assert.equal(faults.commit_timeout, false);
+    assert.equal(faults.redesign, 1);
+    assert.equal(faults.error_rate, 0.25);
+
+    for (const [body, what] of [
+      ['{"delay":500}', '拼错的键'],
+      ['{"error_rate":"abc"}', '非数字'],
+      ['{"error_rate":2}', '超出 0~1'],
+      ['{"commit_timeout":"yes"}', '非布尔'],
+      ['{"redesign":1.5}', '非整数'],
+      ['{"delay_ms":-1}', '负数'],
+      ['{"drop_rate":0.5,"popup_rate":"x"}', '一项非法时前面合法的也不能生效'],
+      ['null', 'JSON null'],
+      ['[1]', '数组'],
+      ['{', 'JSON 不合法'],
+    ] as const) {
+      const r = await raw('faults', body, 'application/json');
+      assert.equal(r.status, 400, what);
+      assert.equal(((await r.json()) as { error: string }).error, 'bad_request');
+    }
+    const after = (await c.state()).faults;
+    assert.deepEqual(after, faults, '被拒绝的请求没有改动任何开关');
+    assert.equal((await raw('faults', 'session_ttl_ms=null', form)).status, 200);
+    assert.equal((await c.state()).faults.session_ttl_ms, null);
+
+    assert.equal((await raw('reset', '{"seed":1.5}', 'application/json')).status, 400);
+    assert.equal((await raw('reset', 'null', 'application/json')).status, 400);
+    assert.equal((await raw('reset', '{"sead":1}', 'application/json')).status, 400);
+    const seeded = await raw('reset', 'seed=5', form);
+    assert.equal(seeded.status, 200);
+    assert.equal(((await seeded.json()) as { seed: number }).seed, 5, '表单里的 seed 也生效');
+    assert.equal((await c.state()).seed, 5);
+  });
+
   test('提交按幂等键计数', async () => {
     const c = control(lab, 'idem');
     await post('idem', '/api/counter/1', { key: 'same' });

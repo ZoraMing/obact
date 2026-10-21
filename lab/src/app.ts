@@ -11,9 +11,10 @@ import {
   type Ctx,
   DEFAULT_FAULTS,
   esc,
-  type Faults,
   type LabModule,
   page,
+  parseFaults,
+  parseReset,
   type Route,
   Router,
   type Space,
@@ -136,6 +137,20 @@ export async function createLab(
     return s.user;
   };
 
+  /** 读控制接口的请求体；JSON 不合法按“不是对象”处理（交给 parseFaults / parseReset 回 400）。 */
+  const bodyOrNull = async (ctx: Ctx): Promise<unknown> => {
+    try {
+      return await ctx.body();
+    } catch {
+      return null;
+    }
+  };
+
+  const badRequest = (ctx: Ctx, message: string): true => {
+    ctx.json({ error: 'bad_request', message }, 400);
+    return true;
+  };
+
   const control = async (ctx: Ctx, action: string): Promise<boolean> => {
     const { space } = ctx;
     if (action === 'state' && ctx.req.method === 'GET') {
@@ -156,8 +171,9 @@ export async function createLab(
       return true;
     }
     if (action === 'reset' && ctx.req.method === 'POST') {
-      const body = await ctx.body();
-      const seed = typeof body.seed === 'number' ? body.seed : seedOf(space.id);
+      const parsed = parseReset(await bodyOrNull(ctx));
+      if ('error' in parsed) return badRequest(ctx, parsed.error);
+      const seed = parsed.seed ?? seedOf(space.id);
       const fresh = newSpace(space.id, modules, seed);
       spaces.set(space.id, fresh);
       faultRng.set(space.id, seeded(seed ^ 0x5bd1e995));
@@ -165,11 +181,10 @@ export async function createLab(
       return true;
     }
     if (action === 'faults' && ctx.req.method === 'POST') {
-      const body = (await ctx.body()) as Partial<Faults>;
-      for (const k of Object.keys(DEFAULT_FAULTS) as (keyof Faults)[]) {
-        if (k in body) (space.faults as Record<string, unknown>)[k] = body[k];
-      }
-      space.log.push({ at: new Date().toISOString(), type: 'faults', detail: body });
+      const parsed = parseFaults(await bodyOrNull(ctx));
+      if ('error' in parsed) return badRequest(ctx, parsed.error);
+      Object.assign(space.faults, parsed.faults);
+      space.log.push({ at: new Date().toISOString(), type: 'faults', detail: parsed.faults });
       ctx.json(space.faults);
       return true;
     }

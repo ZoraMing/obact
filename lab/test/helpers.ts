@@ -15,6 +15,7 @@ export const SKIP: false | string = skipIfNoBrowser(CHROME);
 
 export type LabState = {
   space: string;
+  seed: number;
   faults: Faults;
   sessions: { user: string; created: string }[];
   submissions: { key: string; op: string; count: number; payload: unknown; conflict?: boolean }[];

@@ -41,6 +41,85 @@ export const DEFAULT_FAULTS: Faults = {
   popup_rate: 0,
 };
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** 数字或数字字符串（表单编码里所有值都是字符串）转成有限数字；不是则 undefined。 */
+function toNumber(v: unknown): number | undefined {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+}
+
+const nonNegative = (v: unknown) => {
+  const n = toNumber(v);
+  return n !== undefined && n >= 0 ? n : undefined;
+};
+
+/** 每个故障开关的取值规则：parse 返回转换后的值，不合法返回 undefined。 */
+const FAULT_RULES: {
+  [K in keyof Faults]: { parse(v: unknown): Faults[K] | undefined; expect: string };
+} = {
+  delay_ms: { parse: nonNegative, expect: '不小于 0 的数字' },
+  error_rate: { parse: (v) => rate(v), expect: '0~1 的数字' },
+  drop_rate: { parse: (v) => rate(v), expect: '0~1 的数字' },
+  commit_timeout: {
+    parse: (v) =>
+      v === true || v === 'true' ? true : v === false || v === 'false' ? false : undefined,
+    expect: 'true 或 false',
+  },
+  session_ttl_ms: {
+    parse: (v) => (v === null || v === 'null' ? null : nonNegative(v)),
+    expect: '不小于 0 的数字或 null',
+  },
+  redesign: {
+    parse: (v) => {
+      const n = nonNegative(v);
+      return n !== undefined && Number.isInteger(n) ? n : undefined;
+    },
+    expect: '不小于 0 的整数',
+  },
+  popup_rate: { parse: (v) => rate(v), expect: '0~1 的数字' },
+};
+
+function rate(v: unknown): number | undefined {
+  const n = toNumber(v);
+  return n !== undefined && n >= 0 && n <= 1 ? n : undefined;
+}
+
+/**
+ * 校验并转换 _lab/faults 的请求体：必须是对象，只认 Faults 里的键，值按类型转换（表单里的 "0.5"、"true"、"null"）。
+ * 任何一项不合法就整体拒绝，一个开关都不改。
+ */
+export function parseFaults(body: unknown): { faults: Partial<Faults> } | { error: string } {
+  if (!isRecord(body)) return { error: '请求体必须是 JSON 对象或表单' };
+  const faults: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (!Object.hasOwn(FAULT_RULES, k)) {
+      return { error: `未知的故障开关 ${k}，可用：${Object.keys(FAULT_RULES).join('、')}` };
+    }
+    const rule = FAULT_RULES[k as keyof Faults];
+    const value = rule.parse(v);
+    if (value === undefined)
+      return { error: `故障开关 ${k} 的值 ${JSON.stringify(v)} 不合法，应为${rule.expect}` };
+    faults[k] = value;
+  }
+  return { faults: faults as Partial<Faults> };
+}
+
+/** 校验 _lab/reset 的请求体：对象，可选 seed（整数，表单里的数字字符串也行）；未知键拒绝。 */
+export function parseReset(body: unknown): { seed?: number } | { error: string } {
+  if (!isRecord(body)) return { error: '请求体必须是 JSON 对象或表单' };
+  for (const k of Object.keys(body)) {
+    if (k !== 'seed') return { error: `未知的重置参数 ${k}，可用：seed` };
+  }
+  if (body.seed === undefined) return {};
+  const seed = toNumber(body.seed);
+  if (seed === undefined || !Number.isSafeInteger(seed)) {
+    return { error: `seed 的值 ${JSON.stringify(body.seed)} 不合法，应为整数` };
+  }
+  return { seed };
+}
+
 export type Submission = {
   /** 幂等键（客户端随请求带上，缺省时服务端生成 auto-N）。 */
   key: string;
