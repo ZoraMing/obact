@@ -26,7 +26,7 @@ PRD 第 7 节的结构在这里用 JSON Schema（2020-12）冻结。各模块只
 
 以下几处 PRD 没有写明，冻结时补上了，评审时请重点看：
 
-1. **新增 `human.reply` 方法**：侧边栏或终端用它回答 need_human 和 ask_save，补全人工接管的闭环（FR-21、FR-34）。
+1. **新增 `human.reply` 方法**：终端或接口调用方用它回答 need_human 和 ask_save，补全人工接管的闭环（FR-21、FR-34）。
 2. **工作流中的目标只能用定位器**：`step.json` 拒绝 `{"ref": …}`，因为编号只在会话内有效（FR-06、FR-07）。
 3. **pageId 规则**：除 `new_page` 和控制流步骤外，所有动作都必须带 pageId（FR-04）。
 4. **ask_human 与人工接管共用通道**：need_human 的 reason 增加 `question` 和 `infeasible` 两个值（FR-34）。

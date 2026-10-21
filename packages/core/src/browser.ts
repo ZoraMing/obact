@@ -11,7 +11,7 @@ export type LaunchOptions = {
   mode?: Mode;
   /** Chrome for Testing 可执行文件；省略时读环境变量 CHROME_PATH。 */
   chromePath?: string;
-  /** 要加载的扩展目录（只做界面，PRD 8.1）；用 --load-extension 加载（M0 预研结论）。 */
+  /** 要加载的扩展目录：仅 M0 预研用（--load-extension），产品不加载扩展（PRD 8.1、FR-29）。 */
   extensions?: string[];
   args?: string[];
   /** 追加到浏览器进程环境的变量（如池自起 Xvfb 时的 DISPLAY）；与本进程环境合并。 */
