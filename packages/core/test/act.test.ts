@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -737,6 +737,34 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       const good = await ok({ op: 'take_screenshot', pageId, path: 'shots/a' }, opts);
       assert.equal(good.screenshot_path, join(ws, 'shots', 'a.png'));
       assert.ok(existsSync(join(ws, 'shots', 'a.png')));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('截图的 path 越出工作区被拒绝且不写盘：../、绝对路径、符号链接目录、悬空链接', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'obact-shot-'));
+    const ws = join(base, 'ws');
+    const out = join(base, 'out');
+    mkdirSync(ws);
+    mkdirSync(out);
+    symlinkSync(out, join(ws, 'link'));
+    symlinkSync(join(base, 'escape.png'), join(ws, 'dangling.png'));
+    try {
+      const pageId = await open();
+      const opts = { filesRoot: ws, outDir: ws };
+      const cases: [string, string][] = [
+        ['../x.png', join(base, 'x.png')],
+        [join(base, 'abs.png'), join(base, 'abs.png')],
+        ['link/x.png', join(out, 'x.png')],
+        ['dangling.png', join(base, 'escape.png')],
+      ];
+      for (const [path, written] of cases) {
+        await err({ op: 'take_screenshot', pageId, path }, 'path_outside_workspace', opts);
+        assert.equal(existsSync(written), false, `${path} 不应写到 ${written}`);
+      }
+      await ok({ op: 'take_screenshot', pageId, path: 'sub/ok.png' }, opts);
+      assert.ok(existsSync(join(ws, 'sub', 'ok.png')), '工作区内的路径对照应写盘成功');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
