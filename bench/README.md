@@ -1,5 +1,26 @@
 # bench：对照与基准
 
+## 基准工作流 BW-3、BW-6、BW-7、BW-12（`bw3.ts`、`bw6.ts`、`bw7.ts`、`bw12.ts`）
+
+M1 出口要求的四个基准。默认跑本地场景（夹具库、Lab），不需要联网；全部通过时退出码为 0，有失败为 1。浏览器用 `npm run browser:install` 装的版本，设了 `CHROME_PATH` 则用它。
+
+| 脚本 | 基准 | 参数 | 报告（`bench/out/`，不入库） |
+|---|---|---|---|
+| `bw3.ts` | BW-3 延迟与异步 | `--live`、`--only L2,L3`（只跑指定场景）、`--out 目录` | `bw3-local.md/.json`；加 `--live` 为 `bw3-live.*` |
+| `bw7.ts` | BW-7 弹窗与页面结构（不含“存为规则”） | 同 `bw3.ts` | `bw7-local.md/.json`；加 `--live` 为 `bw7-live.*` |
+| `bw6.ts` | BW-6 定位可靠性 | `--live`（只跑公开站点）、`--all`（本地和公开站点都跑） | `bw6-report.md`、`bw6-results.json`；只加 `--live` 时为 `bw6-live-*` |
+| `bw12.ts` | BW-12 视觉观察与坐标动作 | 同 `bw6.ts` | `bw12-report.md`、`bw12-results.json`、`bw12-steps/<场景>.jsonl`；只加 `--live` 时为 `bw12-live-*` |
+
+```bash
+node bench/bw3.ts                            # 本地全部场景
+node bench/bw3.ts --only S0 --out /tmp/bw3   # 只跑 S0（扫描脚本里没有固定延时），报告写到 /tmp/bw3
+node bench/bw6.ts                            # 本地全部场景，约 1 分钟
+node bench/bw12.ts --all                     # 本地加公开站点
+npm run test:bench                           # 上面四个的本地场景加回归用例，约 2~3 分钟；CI 里是独立任务 bench
+```
+
+`--live` 要访问公开站点（quotes.toscrape.com、uitestingplayground.com、the-internet.herokuapp.com），这条路径没有测试执行过，也没有在真站上跑过：`bw6.ts`、`bw12.ts` 只加 `--live` 而访问不了站点时，如实报告“没有结果”并退出 1，`bw3.ts`、`bw7.ts` 把对应场景记为失败。首次真实运行在 `.github/workflows/live.yml`（手动触发或每周一次）。
+
 ## BW-14 组件识别对照（`bw14.ts`）
 
 同一批页面分别用 Obact 和 BrowserGym 提取可交互元素，按位置（IoU ≥ 0.6）逐条比对，结果写到 `bench/out/`（不入库）。Obact 一侧取 `observe` 返回的 `elements`（智能体实际看到的元素表），不是识别层的原始编号。
