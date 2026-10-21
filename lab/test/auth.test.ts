@@ -118,6 +118,18 @@ class Client {
 }
 
 describe('登录与账号：协议层', () => {
+  test('next 含中文等非 ASCII 字符：登录成功后按 UTF-8 百分号编码跳回，已有的 %xx 保持原样', async () => {
+    const sp = 'auth-next-utf8';
+    const r = await new Client(sp).login('alice', undefined, '/vault?q=订单#位置');
+    assert.equal(r.status, 303, '之前这里是 500，而且会话已经建立');
+    assert.equal(
+      r.headers.get('location'),
+      `/s/${sp}/vault?q=%E8%AE%A2%E5%8D%95#%E4%BD%8D%E7%BD%AE`,
+    );
+    const r2 = await new Client(sp).login('alice', undefined, '/vault?q=%E8%AE%A2');
+    assert.equal(r2.headers.get('location'), `/s/${sp}/vault?q=%E8%AE%A2`);
+  });
+
   test('next 只接受本空间内的路径：外站地址和 . / .. 段（含 %2e）回账号页，文件名里的 .. 不受影响', async () => {
     const sp = 'auth-next-dots';
     for (const next of [

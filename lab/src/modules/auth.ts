@@ -79,7 +79,7 @@ const shellModules = (): readonly LabModule[] => [mod];
 /**
  * 登录后的跳转目标：只接受本空间内的路径（相对空间根，或带空间前缀），
  * 拒绝外站地址（http://…、//…）、反斜杠、换行，含 . / .. 段（含 %2e 写法）的路径（浏览器会把它解析到别的空间），
- * 以及登录页、验证页自身（避免循环）。
+ * 以及登录页、验证页自身（避免循环）；非 ASCII 字符编码成百分号形式后返回。
  */
 export function safeNext(base: string, raw: unknown): string {
   const s = str(raw).trim();
@@ -88,8 +88,16 @@ export function safeNext(base: string, raw: unknown): string {
   if (/^\/(login|verify)(?:[?#]|$)/.test(p)) return DEFAULT_NEXT;
   const path = p.split(/[?#]/, 1)[0] as string;
   if (path.split('/').some((seg) => /^(\.|%2e){1,2}$/i.test(seg))) return DEFAULT_NEXT;
-  return p;
+  return toAscii(p);
 }
+
+/** Location 头只能是 ASCII：中文等字符按 UTF-8 做百分号编码（已有的 %xx 保持原样），否则跳转时 Node 抛 ERR_INVALID_CHAR。 */
+const toAscii = (p: string): string =>
+  p.replace(/[^\x21-\x7e]/gu, (ch) =>
+    [...Buffer.from(ch, 'utf8')]
+      .map((b) => `%${b.toString(16).toUpperCase().padStart(2, '0')}`)
+      .join(''),
+  );
 
 /** 北京时间，如 2026-10-16 20:30:05。 */
 function fmtTime(ms: number): string {
