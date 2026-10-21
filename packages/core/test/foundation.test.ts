@@ -254,6 +254,35 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
     }
   });
 
+  test('newPage 的 pageId 不合法或重复：先校验再开页，不留孤儿标签页；并发同名只留一个', async () => {
+    const reg = env.session.pages;
+    const open = async () => (await env.browser.pages()).length;
+    await reg.newPage({ pageId: 'reg-dup' });
+    const before = await open();
+    for (const bad of ['reg-dup', 'bad id', '']) {
+      await assert.rejects(
+        reg.newPage({ pageId: bad }),
+        (e: ObactError) => e.code === 'invalid_params',
+        `pageId=${JSON.stringify(bad)}`,
+      );
+    }
+    assert.equal(await open(), before, '校验失败时没有开出标签页');
+    // 并发同名：开页期间编号被抢先占了，后到的一方关掉自己刚开的页面
+    const listed = reg.list().length;
+    const rs = await Promise.allSettled([
+      reg.newPage({ pageId: 'reg-race' }),
+      reg.newPage({ pageId: 'reg-race' }),
+    ]);
+    assert.deepEqual(rs.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(await open(), before + 1, '输的一方没有留下孤儿标签页');
+    for (let i = 0; i < 50 && reg.list().length !== listed + 1; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(reg.list().length, listed + 1, '登记表里也只多一个');
+    await reg.get('reg-dup').close();
+    await reg.get('reg-race').close();
+  });
+
   test('错误归一', () => {
     const t = new Error('waiting failed');
     t.name = 'TimeoutError';

@@ -32,7 +32,7 @@ export class PageRegistry {
   async #adoptTarget(t: Target): Promise<void> {
     if (t.type() !== 'page') return;
     const page = await t.page().catch(() => null);
-    if (page && !this.#ids.has(page)) this.register(page);
+    if (page && !page.isClosed() && !this.#ids.has(page)) this.register(page);
   }
 
   /** 登记一个页面；id 省略时自动分配 p1、p2…。已登记的页面返回原 ID。 */
@@ -102,8 +102,17 @@ export class PageRegistry {
 
   /** 新建标签页并登记。 */
   async newPage(opts: { pageId?: string; url?: string } = {}): Promise<string> {
+    // 先校验 pageId 再开页：不合法或已被占用时不留空白标签页
+    if (opts.pageId !== undefined) this.#checkId(opts.pageId);
     const page = await this.#browser.newPage();
-    const pageId = this.register(page, opts.pageId);
+    let pageId: string;
+    try {
+      pageId = this.register(page, opts.pageId);
+    } catch (e) {
+      // 开页期间编号被并发的同名 newPage 抢先占了：关掉刚开的页面，不留孤儿
+      await page.close().catch(() => {});
+      throw e;
+    }
     if (opts.url) await page.goto(opts.url, { waitUntil: 'domcontentloaded' });
     return pageId;
   }
