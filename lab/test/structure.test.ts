@@ -602,6 +602,25 @@ describe('复杂结构 /structure（FR-04、FR-06、FR-07）', { skip: SKIP }, (
     await run({ op: 'close_page', pageId });
   });
 
+  test('页面事件上报遇到服务端 500 会用同一个键重试，不是只试一次', async () => {
+    const space = 'st-retry';
+    const pageId = await openMain(space);
+    const c = control(env.lab, space);
+    await c.faults({ error_rate: 1 });
+    await ok({
+      op: 'click',
+      pageId,
+      target: { role: 'button', name: '查看', within: "tr[data-row-key='HT-2401']" },
+    });
+    // error_rate=1 时每次上报都是 500：重试的次数体现在日志里的 fault_500 条数
+    await until(async () => {
+      const n = (await c.state()).log.filter((x) => x.type === 'fault_500').length;
+      return n >= 3;
+    }, '第一次上报之后又重试了两次');
+    await c.faults({ error_rate: 0 });
+    await run({ op: 'close_page', pageId });
+  });
+
   test('动态 id 与哈希类名：每次加载都变；定位器不含动态值；重载后用同一个定位器点中同一个目标', async () => {
     const space = 'st-dyn';
     const a = await env.open(space, '/structure');
