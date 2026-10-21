@@ -8,6 +8,9 @@ import type { Page } from 'puppeteer-core';
  *   所以元素列表、纯网页文本、编号、命中测试里都没有它；宿主本身是个没有文字、没有角色的空元素。
  * - 导航产生的新文档由 evaluateOnNewDocument 重新注入；act 不会自动显示它，由调用方（runner）决定何时显示和移除。
  *   无头运行时不该调用（FR-29）。
+ * - 它不是防篡改边界：条和页面脚本在同一个 JS 世界里，页面总能删掉自己的 DOM、用内联样式盖住它，
+ *   或在条放进来之前钩住 attachShadow 拿到封闭根。这里只保证页面正常运行时（含框架整体重绘）条不会丢，
+ *   页面一直在删时也会（延迟）补回；需要可信提示的场景以终端侧的提示为准。
  */
 
 /** 提示条宿主元素上的属性（mark.ts 据此跳过它的封闭 Shadow Root）。 */
@@ -20,11 +23,12 @@ export const DEFAULT_BANNER_TEXT = 'Obact 正在操作';
  */
 function obBannerInstall(text: string, attr: string): void {
   if (window !== window.top) return;
-  type Handle = { setText(t: string): void };
+  type Handle = { setText(t: string): void; stop(): void };
+  // 句柄挂在 document 上而不是宿主上：宿主被页面摘掉、等着延迟补回时，更新文字与停止补回也找得到它
   const KEY = '__obactBanner';
-  const old = document.querySelector(`[${attr}]`) as unknown as Record<string, Handle> | null;
-  if (old?.[KEY]) {
-    old[KEY].setText(text);
+  const old = (document as unknown as Record<string, Handle | undefined>)[KEY];
+  if (old) {
+    old.setText(text);
     return;
   }
   const host = document.createElement('obact-banner');
@@ -69,39 +73,51 @@ function obBannerInstall(text: string, attr: string): void {
   label.textContent = text;
   bar.append(dot, label);
   root.append(bar);
-  Object.defineProperty(host, KEY, {
-    value: {
-      setText: (t: string) => {
-        label.textContent = t;
-      },
-    } satisfies Handle,
-  });
-  // 挂在根元素下（不在 body 里），页面整体替换 body 时不受影响；被页面脚本清掉时补回，最多 20 次，避免和页面互相抢
+  // 挂在根元素下（不在 body 里），页面整体替换 body 时不受影响；被页面脚本清掉时补回。
+  // 前 20 次立刻补回；页面还在删，就改成延迟补回，间隔逐步拉长（上限 2 秒）：
+  // 不会和页面在同一轮微任务里互相抢到卡死，也不会被一直删掉。
   let moved = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const watcher = new MutationObserver(() => sync());
-  const sync = () => {
+  const place = () => {
+    timer = undefined;
     const html = document.documentElement;
     if (!html) return; // 新文档刚开始还没有根元素：等 document 的子节点出现
     if (host.parentNode !== html) {
-      if (++moved > 20) {
-        watcher.disconnect();
-        return;
-      }
+      moved++;
       html.appendChild(host);
     }
     watcher.observe(html, { childList: true });
   };
+  const sync = () => {
+    if (timer !== undefined) return; // 已经排好了延迟补回
+    if (moved < 20 || host.parentNode === document.documentElement) place();
+    else timer = setTimeout(place, Math.min(2000, 50 * 2 ** (moved - 20)));
+  };
   watcher.observe(document, { childList: true });
-  Object.defineProperty(host, '__obactBannerStop', { value: () => watcher.disconnect() });
+  Object.defineProperty(document, KEY, {
+    configurable: true,
+    value: {
+      setText: (t: string) => {
+        label.textContent = t;
+      },
+      stop: () => {
+        watcher.disconnect();
+        clearTimeout(timer);
+        timer = undefined;
+        Reflect.deleteProperty(document, KEY);
+      },
+    } satisfies Handle,
+  });
   sync();
 }
 
-/** 在页面内移除提示条，并停止补回。 */
+/** 在页面内移除提示条，并停止补回（含已经排上的延迟补回）。 */
 function obBannerRemove(attr: string): void {
-  for (const host of document.querySelectorAll(`[${attr}]`)) {
-    (host as unknown as { __obactBannerStop?: () => void }).__obactBannerStop?.();
-    host.remove();
-  }
+  (
+    document as unknown as Record<string, { stop?: () => void } | undefined>
+  ).__obactBanner?.stop?.();
+  for (const host of document.querySelectorAll(`[${attr}]`)) host.remove();
 }
 
 /** 每个标签页登记的“新文档注入脚本”标识，hideBanner 据此撤销。 */

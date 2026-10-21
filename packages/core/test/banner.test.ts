@@ -67,6 +67,46 @@ describe('页面提示条（FR-29）', { skip: SKIP }, () => {
     assert.equal(await state(), null, '移除后新文档里不再出现');
   });
 
+  test('页面反复删除提示条：补回没有次数上限（超过 20 次改为延迟补回）；宿主上不挂句柄；hideBanner 连同排着的延迟补回一起停掉', async () => {
+    const pageId = await env.open('/pages/banner.html');
+    const page = env.session.pages.get(pageId);
+    const present = () =>
+      page.evaluate((attr) => !!document.querySelector(`[${attr}]`), BANNER_ATTR);
+    await showBanner(page);
+    assert.deepEqual(
+      await page.evaluate(
+        (attr) => Object.getOwnPropertyNames(document.querySelector(`[${attr}]`) as Element),
+        BANNER_ATTR,
+      ),
+      [],
+      '页面从宿主元素上读不到句柄',
+    );
+
+    // 页面每个宏任务删一次，直到删满 22 次（旧实现补回 20 次之后就放弃，永远删不到 22 次）
+    const removals = () =>
+      page.evaluate(async (attr) => {
+        let n = 0;
+        const t0 = performance.now();
+        while (n < 22 && performance.now() - t0 < 3000) {
+          const h = document.querySelector(`[${attr}]`);
+          if (h) {
+            h.remove();
+            n++;
+          }
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        return n;
+      }, BANNER_ATTR);
+    assert.equal(await removals(), 22, '每次被删之后都会补回');
+    await page.waitForFunction((attr) => !!document.querySelector(`[${attr}]`), {}, BANNER_ATTR);
+
+    // 删掉后立刻 hideBanner：排着的延迟补回也要取消（负向检查，只会漏判不会误报）
+    await page.evaluate((attr) => document.querySelector(`[${attr}]`)?.remove(), BANNER_ATTR);
+    await hideBanner(page);
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(await present(), false, 'hideBanner 之后不再补回');
+  });
+
   test('当前页是 SVG 等非 HTML 文档时：showBanner 不抛错、不放提示条，页面脚本也不报错；换到 HTML 页面后提示条照常出现', async () => {
     const pageId = await env.open('/pages/star.svg');
     const page = env.session.pages.get(pageId);
