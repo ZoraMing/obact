@@ -88,7 +88,7 @@ export function stalledError(s: Session, st: ActState, page: Page, ms: number): 
   const others = st.pending
     .filter((d) => d.page !== page)
     .map((d) => ({ pageId: s.pages.idOf(d.page), type: d.type, message: d.message }));
-  let msg = `等待 ${ms} 毫秒后页面主线程仍无响应，可能被对话框挂起，可 handle_dialog 或 close_page`;
+  let msg = `页面主线程无响应（等待 ${ms} 毫秒），可能被对话框挂起，可 handle_dialog 或 close_page`;
   if (others.length) {
     const who = others.map((d) => `${d.pageId}（${d.type}）`).join('、');
     msg += `；其他标签页有未处理的对话框：${who}，同进程的页面会被它挂住，请先在该页 handle_dialog`;
