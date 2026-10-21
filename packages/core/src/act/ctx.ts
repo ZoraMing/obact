@@ -71,6 +71,8 @@ export type Ctx = {
   /** 输入是否已经派发（之后被对话框打断时，动作本身算已执行）。 */
   dispatched: boolean;
   aborted: boolean;
+  /** 页面主线程无响应（期限过后探测不返回）：之后不再读取页面。 */
+  stalled: boolean;
   data?: unknown;
   screenshot: string | null;
   assertions?: AssertionResult[];
@@ -110,6 +112,7 @@ export function makeCtx(
     wait: 'none',
     dispatched: false,
     aborted: false,
+    stalled: false,
     screenshot: null,
     navigated: false,
     changed: false,
@@ -197,9 +200,9 @@ export class Effects {
     return this.#committed;
   }
 
-  /** 有未处理的对话框挡在本页面上。 */
+  /** 页面读不了：有未处理的对话框挡在本页面上，或页面主线程无响应。 */
   get blocked(): boolean {
-    return this.ctx.st.pending.some((d) => d.page === this.page);
+    return this.ctx.stalled || this.ctx.st.pending.some((d) => d.page === this.page);
   }
 
   /** 等主 frame 导航结束：导航请求都已结束，且当前文档已解析完（readyState 不是 loading），上限 deadline。 */

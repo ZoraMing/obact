@@ -522,6 +522,47 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await ok({ op: 'handle_dialog', pageId, action: 'accept' });
   });
 
+  test('页面主线程无响应时动作按期限报 timeout，不等 CDP 的 180 秒；别的标签页有未处理的对话框时在 details 里列出', {
+    timeout: 60_000,
+  }, async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    const other = await open();
+    await ok({ op: 'click', pageId: other, target: { css: '#alert' } });
+    const arrived = new Promise<void>((resolve) => {
+      onHold = resolve;
+    });
+    // 同步请求占住页面主线程（同进程的弹窗对话框、长任务造成的效果相同），直到放行
+    const blocked = page
+      .evaluate(() => {
+        const x = new XMLHttpRequest();
+        x.open('GET', '/api/hold', false);
+        x.send();
+      })
+      .catch(() => {});
+    try {
+      await arrived;
+      const t = Date.now();
+      const r = await err(
+        { op: 'click', pageId, target: { css: '#btn' }, timeout_ms: 1000 },
+        'timeout',
+      );
+      assert.ok(Date.now() - t < 20_000, `耗时 ${Date.now() - t}`);
+      assert.match(r.error?.message ?? '', /无响应.*handle_dialog.*close_page/);
+      assert.deepEqual(r.error?.details?.dialogs, [
+        { pageId: other, type: 'alert', message: '提示一下' },
+      ]);
+      await err({ op: 'press_key', pageId, key: 'Shift', timeout_ms: 1000 }, 'timeout');
+    } finally {
+      for (const res of held.splice(0)) res.writeHead(200).end('ok');
+      await blocked;
+    }
+    // 别的标签页的对话框不影响本页：恢复响应后照常点击，超时的那次点击没有残留输入
+    await ok({ op: 'click', pageId, target: { css: '#btn' } });
+    assert.deepEqual(await events(pageId), ['click:true']);
+    await ok({ op: 'handle_dialog', pageId: other, action: 'accept' });
+  });
+
   test('新标签页与导航效果', async () => {
     const pageId = await open();
     const r = await ok({ op: 'click', pageId, target: { css: '#newtab' } });

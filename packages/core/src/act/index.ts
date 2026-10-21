@@ -6,7 +6,7 @@ import type { Session } from '../session.ts';
 import { checkAssertions } from './assert.ts';
 import { Aborted, type ActOptions, type Ctx, Effects, fail, makeCtx } from './ctx.ts';
 import { HANDLERS, newPage, shotPath } from './ops.ts';
-import { dialogBlocked, pendingOf, stateOf, watchPage } from './state.ts';
+import { dialogBlocked, pendingOf, stalledError, stateOf, watchPage } from './state.ts';
 import { sleep, within } from './util.ts';
 
 export type { ActOptions, ObscuredInfo } from './ctx.ts';
@@ -42,6 +42,50 @@ async function ensureForeground(page: Page): Promise<void> {
     1200,
     null,
   ).catch(() => {});
+}
+
+/** 期限过后探测页面是否响应：探测求值在这个时间内不返回，就当作主线程无响应。 */
+const STALL_PROBE_MS = 1000;
+/** 页面有响应时，隔多久再探测一次。 */
+const STALL_RECHECK_MS = 1000;
+const STALLED = Symbol('stalled');
+
+/**
+ * 页面主线程被对话框（含同进程的其他标签页的对话框）、长任务占住时，页面里的 CDP 调用（定位、可操作性检查、
+ * 输入派发、截图）都不会返回，一直等到协议超时（180 秒）。动作的期限过后仍没结束，就探测一次页面：
+ * 探测也不返回才算无响应（页面有响应时，长文本输入这类正常耗时不受期限限制）。stop 在动作结束时调用。
+ */
+function watchStall(ctx: Ctx, page: Page): { stalled: Promise<typeof STALLED>; stop(): void } {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stalled = new Promise<typeof STALLED>((resolve) => {
+    const check = async () => {
+      if (stopped || page.isClosed()) return;
+      const up = await within(
+        page.mainFrame().evaluate(() => true),
+        STALL_PROBE_MS,
+        false,
+      ).catch(() => true);
+      if (stopped) return;
+      if (!up) return resolve(STALLED);
+      timer = setTimeout(check, STALL_RECHECK_MS);
+    };
+    timer = setTimeout(check, Math.max(0, ctx.deadline - Date.now()));
+  });
+  return {
+    stalled,
+    stop() {
+      stopped = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
+/** 页面无响应：悬空的处理函数在下一步检查时停下，之后不再读页面。 */
+function stall(ctx: Ctx, page: Page): ObactError {
+  ctx.aborted = true;
+  ctx.stalled = true;
+  return stalledError(ctx.s, ctx.st, page, ctx.timeout);
 }
 
 let contracts: Contracts | null = null;
@@ -184,8 +228,15 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
       }
 
       const run = runOp(ctx, fx);
-      const first = await Promise.race([run.then(() => null), fx.dialogOpened]);
-      if (first) {
+      const guard = watchStall(ctx, page);
+      const first = await Promise.race([
+        run.then(() => null),
+        fx.dialogOpened,
+        guard.stalled,
+      ]).finally(guard.stop);
+      if (first === STALLED) {
+        throw stall(ctx, page);
+      } else if (first) {
         // 页面脚本被对话框挂起，输入派发要等对话框处理后才返回：留给 handle_dialog 收尾
         ctx.aborted = true;
         st.inflight.set(
@@ -227,7 +278,11 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
     }
     if (action.screenshot && ctx.page && !ctx.page.isClosed() && !pendingOf(st, ctx.page)) {
       const { path, type } = shotPath(ctx);
-      await ctx.page.screenshot({ path, type });
+      const guard = watchStall(ctx, ctx.page);
+      const shot = await Promise.race([ctx.page.screenshot({ path, type }), guard.stalled]).finally(
+        guard.stop,
+      );
+      if (shot === STALLED) throw stall(ctx, ctx.page);
       ctx.screenshot = path;
     }
     const fin = fx ? await fx.finish() : { ...emptyEffects(ctx), diff: undefined };
