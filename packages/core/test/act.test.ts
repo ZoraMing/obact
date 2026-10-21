@@ -536,6 +536,31 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await ok({ op: 'close_page', pageId });
   });
 
+  test('beforeunload：接受后导航完成，handle_dialog 的 navigated 为 true；取消离开页面没变', async () => {
+    const leave = async () => {
+      const pageId = await open();
+      await env.session.pages.get(pageId).evaluate(() => {
+        window.onbeforeunload = (e) => {
+          e.preventDefault();
+          return 'x';
+        };
+      });
+      // 点击带用户激活，beforeunload 才会弹出
+      const c = await ok({ op: 'click', pageId, target: { css: '#nav' } });
+      assert.equal(c.effects.dialogs[0]?.type, 'beforeunload');
+      assert.equal(c.effects.navigated, false, '对话框拦住了，导航还没发生');
+      return pageId;
+    };
+    const stay = await leave();
+    const dismissed = await ok({ op: 'handle_dialog', pageId: stay, action: 'dismiss' });
+    assert.equal(dismissed.effects.navigated, false);
+    assert.match(env.session.pages.get(stay).url(), /act-main/);
+    const go = await leave();
+    const accepted = await ok({ op: 'handle_dialog', pageId: go, action: 'accept' });
+    assert.equal(accepted.effects.navigated, true);
+    assert.match(env.session.pages.get(go).url(), /act-target/);
+  });
+
   test('等待与后置检查期间弹出对话框：wait_for、post 报 dialog_blocking（条件未验证），不返回 ok、不等到超时', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);

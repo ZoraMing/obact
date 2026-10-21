@@ -804,6 +804,11 @@ const handleDialog: Handler = async (ctx, fx) => {
     ctx.st.inflight.delete(p);
     await within(inflight, 1000, null);
   }
+  // 接受 beforeunload 后页面继续离开：等主 frame 提交导航，才算发生了导航（取消离开则页面没变）
+  if (d.type === 'beforeunload' && a.action === 'accept') {
+    while (!fx.committed && !p.isClosed() && Date.now() < ctx.deadline) await sleep(20);
+    if (fx.committed) ctx.navigated = true;
+  }
   // 对话框关闭后页面脚本才继续运行：从这里开始记录页面变化，并把这一步算作页面有变化
   if (!p.isClosed()) await fx.track(p.mainFrame());
   ctx.changed = true;
