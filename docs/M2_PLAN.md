@@ -8,15 +8,15 @@ M2 出口：BW-1、BW-2、BW-9、BW-10；C-1、C-3、C-4、C-5。
 
 ### 1.1 M1 暂停点
 
-M1 内核已可用并推送：observe、act（20 种动作，`extract` 走工作流）、定位器、浏览器池、版本检测、页面提示条、12 类夹具、Lab 四个模块；节点测试与 bench 测试全部通过，CI 三个任务（node、python、spikes-cft）全绿。
+M1 内核已可用并推送：observe、act（20 种动作，`extract` 走工作流）、定位器、浏览器池、版本检测、页面提示条、12 类夹具、Lab 四个模块；节点测试与 bench 测试全部通过，CI 四个任务（node、bench、python、spikes-cft）全绿，另有手动或每周触发的 `live.yml`。
 
 M1 还欠的 4 件事（不阻塞 M2 开工，但要在 M2 评审前清掉或明确推迟）：
 
 | # | 事项 | 处理 |
 |---|---|---|
 | 1 | M1 整体评审与修复 | 与 M2 评审合并为一次，对象含 core 与 workflow（见 W5） |
-| 2 | `bench/test` 未纳入 `npm test` / CI（约 60 秒以上） | CI 加独立任务 `bench`，不拖慢 `node` 任务（W0） |
-| 3 | BW-3、BW-6、BW-7、BW-12 的 `--live` 公开站点版本未实测 | 容器访问不了公开站点，需要一个能联网的 CI 任务，手动触发（W0）；本地版本已通过，`--live` 路径只做过类型检查、没有测试执行过 |
+| 2 | `bench/test` 不在 `npm test` 里（约 2~3 分钟） | 已完成：`ci.yml` 的独立任务 `bench`，不拖慢 `node` 任务（W0） |
+| 3 | BW-3、BW-6、BW-7、BW-12 的 `--live` 公开站点版本未实测 | 容器访问不了公开站点；联网任务已写在 `live.yml`（`bench-live`，手动或每周触发，W0），还没有真实运行结果；本地版本已通过，`--live` 路径只做过类型检查、没有测试执行过 |
 | 4 | 完整 Chrome（有头 / 新无头）点击导航后输入失效 | 无头已用 chrome-headless-shell 规避；有头需要在真实桌面上确认，M2 不依赖它，记入风险 |
 
 ### 1.2 M2 已完成的模块
@@ -53,13 +53,13 @@ M1 还欠的 4 件事（不阻塞 M2 开工，但要在 M2 评审前清掉或明
 
 | 包 | 内容 | 前置 | 验收 | 估计 |
 |---|---|---|---|---|
-| **W0 收尾** | bench 任务进 CI；联网的 `--live` 手动任务；文档里把 M1 标成完成 | — | CI 绿 | 小 |
+| **W0 收尾** | bench 任务进 CI（已完成）；联网的 `--live` 手动任务（`live.yml` 已写，待首次运行）；文档里把 M1 标成完成 | — | CI 绿 | 小 |
 | **W1 runner** | 见 3 节 | — | 假执行器单测（约 12 项）覆盖控制流、重试、once_only 全分支、续跑、跳过模式 | 大 |
 | **W2 Lab 大表与文件区**（并行于 W1） | 见 4 节 | — | Lab 自带冒烟（约 8 项） | 中 |
 | **W3 CoreExecutor + CLI**（并行于 W1 的后半） | `executor.ts`：act → `core.act`、extract → `extract.ts`、check → 复用后置检查、`actionSeq` → 接口缓存；`cli.ts`、`index.ts`；监督进程信号处理 | W1 的接口稳定（runner 对 Executor 的调用方式） | 能用命令行跑一个小工作流 | 中 |
 | **W4 端到端** | 8 项出口用例，见 5 节 | W1、W2、W3 | 全部通过 | 大 |
 | **W5 评审与修复** | 对 core 与 workflow 做一次评审，逐条验证后修复 | W4 | 评审零阻塞项 | 中 |
-| **W6 收口** | 文档（DEV_PLAN、README 用法、workflow 示例）；`bench`、`e2e` 纳入 CI | W5 | CI 全绿，tree 干净 | 小 |
+| **W6 收口** | 文档（DEV_PLAN、README 用法、workflow 示例）；`e2e` 纳入 CI（`bench` 已在 CI 里） | W5 | CI 全绿，tree 干净 | 小 |
 
 建议顺序：W0 → (W1 ∥ W2) → W3 → W4 → W5 → W6。W1 与 W2 互不依赖，是唯一值得并行的一对；W3 要等 W1 的接口定下来再开；W4 的几项之间互相独立，可以 2 路并行。
 
