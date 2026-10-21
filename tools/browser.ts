@@ -17,7 +17,10 @@ export const BASELINE_VERSION = '141.0.7390.122';
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const CACHE_DIR = join(REPO, '.cache', 'chrome');
 
-async function installedPath(kind: 'chrome' | 'shell' = 'chrome'): Promise<string | undefined> {
+async function installedPath(
+  kind: 'chrome' | 'shell' = 'chrome',
+  cacheDir = CACHE_DIR,
+): Promise<string | undefined> {
   const { Browser, computeExecutablePath, detectBrowserPlatform } = await import(
     '@puppeteer/browsers'
   );
@@ -26,7 +29,7 @@ async function installedPath(kind: 'chrome' | 'shell' = 'chrome'): Promise<strin
   const p = computeExecutablePath({
     browser: kind === 'shell' ? Browser.CHROMEHEADLESSSHELL : Browser.CHROME,
     buildId: BASELINE_VERSION,
-    cacheDir: CACHE_DIR,
+    cacheDir,
     platform,
   });
   return existsSync(p) ? p : undefined;
@@ -36,20 +39,20 @@ async function installedPath(kind: 'chrome' | 'shell' = 'chrome'): Promise<strin
  * 测试用浏览器路径：CHROME_PATH，否则安装目录里的基准版本，都没有则 undefined。
  * 无头测试默认用 chrome-headless-shell：完整 Chrome（有头或新无头）在点击引起整页导航后，
  * 只要 Node 进程被卡住约 100 毫秒，该标签页就收不到任何鼠标和键盘输入，见 docs/spikes/M0-spikes.md 第 6 节。
- * HEADED=1 时用完整 Chrome。
+ * 所以无头时缺 chrome-headless-shell 就返回 undefined（提示重新安装），不回退到完整 Chrome，否则只会变成莫名其妙的用例失败。
+ * HEADED=1 时用完整 Chrome。cacheDir 只给测试换安装目录用。
  */
-export async function testChrome(): Promise<string | undefined> {
+export async function testChrome(cacheDir = CACHE_DIR): Promise<string | undefined> {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  if (process.env.HEADED !== '1') return (await installedPath('shell')) ?? (await installedPath());
-  return installedPath();
+  return installedPath(process.env.HEADED === '1' ? 'chrome' : 'shell', cacheDir);
 }
 
 /** 完整 Chrome（有头测试用）。 */
-export async function testFullChrome(): Promise<string | undefined> {
-  return process.env.CHROME_PATH || installedPath();
+export async function testFullChrome(cacheDir = CACHE_DIR): Promise<string | undefined> {
+  return process.env.CHROME_PATH || installedPath('chrome', cacheDir);
 }
 
-export const MISSING = `未找到浏览器：运行 npm run browser:install 安装 Chrome for Testing ${BASELINE_VERSION}，或设置 CHROME_PATH`;
+export const MISSING = `未找到浏览器：运行 npm run browser:install 安装 Chrome for Testing 与 chrome-headless-shell ${BASELINE_VERSION}，或设置 CHROME_PATH`;
 
 /**
  * 传给 describe 的 skip 选项：有浏览器返回 false，没有则返回 MISSING（跳过并提示）。
