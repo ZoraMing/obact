@@ -16,9 +16,12 @@ export class PageRegistry {
   readonly #order = new Map<string, number>();
   #auto = 0;
   readonly #onTarget = (t: Target) => void this.#adoptTarget(t);
+  readonly #onRegister: ((page: Page) => void) | undefined;
 
-  constructor(browser: Browser) {
+  /** onRegister 在页面首次登记时调用（register、adoptExisting、新标签页的 targetcreated 都经过它）。 */
+  constructor(browser: Browser, onRegister?: (page: Page) => void) {
     this.#browser = browser;
+    this.#onRegister = onRegister;
     browser.on('targetcreated', this.#onTarget);
   }
 
@@ -41,6 +44,7 @@ export class PageRegistry {
     this.#byId.set(pageId, page);
     this.#ids.set(page, pageId);
     this.#order.set(pageId, ++this.#seq);
+    this.#onRegister?.(page);
     page.once('close', () => {
       if (this.#byId.get(pageId) === page) {
         this.#byId.delete(pageId);

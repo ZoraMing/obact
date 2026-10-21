@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Browser } from 'puppeteer-core';
+import { stateOf, watchPage } from './act/state.ts';
 import { PageRegistry } from './pages.ts';
 import { RefRegistry } from './refs.ts';
 
@@ -20,7 +21,9 @@ export class Session {
 
   constructor(browser: Browser) {
     this.browser = browser;
-    this.pages = new PageRegistry(browser);
+    // 对话框状态随会话建好，标签页一登记就挂上监听：页面第一次被 act 之前弹出的对话框也有记录（FR-12）
+    const st = stateOf(this);
+    this.pages = new PageRegistry(browser, (page) => watchPage(st, page));
   }
 
   /** 页面内标记节点身份用的键名。 */

@@ -54,7 +54,7 @@ import {
   obActSelectPlan,
   obActSetNativeValue,
 } from './page.ts';
-import { dropPending, pendingOf, watchPage } from './state.ts';
+import { dropPending, pendingOf } from './state.ts';
 import { parseKeyCombo, pressCombo, resolveInside, sleep, within } from './util.ts';
 
 const INFO = bundle(obActInfo, ACT_DEPS);
@@ -961,7 +961,6 @@ export async function newPage(ctx: Ctx): Promise<void> {
   ctx.dispatched = true;
   const id = await ctx.s.pages.newPage({ pageId: a.pageId });
   const p = ctx.s.pages.get(id);
-  watchPage(ctx.st, p);
   ctx.newPages.push(id);
   ctx.pageId = id;
   ctx.page = p;

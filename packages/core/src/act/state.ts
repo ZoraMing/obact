@@ -1,5 +1,5 @@
 import type { ActResult } from '@obact/schemas';
-import type { Dialog, Page, Target } from 'puppeteer-core';
+import type { Dialog, Page } from 'puppeteer-core';
 import { ObactError } from '../errors.ts';
 import type { Session } from '../session.ts';
 
@@ -25,27 +25,18 @@ const states = new WeakMap<Session, ActState>();
 
 const TYPES = new Set<string>(['alert', 'confirm', 'prompt', 'beforeunload']);
 
+/** 会话的 act 状态：Session 构造时建好，并在标签页登记时给每个页面挂上对话框监听（见 session.ts）。 */
 export function stateOf(s: Session): ActState {
   let st = states.get(s);
   if (st) return st;
-  const state: ActState = {
+  st = {
     seq: 0,
     pending: [],
     hooks: new Set(),
     inflight: new WeakMap(),
     watched: new WeakSet(),
   };
-  st = state;
   states.set(s, st);
-  // 新标签页尽早挂上对话框监听（弹出页一打开就 alert 的情况）
-  const onTarget = (t: Target) => {
-    if (t.type() !== 'page') return;
-    void t
-      .page()
-      .then((p) => p && watchPage(state, p))
-      .catch(() => {});
-  };
-  s.browser.on('targetcreated', onTarget);
   return st;
 }
 

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import type { Page } from 'puppeteer-core';
 import {
   asObactError,
   browserEnv,
   markPage,
   ObactError,
+  PageRegistry,
   resolveLocator,
   resolveRef,
   resolveTarget,
@@ -205,6 +207,37 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
       reg.newPage({ pageId: 'bad id' }),
       (e: ObactError) => e.code === 'invalid_params',
     );
+  });
+
+  test('标签页登记时回调：新建、弹出窗口（targetcreated）、接管已有标签页都经过它，每个页面只一次', async () => {
+    const seen: Page[] = [];
+    const reg = new PageRegistry(env.browser, (p) => seen.push(p));
+    try {
+      const existing = await reg.adoptExisting();
+      assert.ok(existing.length > 0);
+      assert.deepEqual(
+        seen,
+        existing.map((id) => reg.get(id)),
+        '已有标签页登记时回调',
+      );
+      seen.length = 0;
+      const id = await reg.newPage({ pageId: 'hook-new' });
+      assert.deepEqual(seen, [reg.get(id)], 'newPage 只回调一次（自动登记与显式编号是同一个页面）');
+      // 弹出窗口只经过 targetcreated 的自动登记
+      const mark = reg.mark();
+      await reg.get(id).goto(`${env.server.base}/pages/basic.html`);
+      await reg.get(id).click('#popup');
+      let created: string[] = [];
+      for (let i = 0; i < 100 && created.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        created = reg.createdSince(mark);
+      }
+      assert.equal(created.length, 1);
+      assert.equal(seen.length, 2);
+      assert.equal(seen[1], reg.get(created[0] as string));
+    } finally {
+      reg.dispose();
+    }
   });
 
   test('错误归一', () => {

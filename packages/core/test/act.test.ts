@@ -485,6 +485,26 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'handle_dialog', pageId, action: 'accept' }, 'invalid_params');
   });
 
+  test('页面第一次被 act 之前弹出的对话框也有记录：动作报 dialog_blocking，handle_dialog 能关掉它', {
+    timeout: 60_000,
+  }, async () => {
+    // 页面只经过标签页登记，从没被 act 过（接管已有标签页、直接用 pages.newPage 开的页面都是这样）
+    const pageId = await env.session.pages.newPage();
+    const page = env.session.pages.get(pageId);
+    const opened = new Promise<void>((resolve) => page.once('dialog', () => resolve()));
+    await page.evaluate(() => {
+      setTimeout(() => alert('act 之前弹出的提示'), 0);
+    });
+    await opened;
+    await err({ op: 'click', pageId, target: { css: 'body' } }, 'dialog_blocking');
+    const h = await ok({ op: 'handle_dialog', pageId, action: 'accept' });
+    assert.deepEqual(h.effects.dialogs, [
+      { type: 'alert', message: 'act 之前弹出的提示', handled: 'accept' },
+    ]);
+    assert.equal(await page.evaluate(() => 1 + 1), 2, '页面脚本已恢复');
+    await ok({ op: 'close_page', pageId });
+  });
+
   test('等待与后置检查期间弹出对话框：wait_for、post 报 dialog_blocking（条件未验证），不返回 ok、不等到超时', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);

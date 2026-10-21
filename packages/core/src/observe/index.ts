@@ -1,6 +1,6 @@
 import type { ObservedElement, ObserveParams, ObserveResult, PageSignature } from '@obact/schemas';
 import type { ElementHandle, Frame, Page } from 'puppeteer-core';
-import { dialogBlocked, pendingOf, raceDialog, stateOf, watchPage } from '../act/state.ts';
+import { dialogBlocked, pendingOf, raceDialog, stateOf } from '../act/state.ts';
 import { asObactError, ObactError } from '../errors.ts';
 import { markPage } from '../mark.ts';
 import { bundle } from '../page/bundle.ts';
@@ -303,7 +303,6 @@ export async function observe(
   const page = s.pages.get(params.pageId);
   // 页面上有未处理的对话框时脚本被挂起，页面内的求值要等对话框处理后才返回：先查记录，立即报错（与 act 一致）
   const st = stateOf(s);
-  watchPage(st, page);
   const pend = pendingOf(st, page);
   if (pend) throw dialogBlocked(pend);
   return raceDialog(
