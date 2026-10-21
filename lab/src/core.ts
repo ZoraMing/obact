@@ -186,7 +186,7 @@ export type Handler = (ctx: Ctx) => void | Promise<void>;
 export type RouteOpts = {
   /** 需要登录：未登录的页面跳到登录页，接口返回 401。 */
   auth?: boolean;
-  /** 写接口：受 commit_timeout 影响（执行后挂起不返回）。 */
+  /** 写接口：受 commit_timeout 影响（执行后挂起不返回）。故障注入只作用于 /api/ 下，所以路径必须以 /api/ 开头。 */
   commit?: boolean;
 };
 
@@ -206,6 +206,10 @@ export class Router {
     this.#module = module;
   }
   #add(method: string, path: string, handler: Handler, opts: RouteOpts = {}): void {
+    // 故障注入只对 /api/ 下的路径生效；commit 路由放在别处会在没有故障的情况下“通过”C-4、BW-9 这类用例
+    if (opts.commit && !path.startsWith('/api/')) {
+      throw new Error(`commit 路由必须在 /api/ 下才受故障注入影响：${method} ${path}`);
+    }
     const keys: string[] = [];
     const src = path
       .split('/')

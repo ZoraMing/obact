@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createLab, type Lab } from '../src/app.ts';
-import { type LabModule, page } from '../src/core.ts';
+import { type LabModule, page, Router } from '../src/core.ts';
 import { control } from './helpers.ts';
 
 /** 测试用的最小模块：一个计数器、一个需要登录的页面和一个写接口。 */
@@ -36,6 +36,16 @@ const counter: LabModule = {
   },
   state: (space) => space.data.counter,
 };
+
+describe('Lab 公共部分：路由注册', () => {
+  test('commit 路由不在 /api/ 下时注册即报错（否则故障注入不生效，用例会在没有故障时通过）', () => {
+    const r = new Router('t');
+    assert.throws(() => r.post('/pay', () => {}, { commit: true }), /\/api\//);
+    r.post('/api/pay', () => {}, { commit: true });
+    r.post('/pay-form', () => {});
+    assert.equal(r.routes.length, 2);
+  });
+});
 
 describe('Lab 公共部分：数据空间、控制接口、登录态、故障注入', () => {
   let lab: Lab;

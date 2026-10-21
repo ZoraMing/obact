@@ -50,4 +50,4 @@ node --test "lab/test/**/*.test.ts"
 
 ## 写新模块
 
-在 `lab/src/modules/<名字>.ts` 默认导出 `LabModule`（见 `src/core.ts`）：`init` 初始化数据（用 `space.rng()` 取随机数）、`routes` 注册路由（`{auth: true}` 需要登录，`{commit: true}` 的写接口受 `commit_timeout` 影响并用 `ctx.record` 记幂等键）、`state` 给状态查询、`shell` 在每个页面末尾追加内容（如干扰层）。页面用 `page()` 外壳，导航自动包含全部模块。测试放 `lab/test/`，每个测试用不同的空间名。
+在 `lab/src/modules/<名字>.ts` 默认导出 `LabModule`（见 `src/core.ts`）：`init` 初始化数据（用 `space.rng()` 取随机数）、`routes` 注册路由（`{auth: true}` 需要登录，`{commit: true}` 的写接口受 `commit_timeout` 影响并用 `ctx.record` 记幂等键；故障注入只作用于 `/api/` 下的路径，所以 commit 路由必须以 `/api/` 开头，否则注册时报错）、`state` 给状态查询、`shell` 在每个页面末尾追加内容（如干扰层）。页面用 `page()` 外壳，导航自动包含全部模块。测试放 `lab/test/`，每个测试用不同的空间名。
