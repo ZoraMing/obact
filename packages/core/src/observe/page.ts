@@ -9,6 +9,7 @@ import {
   obActions,
   obDeepAll,
   obHint,
+  obIsSensitive,
   obIsStableToken,
   obLabelsOf,
   obName,
@@ -77,6 +78,8 @@ export type FrameCollect = {
   /** slots[k]：文档中第 k 个 iframe 之前的元素个数，用于把子 frame 的元素插回原位。 */
   slots: number[];
   lines: TextLine[];
+  /** 本 frame 内全部敏感字段（obIsSensitive）的编号，不论是否列入 elements；axtree 视图据此遮蔽它们的值。 */
+  sensitive: number[];
   /** 可见 canvas 在视口内的面积（CSS 像素²）。 */
   canvasArea: number;
   viewport: { width: number; height: number; scale: number };
@@ -253,9 +256,11 @@ export function obsIsMirrorField(el: Element): boolean {
   );
 }
 
-/** 当前值：输入框、下拉框、可编辑区、自绘滑块等；密码与敏感字段显示为 ***；不适用时返回 undefined。 */
+/** 当前值：输入框、下拉框、可编辑区、自绘滑块等；密码与敏感字段（见 obIsSensitive）显示为 ***；不适用时返回 undefined。 */
 export function obsValue(el: Element, role: string, max: number): string | undefined {
   const cut = (s: string) => (s.length > max ? `${s.slice(0, max)}…` : s);
+  // 敏感字段有内容时显示 ***，没内容仍显示空，调用方能看出还没填
+  const show = (s: string) => (obIsSensitive(el) ? (s ? '***' : '') : cut(s));
   const tag = el.tagName;
   if (tag === 'INPUT') {
     const input = el as HTMLInputElement;
@@ -264,13 +269,9 @@ export function obsValue(el: Element, role: string, max: number): string | undef
       return undefined;
     }
     if (t === 'file') return cut([...(input.files ?? [])].map((f) => f.name).join(', '));
-    const sensitive =
-      t === 'password' ||
-      /passw|pwd|secret|token/i.test(`${input.name} ${input.id} ${input.autocomplete}`);
-    if (sensitive) return input.value ? '***' : '';
-    return cut(input.value);
+    return show(input.value);
   }
-  if (tag === 'TEXTAREA') return cut((el as HTMLTextAreaElement).value);
+  if (tag === 'TEXTAREA') return show((el as HTMLTextAreaElement).value);
   if (tag === 'SELECT') {
     const sel = [...(el as HTMLSelectElement).selectedOptions];
     return cut(sel.map((o) => obNorm(o.label || o.text)).join(', '));
@@ -280,10 +281,10 @@ export function obsValue(el: Element, role: string, max: number): string | undef
     return v === null ? undefined : cut(obNorm(v));
   }
   if ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) {
-    return cut(obNorm((el as HTMLElement).innerText));
+    return show(obNorm((el as HTMLElement).innerText));
   }
   if (['textbox', 'searchbox', 'combobox'].includes(role)) {
-    return cut(obNorm(el.getAttribute('aria-valuetext') ?? (el as HTMLElement).innerText));
+    return show(obNorm(el.getAttribute('aria-valuetext') ?? (el as HTMLElement).innerText));
   }
   return undefined;
 }
@@ -479,6 +480,7 @@ export function obsCollect(o: CollectOptions): FrameCollect {
   const iframes = new Map<Element, number>();
   const listed = new Map<Element, RawElement>();
   const skip = new Set<Element>();
+  const sensitive: number[] = [];
   for (const el of seq) {
     if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
       iframes.set(el, slots.length);
@@ -488,6 +490,8 @@ export function obsCollect(o: CollectOptions): FrameCollect {
     const ref = Number(el.getAttribute(o.attr));
     // 只认本会话写入的编号（克隆节点带来的旧属性在 markPage 中已被覆盖）
     if (!want.has(ref) || (el as unknown as Record<string, unknown>)[o.key] !== ref) continue;
+    // 敏感字段先于“是否列出”登记：被预算截掉、零尺寸的也要在 axtree 里遮蔽
+    if (obIsSensitive(el)) sensitive.push(ref);
     if (obsIsMirrorField(el)) continue;
     const info = obsElement(el, ref, o, want, clipCache, withinMemo, withinIdx);
     if (!info) continue;
@@ -543,6 +547,7 @@ export function obsCollect(o: CollectOptions): FrameCollect {
     elements,
     slots,
     lines,
+    sensitive,
     canvasArea,
     viewport: { width: innerWidth, height: innerHeight, scale: devicePixelRatio },
   };

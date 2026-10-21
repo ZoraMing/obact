@@ -143,6 +143,47 @@ export function obRole(el: Element): string {
   return 'generic';
 }
 
+/**
+ * 敏感值字段（密码、令牌、验证码、银行卡等）。observe 与 act 共用这一份判定：命中的字段，值一律不外露
+ * （observe 显示 ***，act 的失败详情不写值），可访问性树里也不输出它的值。
+ * - input 的 type 为 password；
+ * - input、textarea、contenteditable、role=textbox 类元素：autocomplete 声明了密码、一次性验证码、银行卡信息，
+ *   或 name、id、aria-label、placeholder 里含敏感词。
+ * 敏感词分两类：password、secret、token 这类长词常写成 newpassword、authtoken 的连写，按子串匹配；
+ * otp、cvv、card 这类短词按词边界匹配（驼峰、下划线、连字符、数字都算边界），不误伤 cardinal、hotpot。
+ */
+export function obIsSensitive(el: Element): boolean {
+  const tag = el.tagName;
+  if (tag === 'INPUT' && (el as HTMLInputElement).type === 'password') return true;
+  const editable =
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) ||
+    ['textbox', 'searchbox', 'combobox'].includes(
+      el.getAttribute('role')?.trim().split(/\s+/)[0]?.toLowerCase() ?? '',
+    );
+  if (!editable) return false;
+  if (
+    /current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp/i.test(
+      el.getAttribute('autocomplete') ?? '',
+    )
+  ) {
+    return true;
+  }
+  // 驼峰拆成单词（apiKey → api key、OTPCode → otp code）并转小写，再按词匹配
+  const text = ['name', 'id', 'aria-label', 'placeholder']
+    .map((a) => el.getAttribute(a) ?? '')
+    .join(' ')
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase();
+  return (
+    /passw|pwd|secret|token|api[-_ ]?key|access[-_ ]?key|credit[-_ ]?card|card[-_ ]?number|验证码|密码|口令|令牌|密钥/.test(
+      text,
+    ) || /(?<![a-z])(?:[th]?otp|cvv|cvc|card)(?![a-z])/.test(text)
+  );
+}
+
 /** label 的文字：不含其中表单控件（下拉框选项、文本框内容等）的文字；<slot> 展开成投影进来的内容。 */
 export function obLabelText(label: Element): string {
   let text = '';
@@ -671,6 +712,7 @@ export const DOM_LIB = [
   obDeepAll,
   obActiveElement,
   obRole,
+  obIsSensitive,
   obLabelText,
   obContentText,
   obName,

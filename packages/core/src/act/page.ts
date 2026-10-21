@@ -7,6 +7,7 @@ import {
   obActions,
   obActiveElement,
   obDeepAll,
+  obIsSensitive,
   obName,
   obNorm,
   obRole,
@@ -448,17 +449,24 @@ export function obActSetNativeValue(el: Element, value: string): string {
   return (el as HTMLInputElement).value;
 }
 
-/** 当前值：输入框/下拉框的 value，复选/单选为 "true"/"false"，可编辑区域与其他元素取文本。 */
-export function obActValue(el: Element): string {
+/**
+ * 当前值：输入框/下拉框的 value，复选/单选为 "true"/"false"，可编辑区域与其他元素取文本；
+ * sensitive 表示是敏感字段（obIsSensitive）：调用方比较用真实值，但不能把值写进返回结果。
+ */
+export function obActValue(el: Element): { value: string; sensitive: boolean } {
   const tag = el.tagName;
+  const plain = (value: string) => ({ value, sensitive: false });
+  const field = (value: string) => ({ value, sensitive: obIsSensitive(el) });
   if (tag === 'INPUT') {
     const input = el as HTMLInputElement;
-    if (input.type === 'checkbox' || input.type === 'radio') return String(input.checked);
-    return input.value;
+    if (input.type === 'checkbox' || input.type === 'radio') return plain(String(input.checked));
+    return field(input.value);
   }
-  if (tag === 'TEXTAREA' || tag === 'SELECT') return (el as HTMLTextAreaElement).value;
-  if (el.hasAttribute('aria-checked')) return String(el.getAttribute('aria-checked') === 'true');
-  return obNorm((el as HTMLElement).innerText ?? el.textContent);
+  if (tag === 'SELECT') return plain((el as HTMLSelectElement).value);
+  if (tag === 'TEXTAREA') return field((el as HTMLTextAreaElement).value);
+  if (el.hasAttribute('aria-checked'))
+    return plain(String(el.getAttribute('aria-checked') === 'true'));
+  return field(obNorm((el as HTMLElement).innerText ?? el.textContent));
 }
 
 /**

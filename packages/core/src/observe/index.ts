@@ -346,13 +346,15 @@ export async function observe(
       result.som_path = await takeSom(page, pageId, boxes, opts.outDir);
     }
     if (views.has('axtree')) {
+      // 敏感字段取页面内收集的全集（含被预算截掉、零尺寸而没列入 elements 的）
+      const sensitive = new Set([...outs.values()].flatMap((out) => out.sensitive));
       const ax = await axtreeText(
         page,
         marked.map((m) => m.frame),
         s.attr,
         new Set(result.elements.map((e) => e.ref)),
         maxChars,
-        new Set(result.elements.filter((e) => e.value === '***').map((e) => e.ref)),
+        sensitive,
       );
       result.axtree = ax.text;
       if (ax.truncated) result.truncated = true;

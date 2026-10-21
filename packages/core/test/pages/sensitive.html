@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>敏感字段</title>
+  <style>
+    body { margin: 0; font: 14px sans-serif; }
+    .far { position: absolute; top: 4000px; left: 0; }
+    .zero { width: 0; height: 0; border: 0; padding: 0; }
+  </style>
+</head>
+<body>
+  <!-- 视口外与零尺寸的敏感框放在文档最前面：预算紧张时先被挤出 elements，但可访问性树最先读到它们 -->
+  <div class="far">
+    <label>远端甲 <input id="far-token" name="api_token" value="tok-far-1234"></label>
+    <label>远端乙 <input id="far-pw" type="password" value="pw-far-5678"></label>
+  </div>
+  <input id="zero-token" class="zero" name="auth_token" value="tok-zero-9012">
+  <input id="zero-pw" class="zero" type="password" value="pw-zero-3456">
+
+  <h1>敏感字段</h1>
+  <!-- 这三个的名称都不含敏感词：只靠 type、autocomplete、contenteditable 的 id/aria-label 判定 -->
+  <label>登录凭据 <input id="pw1" type="password" value="Hunter2-pw"></label>
+  <label>校验输入 <textarea id="ta1" autocomplete="one-time-code">otp-246810</textarea></label>
+  <div id="ed1" contenteditable="true" aria-label="API token editor">tok-ce-777</div>
+
+  <!-- 名称里有 keyboard、cardinal、passage、hotpot 之类的普通词：不是敏感字段，值照常显示 -->
+  <label>键盘布局 <input id="plain1" name="keyboard" value="dvorak"></label>
+  <label>方位 <input id="plain2" name="cardinal" value="north"></label>
+  <label>片段 <textarea id="plain3" name="passage">chapter-one</textarea></label>
+  <label>锅底 <input id="plain4" aria-label="hotpot base" value="spicy"></label>
+
+  <div id="many"></div>
+  <script>
+    const parts = [];
+    for (let i = 0; i < 120; i++) parts.push(`<button>按钮 ${i}</button>`);
+    document.getElementById('many').innerHTML = parts.join('');
+  </script>
+</body>
+</html>

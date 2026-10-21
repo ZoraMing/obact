@@ -115,14 +115,19 @@ async function checkOne(
     const { target, value } = check.value_equals;
     try {
       const r = await resolveLocator(s, pageId, target);
-      const v = (await within(r.handle.evaluate(VALUE), limit, null).catch(() => null)) as
-        | string
-        | null;
+      const cur = (await within(r.handle.evaluate(VALUE), limit, null).catch(() => null)) as {
+        value: string;
+        sensitive: boolean;
+      } | null;
       await r.handle.dispose().catch(() => {});
-      if (v === null) return { pass: false, detail: '页面无响应' };
-      return v === value || norm(v) === norm(value)
-        ? { pass: true }
-        : { pass: false, detail: `当前值：${v.slice(0, 200)}` };
+      if (cur === null) return { pass: false, detail: '页面无响应' };
+      // 比较用真实值；敏感字段（密码、令牌等）失败时不回显当前值，免得带进返回结果、留痕和日志
+      const v = cur.value;
+      if (v === value || norm(v) === norm(value)) return { pass: true };
+      return {
+        pass: false,
+        detail: cur.sensitive ? '当前值已隐藏（敏感字段）' : `当前值：${v.slice(0, 200)}`,
+      };
     } catch (e) {
       if (e instanceof ObactError && e.code !== 'page_not_found') {
         return { pass: false, detail: e.message };
