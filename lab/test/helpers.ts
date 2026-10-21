@@ -5,13 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launchBrowser, Session } from '@obact/core';
 import type { Browser } from 'puppeteer-core';
-import { MISSING, testChrome } from '../../tools/browser.ts';
+import { skipIfNoBrowser, testChrome } from '../../tools/browser.ts';
 import { createLab, type Lab } from '../src/app.ts';
 import type { Faults } from '../src/core.ts';
 
 export const CHROME = await testChrome();
-/** 传给 describe 的 skip 选项：没有浏览器时跳过并说明原因。 */
-export const SKIP: false | string = CHROME ? false : MISSING;
+/** 传给 describe 的 skip 选项：没有浏览器时跳过并说明原因（OBACT_REQUIRE_BROWSER=1 时直接失败）。 */
+export const SKIP: false | string = skipIfNoBrowser(CHROME);
 
 export type LabState = {
   space: string;

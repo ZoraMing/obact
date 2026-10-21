@@ -5,6 +5,7 @@
  *   CHROME_PATH=/path/to/chrome    显式指定浏览器（优先于安装目录；用于在别的版本上抽测）
  *
  * 没有安装也没有 CHROME_PATH 时返回 undefined：测试会跳过并提示先安装，不会悄悄换成别的浏览器。
+ * 设了环境变量 OBACT_REQUIRE_BROWSER=1（CI 设置）则不跳过，直接失败，见 skipIfNoBrowser。
  * 运行时（给用户用）的浏览器区间与推荐版本是另一回事，见 docs/PRD.md。
  */
 import { existsSync } from 'node:fs';
@@ -49,6 +50,19 @@ export async function testFullChrome(): Promise<string | undefined> {
 }
 
 export const MISSING = `未找到浏览器：运行 npm run browser:install 安装 Chrome for Testing ${BASELINE_VERSION}，或设置 CHROME_PATH`;
+
+/**
+ * 传给 describe 的 skip 选项：有浏览器返回 false，没有则返回 MISSING（跳过并提示）。
+ * OBACT_REQUIRE_BROWSER=1 时找不到浏览器直接抛错：套件级跳过不计入 skipped 汇总、退出码仍是 0，
+ * 浏览器没装上时大部分测试会悄悄没跑，CI 靠这个变量把它变成失败。
+ */
+export function skipIfNoBrowser(chrome: string | undefined): false | string {
+  if (chrome) return false;
+  if (process.env.OBACT_REQUIRE_BROWSER === '1') {
+    throw new Error(`OBACT_REQUIRE_BROWSER=1，不允许跳过浏览器测试。${MISSING}`);
+  }
+  return MISSING;
+}
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const cmd = process.argv[2];

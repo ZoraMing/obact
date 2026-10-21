@@ -12,6 +12,9 @@ env:
 jobs:
   node:
     runs-on: ubuntu-latest
+    env:
+      # 找不到浏览器时浏览器测试直接失败而不是跳过（否则装浏览器出问题时大部分测试悄悄没跑，退出码仍是 0）
+      OBACT_REQUIRE_BROWSER: '1'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -30,6 +33,8 @@ jobs:
   # BW-3、6、7、12 的本地基准（桩站点 + Lab + 夹具），约 2~3 分钟；与 node 任务分开，避免拖慢常规反馈
   bench:
     runs-on: ubuntu-latest
+    env:
+      OBACT_REQUIRE_BROWSER: '1'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
