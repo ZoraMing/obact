@@ -78,13 +78,16 @@ const shellModules = (): readonly LabModule[] => [mod];
 
 /**
  * 登录后的跳转目标：只接受本空间内的路径（相对空间根，或带空间前缀），
- * 拒绝外站地址（http://…、//…）、反斜杠、换行，以及登录页、验证页自身（避免循环）。
+ * 拒绝外站地址（http://…、//…）、反斜杠、换行，含 . / .. 段（含 %2e 写法）的路径（浏览器会把它解析到别的空间），
+ * 以及登录页、验证页自身（避免循环）。
  */
 export function safeNext(base: string, raw: unknown): string {
   const s = str(raw).trim();
   const p = s.startsWith(`${base}/`) ? s.slice(base.length) : s;
   if (!/^\/(?![/\\])/.test(p) || /[\r\n\\]/.test(p)) return DEFAULT_NEXT;
   if (/^\/(login|verify)(?:[?#]|$)/.test(p)) return DEFAULT_NEXT;
+  const path = p.split(/[?#]/, 1)[0] as string;
+  if (path.split('/').some((seg) => /^(\.|%2e){1,2}$/i.test(seg))) return DEFAULT_NEXT;
   return p;
 }
 

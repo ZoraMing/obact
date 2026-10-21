@@ -118,6 +118,23 @@ class Client {
 }
 
 describe('登录与账号：协议层', () => {
+  test('next 只接受本空间内的路径：外站地址和 . / .. 段（含 %2e）回账号页，文件名里的 .. 不受影响', async () => {
+    const sp = 'auth-next-dots';
+    for (const next of [
+      '/../other/orders',
+      '/%2e%2e/other/orders',
+      '/orders/%2E/x',
+      `/s/${sp}/../other/orders`,
+      '//evil.example/x',
+      'http://evil.example/x',
+    ]) {
+      const r = await new Client(sp).login('alice', undefined, next);
+      assert.equal(r.headers.get('location'), `/s/${sp}/account`, next);
+    }
+    const r = await new Client(sp).login('alice', undefined, '/vault/a..b?tab=1&from=..');
+    assert.equal(r.headers.get('location'), `/s/${sp}/vault/a..b?tab=1&from=..`);
+  });
+
   test('锁定：连续 3 次错误锁定，锁定后密码对也进不去；成功登录清零计数；各账号互不影响', async () => {
     const sp = 'auth-lock';
     const c = new Client(sp);
