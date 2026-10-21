@@ -230,6 +230,12 @@ export async function createLab(
       });
       return true;
     }
+    // 别的网站里的页面用表单或 fetch 发来的 POST 不接受（浏览器会带 Sec-Fetch-Site）；测试脚本不带这个头
+    const site = ctx.req.headers['sec-fetch-site'];
+    if (ctx.req.method === 'POST' && site && site !== 'same-origin' && site !== 'none') {
+      ctx.json({ error: 'forbidden', message: '控制接口不接受跨站请求' }, 403);
+      return true;
+    }
     if (action === 'reset' && ctx.req.method === 'POST') {
       const parsed = parseReset(await bodyOrNull(ctx), resetOptions);
       if ('error' in parsed) return badRequest(ctx, parsed.error);
@@ -255,7 +261,14 @@ export async function createLab(
     return false;
   };
 
+  // 允许的 Host（listen 之后才知道端口）：只认本机两个站点，挡住 DNS 重绑定之类拿别的域名指到本机的请求
+  let allowedHosts = new Set<string>();
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!allowedHosts.has(req.headers.host ?? '')) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      return void res.end('Host 不被允许：Lab 只接受 127.0.0.1 和 localhost');
+    }
     const url = new URL(req.url ?? '/', 'http://x');
     if (url.pathname === '/_lab/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -432,8 +445,10 @@ export async function createLab(
         if (!res.headersSent) res.writeHead(413, { 'content-type': 'application/json' });
         return void res.end('{"error":"payload_too_large"}');
       }
+      // 堆栈只写日志，不回给客户端：它带着服务端的绝对路径
+      console.error('[lab]', e);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end(String((e as Error).stack ?? e));
+      res.end('内部错误');
     });
   });
   await new Promise<void>((resolve) => server.listen(opts.port ?? 0, '127.0.0.1', resolve));
@@ -441,6 +456,7 @@ export async function createLab(
   if (!addr || typeof addr === 'string') throw new Error('无法获取端口');
   const base = `http://127.0.0.1:${addr.port}`;
   const crossBase = `http://localhost:${addr.port}`;
+  allowedHosts = new Set([`127.0.0.1:${addr.port}`, `localhost:${addr.port}`]);
   return {
     base,
     crossBase,

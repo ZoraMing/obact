@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import { createLab, type Lab } from '../src/app.ts';
 import { type LabModule, LOG_MAX, MAX_BODY, page, Router } from '../src/core.ts';
@@ -22,6 +23,9 @@ const counter: LabModule = {
       ctx.redirect(`${ctx.base}/counter`);
     });
     r.get('/api/counter', (ctx) => ctx.json(ctx.space.data.counter));
+    r.get('/api/boom', () => {
+      throw new Error('boom-secret');
+    });
     r.post(
       '/api/counter/:step',
       async (ctx) => {
@@ -176,6 +180,61 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal(log.length, LOG_MAX);
     assert.deepEqual(log.at(-1)?.detail, { delay_ms: 0 }, '最后一条是最新的');
     assert.deepEqual(log[0]?.detail, { delay_ms: 11 }, '最早的 11 条已被丢掉');
+  });
+
+  test('只接受本机两个站点的 Host；控制接口不接受跨站 POST；500 不回堆栈', async (t) => {
+    const u = new URL(lab.base);
+    const raw = (method: string, path: string, headers: Record<string, string>, body?: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request({ host: u.hostname, port: u.port, path, method, headers }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d }));
+        });
+        req.on('error', reject);
+        req.end(body);
+      });
+    const c = control(lab, 'sec');
+
+    assert.equal((await raw('GET', '/s/sec/_lab/state', { host: 'evil.example' })).status, 403);
+    assert.equal(
+      (await raw('GET', '/s/sec/_lab/state', { host: `evil.example:${u.port}` })).status,
+      403,
+    );
+    assert.equal(
+      (await raw('GET', '/s/sec/_lab/state', { host: `localhost:${u.port}` })).status,
+      200,
+    );
+    assert.equal((await fetch(`${lab.crossBase}/s/sec/_lab/state`)).status, 200);
+
+    const form = { 'content-type': 'application/x-www-form-urlencoded' };
+    for (const site of ['cross-site', 'same-site']) {
+      const r = await raw(
+        'POST',
+        '/s/sec/_lab/faults',
+        { ...form, 'sec-fetch-site': site },
+        'error_rate=1',
+      );
+      assert.equal(r.status, 403, site);
+    }
+    assert.equal((await c.state()).faults.error_rate, 0, '跨站请求没有改动开关');
+    const same = await raw(
+      'POST',
+      '/s/sec/_lab/faults',
+      { ...form, 'sec-fetch-site': 'same-origin' },
+      'delay_ms=5',
+    );
+    assert.equal(same.status, 200, '同源页面发来的可以');
+    assert.equal((await c.state()).faults.delay_ms, 5);
+    await c.faults({ delay_ms: 0 });
+
+    // 服务端出错只回固定文案，堆栈（含绝对路径）写日志
+    const logged = t.mock.method(console, 'error', () => {});
+    const boom = await fetch(`${lab.url('sec')}/api/boom`);
+    assert.equal(boom.status, 500);
+    const text = await boom.text();
+    assert.equal(text, '内部错误');
+    assert.equal(logged.mock.callCount(), 1);
   });
 
   test('提交按幂等键计数', async () => {
