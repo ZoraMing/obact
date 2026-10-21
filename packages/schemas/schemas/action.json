@@ -76,7 +76,7 @@
       "required": ["op", "target"]
     },
     "FillValue": {
-      "description": "文本框填文本；下拉框填选项文本或值；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。",
+      "description": "文本框填文本；下拉框填选项文本或值，多选下拉框用逗号（半角或全角）分隔多项，选中恰好这些项，空串取消全部；复选框填布尔。可含模板 {{param:..}} / {{var:..}}。",
       "type": ["string", "number", "boolean"]
     },
     "Fill": {
