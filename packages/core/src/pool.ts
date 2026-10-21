@@ -447,6 +447,8 @@ export class BrowserPool extends EventEmitter<{
     const wasClosing = entry.closing;
     entry.closing = true;
     if (this.#entries.get(entry.account) === entry) this.#entries.delete(entry.account);
+    // 登记已移除、进程还没退干净：同账号并发的 acquire 要等它退出再启动，不能在同一配置目录上并发起第二个浏览器
+    if (!wasClosing) this.#drain(entry);
     if (how.graceful && !hasExited(entry.proc)) {
       await race(this.#closeTimeoutMs, entry.browser.close()).catch(() => {});
     }

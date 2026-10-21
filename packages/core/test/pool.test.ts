@@ -295,6 +295,34 @@ describe('浏览器池', { skip: SKIP, timeout: 180_000 }, () => {
     await pool.closeAll(); // 空池再关一次也没事
   });
 
+  test('close(account) 与同账号的 acquire 并发：拿到的是活着的新浏览器；旧浏览器没退干净之前不在同一配置目录上起新的', async () => {
+    const pool = mkPool({ closeTimeoutMs: 1500 });
+    const first = await pool.acquire('closing');
+    // 同一时刻发起：acquire 不能拿到正在被关闭的浏览器
+    const [closed, second] = await Promise.all([pool.close('closing'), pool.acquire('closing')]);
+    assert.equal(closed, true);
+    assert.notEqual(second.pid, first.pid);
+    assert.ok(second.browser.connected);
+    assert.equal(await (await second.browser.newPage()).evaluate(() => 1 + 1), 2);
+    assert.equal(alive(first.pid), false);
+
+    // 冻结的浏览器关不干净，要等到 closeTimeoutMs 超时才被杀：关闭开始（登记已移除）之后的 acquire
+    // 必须等它退出再启动，不能在同一个配置目录上并发起第二个浏览器
+    process.kill(second.pid, 'SIGSTOP');
+    const closing = pool.close('closing');
+    while (pool.list().length) await new Promise((ok) => setTimeout(ok, 10));
+    const third = await pool.acquire('closing');
+    assert.equal(alive(second.pid), false, '拿到新浏览器时旧的已经退出');
+    assert.notEqual(third.pid, second.pid);
+    assert.ok(third.browser.connected);
+    assert.equal(await closing, true);
+    assert.deepEqual(
+      pool.list().map((e) => e.pid),
+      [third.pid],
+      '关旧浏览器没有把新的一并关掉',
+    );
+  });
+
   test('任务子进程连接后 observe / act 正常；子进程被 SIGKILL 后浏览器与标签页还在，新的子进程能接管', async () => {
     const pool = mkPool();
     const lease = await pool.acquire('task-acct');
