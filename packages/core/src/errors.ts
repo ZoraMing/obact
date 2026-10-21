@@ -26,7 +26,11 @@ export function asObactError(e: unknown): ObactError {
   if (e instanceof ObactError) return e;
   const err = e instanceof Error ? e : new Error(String(e));
   if (err.name === 'TimeoutError') return new ObactError('timeout', err.message);
-  if (/Target closed|Session closed|Connection closed|detached/i.test(err.message)) {
+  // 只认连接类消息。元素、frame 失效（Node is detached、detached Frame）浏览器还好好的，不算断连；
+  // “Session closed.”“Connection closed.”带句点，页面脚本自己抛的 “Session closed by server” 不会误中
+  if (
+    /Target closed|Session closed\.|Connection closed\.|browser has disconnected/i.test(err.message)
+  ) {
     return new ObactError('browser_disconnected', err.message);
   }
   if (/Evaluation failed|ReferenceError|SyntaxError/.test(err.message)) {

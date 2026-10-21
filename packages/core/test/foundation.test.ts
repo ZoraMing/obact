@@ -289,6 +289,26 @@ describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
     assert.equal(asObactError(t).code, 'timeout');
     assert.equal(asObactError(new Error('Target closed')).code, 'browser_disconnected');
     assert.equal(asObactError('x').code, 'internal');
+    // 断连只认连接类消息；元素、frame 失效（浏览器还好好的）和页面脚本自己抛的文字不算
+    const code = (m: string) => asObactError(new Error(m)).code;
+    for (const m of [
+      'Protocol error (Runtime.callFunctionOn): Target closed',
+      'Protocol error (Page.navigate): Session closed. Most likely the page has been closed.',
+      'Connection closed.',
+      'Navigation failed because browser has disconnected!',
+    ]) {
+      assert.equal(code(m), 'browser_disconnected', m);
+    }
+    for (const m of [
+      'Node is detached from document',
+      "Attempted to use detached Frame 'F1'.",
+      'Navigating frame was detached',
+      'Session closed by server',
+      'element detached',
+    ]) {
+      assert.equal(code(m), 'internal', m);
+    }
+    assert.equal(code('Evaluation failed: Error: Session closed by server'), 'script_error');
     const e = new ObactError('not_found', 'x', { a: 1 });
     assert.deepEqual(e.toJSON(), { code: 'not_found', message: 'x', details: { a: 1 } });
   });
