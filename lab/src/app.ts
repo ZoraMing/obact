@@ -13,6 +13,7 @@ import {
   DEFAULT_FAULTS,
   esc,
   type LabModule,
+  LOG_MAX,
   MAX_BODY,
   page,
   parseFaults,
@@ -224,7 +225,7 @@ export async function createLab(
           created: new Date(s.created).toISOString(),
         })),
         submissions: [...space.submissions.values()],
-        log: space.log.slice(-100),
+        log: space.log.slice(-LOG_MAX),
         modules: mods,
       });
       return true;
@@ -278,6 +279,8 @@ export async function createLab(
     }
     const rest = m[2];
     const space = getSpace(id);
+    // 事件日志只留最近 LOG_MAX 条：长时间不 reset 的浸泡里不能无限增长
+    if (space.log.length > LOG_MAX) space.log.splice(0, space.log.length - LOG_MAX);
     const base = `/s/${id}`;
     const cookies = parseCookies(req.headers.cookie);
     let bodyCache: Promise<Record<string, unknown>> | null = null;

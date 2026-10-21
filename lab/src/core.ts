@@ -179,6 +179,9 @@ export type Submission = {
 
 export type SessionInfo = { token: string; user: string; created: number };
 
+/** 每个空间保留的事件日志条数。 */
+export const LOG_MAX = 500;
+
 export type Space = {
   id: string;
   seed: number;
@@ -195,7 +198,7 @@ export type Space = {
   redesign: { left: number | null; at: number | null };
   /** 本空间的确定性随机数（种子 + 调用次序）。 */
   rng(): number;
-  /** 事件日志（最近 500 条），用于调试与对账。 */
+  /** 事件日志（最近 LOG_MAX 条，每个请求开头把超出的最早几条丢掉；_lab/state 返回全部保留的），用于调试与对账。 */
   log: { at: string; type: string; detail?: unknown }[];
 };
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createLab, type Lab } from '../src/app.ts';
-import { type LabModule, MAX_BODY, page, Router } from '../src/core.ts';
+import { type LabModule, LOG_MAX, MAX_BODY, page, Router } from '../src/core.ts';
 import { control } from './helpers.ts';
 
 /** 测试用的最小模块：一个计数器、一个需要登录的页面和一个写接口。 */
@@ -166,6 +166,16 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.equal((s.modules.counter as { n: number }).n, 0, '超限的写请求没有执行');
     assert.equal(s.submissions.length, 0);
     assert.equal((await post('big', '/api/counter/1', { key: 'small' })).status, 200);
+  });
+
+  test('事件日志只保留最近 500 条，丢掉最早的', async () => {
+    const c = control(lab, 'logcap');
+    for (let i = 0; i < LOG_MAX + 10; i++) await c.faults({ delay_ms: i });
+    await c.faults({ delay_ms: 0 });
+    const log = (await c.state()).log;
+    assert.equal(log.length, LOG_MAX);
+    assert.deepEqual(log.at(-1)?.detail, { delay_ms: 0 }, '最后一条是最新的');
+    assert.deepEqual(log[0]?.detail, { delay_ms: 11 }, '最早的 11 条已被丢掉');
   });
 
   test('提交按幂等键计数', async () => {
