@@ -49,7 +49,10 @@ export type Submission = {
   count: number;
   first_at: string;
   last_at: string;
+  /** 首次提交的载荷（重复提交不覆盖）。 */
   payload: unknown;
+  /** 同一个键后来带了不同的操作或载荷：这个键被复用了，服务端仍只按首次处理。 */
+  conflict?: boolean;
 };
 
 export type SessionInfo = { token: string; user: string; created: number };

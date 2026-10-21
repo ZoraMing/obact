@@ -259,8 +259,11 @@ export async function createLab(
         const k = key || `auto-${++autoKey}`;
         const now = new Date().toISOString();
         const prev = space.submissions.get(k);
+        // 重复提交保留首次的载荷（实际落库的是它）；同键但操作或载荷不同的标 conflict，对账时能看出键被复用
+        const reused =
+          prev && (prev.op !== op || JSON.stringify(prev.payload) !== JSON.stringify(payload));
         const sub: Submission = prev
-          ? { ...prev, count: prev.count + 1, last_at: now, payload }
+          ? { ...prev, count: prev.count + 1, last_at: now, ...(reused ? { conflict: true } : {}) }
           : { key: k, op, count: 1, first_at: now, last_at: now, payload };
         space.submissions.set(k, sub);
         space.log.push({ at: now, type: 'submit', detail: { key: k, op, count: sub.count } });

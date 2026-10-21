@@ -69,6 +69,20 @@ describe('Lab 公共部分：数据空间、控制接口、登录态、故障注
     assert.notEqual(((await a.state()).modules.counter as { start: number }).start, start);
   });
 
+  test('同一个键再次提交：保留首次载荷；操作或载荷不同标 conflict，相同则不标', async () => {
+    const c = control(lab, 'reuse');
+    await post('reuse', '/api/counter/1', { key: 'k' });
+    await post('reuse', '/api/counter/1', { key: 'k' });
+    const same = (await c.state()).submissions.find((x) => x.key === 'k');
+    assert.equal(same?.count, 2);
+    assert.equal(same?.conflict, undefined, '载荷相同的重试不是冲突');
+    await post('reuse', '/api/counter/7', { key: 'k' });
+    const reused = (await c.state()).submissions.find((x) => x.key === 'k');
+    assert.equal(reused?.count, 3);
+    assert.deepEqual(reused?.payload, { step: '1' }, '载荷保持首次提交的内容，不被后来的覆盖');
+    assert.equal(reused?.conflict, true);
+  });
+
   test('提交按幂等键计数', async () => {
     const c = control(lab, 'idem');
     await post('idem', '/api/counter/1', { key: 'same' });

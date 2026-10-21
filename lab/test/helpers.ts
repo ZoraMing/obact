@@ -17,7 +17,7 @@ export type LabState = {
   space: string;
   faults: Faults;
   sessions: { user: string; created: string }[];
-  submissions: { key: string; op: string; count: number; payload: unknown }[];
+  submissions: { key: string; op: string; count: number; payload: unknown; conflict?: boolean }[];
   log: { type: string; detail?: unknown }[];
   modules: Record<string, unknown>;
 };
