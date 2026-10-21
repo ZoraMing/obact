@@ -212,6 +212,8 @@ export type Ctx = {
   params: Record<string, string>;
   /** 当前登录用户；未登录或会话过期为 null。 */
   user: string | null;
+  /** 当前请求的会话（登录时间 created 取自这里，同一账号在别处的会话不影响）；未登录或过期为 null。 */
+  session: SessionInfo | null;
   /** 读请求体：JSON 或表单（application/x-www-form-urlencoded）都解析成对象。 */
   body(): Promise<Record<string, unknown>>;
   json(data: unknown, status?: number): void;

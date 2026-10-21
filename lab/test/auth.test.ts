@@ -118,6 +118,24 @@ class Client {
 }
 
 describe('登录与账号：协议层', () => {
+  test('登录时间属于当前会话：同一账号在另一个浏览器后来登录，先登录的会话仍显示自己的时间', async () => {
+    const sp = 'auth-session-time';
+    const a = new Client(sp);
+    const b = new Client(sp);
+    await a.login('alice');
+    // 等到毫秒数前进，保证两次登录的时间戳不同（条件等待，不是固定延时）
+    const t0 = Date.now();
+    while (Date.now() === t0) await new Promise((r) => setTimeout(r, 1));
+    await b.login('alice');
+    const loginAt = async (c: Client) =>
+      ((await (await c.get('/api/auth/me')).json()) as { logged_in_at: string }).logged_in_at;
+    const [ta, tb] = [await loginAt(a), await loginAt(b)];
+    assert.ok(Date.parse(ta) < Date.parse(tb), `A ${ta} 应早于 B ${tb}`);
+    // 账号页显示的也是各自会话的时间
+    assert.match(await (await a.get('/account')).text(), new RegExp(`datetime="${ta}"`));
+    assert.match(await (await b.get('/account')).text(), new RegExp(`datetime="${tb}"`));
+  });
+
   test('next 含中文等非 ASCII 字符：登录成功后按 UTF-8 百分号编码跳回，已有的 %xx 保持原样', async () => {
     const sp = 'auth-next-utf8';
     const r = await new Client(sp).login('alice', undefined, '/vault?q=订单#位置');

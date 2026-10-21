@@ -19,6 +19,7 @@ import {
   parseReset,
   type Route,
   Router,
+  type SessionInfo,
   type Space,
   type Submission,
   seeded,
@@ -154,7 +155,7 @@ export async function createLab(
     return s;
   };
 
-  const userOf = (space: Space, token: string | undefined): string | null => {
+  const sessionOf = (space: Space, token: string | undefined): SessionInfo | null => {
     if (!token) return null;
     const s = space.sessions.get(token);
     if (!s) return null;
@@ -164,7 +165,7 @@ export async function createLab(
       space.log.push({ at: new Date().toISOString(), type: 'session_expired', detail: s.user });
       return null;
     }
-    return s.user;
+    return s;
   };
 
   /** 读控制接口的请求体；JSON 不合法按“不是对象”处理（交给 parseFaults / parseReset 回 400）。 */
@@ -280,6 +281,7 @@ export async function createLab(
     const base = `/s/${id}`;
     const cookies = parseCookies(req.headers.cookie);
     let bodyCache: Promise<Record<string, unknown>> | null = null;
+    const session = sessionOf(space, cookies[SESSION_COOKIE]);
     const ctx: Ctx = {
       req,
       res,
@@ -288,7 +290,8 @@ export async function createLab(
       base,
       modules,
       params: {},
-      user: userOf(space, cookies[SESSION_COOKIE]),
+      user: session?.user ?? null,
+      session,
       body: () => {
         bodyCache ??= readBody(req);
         return bodyCache;
@@ -322,9 +325,11 @@ export async function createLab(
       cookie: (name) => cookies[name],
       signIn(user) {
         const token = randomBytes(16).toString('hex');
-        space.sessions.set(token, { token, user, created: Date.now() });
+        const created: SessionInfo = { token, user, created: Date.now() };
+        space.sessions.set(token, created);
         ctx.setCookie(SESSION_COOKIE, token);
         ctx.user = user;
+        ctx.session = created;
         space.log.push({ at: new Date().toISOString(), type: 'login', detail: user });
       },
       signOut() {
@@ -332,6 +337,7 @@ export async function createLab(
         if (t) space.sessions.delete(t);
         ctx.setCookie(SESSION_COOKIE, '', { maxAge: 0 });
         ctx.user = null;
+        ctx.session = null;
       },
       record(op, key, payload) {
         const k = key || `auto-${++space.autoKey}`;

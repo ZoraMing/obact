@@ -294,11 +294,8 @@ const mod: LabModule = {
       '/account',
       (ctx) => {
         const user = ctx.user as string;
-        const since = Math.max(
-          0,
-          ...[...ctx.space.sessions.values()].filter((s) => s.user === user).map((s) => s.created),
-        );
-        const at = since > 0 ? since : (dataOf(ctx.space).users[user]?.lastLoginAt ?? null);
+        // 当前会话的登录时间；同一账号在别处（另一个浏览器）后来登录的会话不能顶替它
+        const at = ctx.session?.created ?? null;
         const time = at
           ? `<time id="login-time" datetime="${new Date(at).toISOString()}">${fmtTime(at)}</time>（北京时间）`
           : '未知';
@@ -326,9 +323,8 @@ const mod: LabModule = {
     r.get(
       '/api/auth/me',
       (ctx) => {
-        const user = ctx.user as string;
-        const at = dataOf(ctx.space).users[user]?.lastLoginAt ?? null;
-        ctx.json({ user, logged_in_at: at ? new Date(at).toISOString() : null });
+        const at = ctx.session?.created ?? null;
+        ctx.json({ user: ctx.user, logged_in_at: at ? new Date(at).toISOString() : null });
       },
       { auth: true },
     );
