@@ -14,8 +14,8 @@
 // 脚本里不出现睡眠与定时器等待，场景 S0 会扫描本文件自己确认这一点。
 //
 // --live 说明（未实测）：本文件的公开站点部分按站点公开的页面结构编写（选择器、文案、延迟时长取自站点页面），
-// 写作时所在的容器访问不了公开站点，所以只做过类型检查，以及在 bench/test/bw3-7.test.ts 里对一套按同样结构
-// 复刻的本地桩页（延迟缩短）跑通了脚本逻辑；没有对真实站点跑过。真实站点改版后以实际运行为准。
+// 写作时所在的容器访问不了公开站点，所以只做过类型检查：--live 这条路径没有任何测试执行过（本地桩页的测试已在
+// 精简 bench 测试时删除），也没有对真实站点跑过。真实站点改版后以实际运行为准；首次真实运行在 .github/workflows/live.yml。
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -35,7 +35,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TRACE = process.env.BENCH_TRACE === '1';
 const SUITE = 'BW-3';
 
-/** 公开站点的根地址；测试里指向本地桩页。 */
+/** 公开站点的根地址；可用 RunOptions.sites 覆盖。 */
 export type Sites = { quotes: string; playground: string };
 export const LIVE_SITES: Sites = {
   quotes: 'https://quotes.toscrape.com',
@@ -45,7 +45,7 @@ export const LIVE_SITES: Sites = {
 export type RunOptions = {
   /** 在公开站点上运行（默认本地）。 */
   live?: boolean;
-  /** 公开站点的地址覆盖（测试用）。 */
+  /** 公开站点的地址覆盖。 */
   sites?: Partial<Sites>;
   /** 报告目录，默认 bench/out。 */
   outDir?: string;

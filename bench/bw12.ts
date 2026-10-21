@@ -176,7 +176,7 @@ export type RunOptions = {
   live?: boolean;
   outDir?: string;
   chromePath?: string;
-  /** 公开站点的地址，默认 LIVE_BASE；测试用桩站点时改它。 */
+  /** 公开站点的地址，默认 LIVE_BASE；可改成自己部署的同款站点。 */
   liveBase?: string;
   quiet?: boolean;
 };

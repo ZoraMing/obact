@@ -17,8 +17,9 @@
 // 脚本里不出现睡眠与定时器等待，场景 S0 会扫描本文件自己确认这一点。
 //
 // --live 说明（未实测）：本文件的公开站点部分按站点公开的页面结构编写（选择器、文案取自站点页面），
-// 写作时所在的容器访问不了公开站点，所以只做过类型检查，以及在 bench/test/bw3-7.test.ts 里对一套按同样结构
-// 复刻的本地桩页跑通了脚本逻辑；没有对真实站点跑过。真实站点改版后以实际运行为准。
+// 写作时所在的容器访问不了公开站点，所以基本只做过类型检查：bench/test/bw3-7.test.ts 只对一页复刻的 iframe
+// 桩页回归了场景 V4，其余 --live 场景没有任何测试执行过，也没有对真实站点跑过。真实站点改版后以实际运行为准；
+// 首次真实运行在 .github/workflows/live.yml。
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -40,7 +41,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TRACE = process.env.BENCH_TRACE === '1';
 const SUITE = 'BW-7';
 
-/** 公开站点的根地址；测试里指向本地桩页。 */
+/** 公开站点的根地址；可用 RunOptions.sites 覆盖（bench/test 的 V4 用它指向本地 iframe 桩页）。 */
 export type Sites = { internet: string };
 export const LIVE_SITES: Sites = { internet: 'https://the-internet.herokuapp.com' };
 
