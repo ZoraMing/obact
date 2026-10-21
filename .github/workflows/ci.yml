@@ -1,5 +1,7 @@
 name: CI
 
+# Actions 固定到具体版本号（不用 v5 这类会移动的主版本标签）；升级时改版本号并看一遍发布说明。
+
 on:
   push:
     branches: [master]
@@ -16,8 +18,8 @@ jobs:
       # 找不到浏览器时浏览器测试直接失败而不是跳过（否则装浏览器出问题时大部分测试悄悄没跑，退出码仍是 0）
       OBACT_REQUIRE_BROWSER: '1'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -36,8 +38,8 @@ jobs:
     env:
       OBACT_REQUIRE_BROWSER: '1'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -51,8 +53,8 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with:
           python-version: '3.12'
       - run: pip install -e "python[dev]"
@@ -63,8 +65,8 @@ jobs:
   spikes-cft:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
           cache: npm

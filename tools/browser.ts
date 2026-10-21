@@ -1,7 +1,7 @@
 /**
  * 测试与基准用的浏览器：开发容器、本机、CI 共用同一份固定版本的 Chrome for Testing，保证结果可复现。
  *
- *   npm run browser:install        安装到 <仓库>/.cache/chrome（已 gitignore）
+ *   npm run browser:install        安装到 <仓库>/.cache/chrome（已 gitignore），下载的压缩包按 BASELINE_SHA256 校验
  *   CHROME_PATH=/path/to/chrome    显式指定浏览器（优先于安装目录；用于在别的版本上抽测）
  *
  * 没有安装也没有 CHROME_PATH 时返回 undefined：测试会跳过并提示先安装，不会悄悄换成别的浏览器。
@@ -14,6 +14,35 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** 基准版本：CI 与开发环境都用它跑全套测试。 */
 export const BASELINE_VERSION = '141.0.7390.122';
+
+/**
+ * 基准版本各平台压缩包的 SHA-256（键为 @puppeteer/browsers 的平台名）：install 时校验，下载内容被换掉会直接失败。
+ * 升级 BASELINE_VERSION 时整张表重算：
+ *   curl -s https://storage.googleapis.com/chrome-for-testing-public/<版本>/<linux64|mac-arm64|mac-x64|win32|win64>/<chrome|chrome-headless-shell>-<平台>.zip | sha256sum
+ * （linux_arm 没有 Chrome for Testing 构建。）
+ */
+export const BASELINE_SHA256: Record<string, { chrome: string; shell: string }> = {
+  linux: {
+    chrome: 'c7c9611f91f960f43cf36af1282acef5c5706bf7b026b68a400c55da24f81073',
+    shell: '5ab96651d2f2d2d6501de60fec918c562c4c02fde497da0688bd82c4994a04eb',
+  },
+  mac_arm: {
+    chrome: 'cfcb46d20f1ee3cab92cb814773a08c1fc1d53727ea87f5747cec96c69549042',
+    shell: '6bd2b26e1d89f5c3939969e337ef62133631b044f28e517e5ab2a195ce7d7e7e',
+  },
+  mac: {
+    chrome: 'abbed1d295197a9bd2493e65e9607259cbd1ce654531b9fbf48f1e3a8f9a5626',
+    shell: '819199757ca223fafb401f1d20215d369a130bbd88c4ba96334bb65ac2b7d4f2',
+  },
+  win32: {
+    chrome: 'e163433737c727a5b9577337a44b8db7eaa5ec90a6c22bd8d4b0b2a5b9658ed3',
+    shell: 'f24b037deecedda3da0e200f80f65a8dd9cbbfaa6559be1eba8503697cd15dbb',
+  },
+  win64: {
+    chrome: '918f84e6700d5929867895029981659086359d67058838adb8496db0e33f5719',
+    shell: '04765b5879b09c22152b9c753778851a003ee2009269e4d049245daa774b46ce',
+  },
+};
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const CACHE_DIR = join(REPO, '.cache', 'chrome');
 
@@ -67,21 +96,40 @@ export function skipIfNoBrowser(chrome: string | undefined): false | string {
   return MISSING;
 }
 
+/**
+ * 安装基准版本的 Chrome 与 chrome-headless-shell，下载的压缩包按 BASELINE_SHA256 校验；返回两个可执行文件路径。
+ * 表里没有当前平台时报错，不做无校验的下载。已经装好的版本不会重新下载，也就不再校验。
+ */
+export async function installBaseline(
+  cacheDir = CACHE_DIR,
+  hashes = BASELINE_SHA256,
+): Promise<string[]> {
+  const { Browser, install, detectBrowserPlatform } = await import('@puppeteer/browsers');
+  const platform = detectBrowserPlatform();
+  if (!platform) throw new Error('不支持的平台');
+  const expected = hashes[platform];
+  if (!expected) throw new Error(`平台 ${platform} 没有基准版本的校验值（BASELINE_SHA256）`);
+  const paths: string[] = [];
+  for (const [browser, expectedHash] of [
+    [Browser.CHROME, expected.chrome],
+    [Browser.CHROMEHEADLESSSHELL, expected.shell],
+  ] as const) {
+    const r = await install({
+      browser,
+      buildId: BASELINE_VERSION,
+      cacheDir,
+      platform,
+      expectedHash,
+    });
+    paths.push(r.executablePath);
+  }
+  return paths;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const cmd = process.argv[2];
   if (cmd === 'install') {
-    const { Browser, install, detectBrowserPlatform } = await import('@puppeteer/browsers');
-    const platform = detectBrowserPlatform();
-    if (!platform) throw new Error('不支持的平台');
-    for (const browser of [Browser.CHROME, Browser.CHROMEHEADLESSSHELL]) {
-      const r = await install({
-        browser,
-        buildId: BASELINE_VERSION,
-        cacheDir: CACHE_DIR,
-        platform,
-      });
-      console.log(r.executablePath);
-    }
+    for (const p of await installBaseline()) console.log(p);
   } else if (cmd === 'path') {
     console.log((await testChrome()) ?? '');
   } else {
