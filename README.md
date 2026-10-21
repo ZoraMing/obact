@@ -55,7 +55,7 @@ q    退出
 
 需要 Node ≥ 22.18（直接运行 `.ts`）和 Python ≥ 3.11。
 
-测试和基准用同一份固定版本的 Chrome for Testing（开发容器、本机、CI 一致，结果可复现）：先运行 `npm run browser:install`，装到 `.cache/chrome`。想在别的 Chrome 上抽测，设 `CHROME_PATH`。没装也没设时浏览器测试会跳过并提示，不会悄悄换成别的浏览器。
+测试和基准用同一份固定版本的 Chrome for Testing（开发容器、本机、CI 一致，结果可复现）：先运行 `npm run browser:install`，装到 `.cache/chrome`。想在别的 Chrome 上抽测，设 `CHROME_PATH`。没装也没设时浏览器测试会跳过并提示，不会悄悄换成别的浏览器；设了 `OBACT_REQUIRE_BROWSER=1`（CI 的 node 与 bench 任务已设）则找不到浏览器时直接失败。
 
 ```bash
 npm install

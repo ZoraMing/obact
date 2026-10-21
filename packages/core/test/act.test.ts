@@ -889,6 +889,15 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       { op: 'evaluate_script', pageId, function: '() => { throw new Error("坏了") }' },
       'script_error',
     );
+    // 脚本自己抛出的文字像断连（Session closed、detached）也只是脚本出错，不能被当成浏览器断开
+    await err(
+      {
+        op: 'evaluate_script',
+        pageId,
+        function: '() => { throw new Error("Session closed by server: element detached") }',
+      },
+      'script_error',
+    );
     await ok({ op: 'click', pageId, target: { css: '#later' } });
     await ok({ op: 'wait_for', pageId, until: [{ text_present: '完成' }], timeout_ms: 2000 });
     await err(

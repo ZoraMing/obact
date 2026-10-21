@@ -22,7 +22,7 @@
 // 首次真实运行在 .github/workflows/live.yml。
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { type ActOptions, act, launchBrowser, observe, Session } from '@obact/core';
 import type { Action, ActResult, Assertion, ObserveResult } from '@obact/schemas';
@@ -96,7 +96,8 @@ type Env = {
 
 async function startEnv(local: boolean): Promise<Env> {
   const chromePath = (await testChrome()) ?? '';
-  if (!chromePath) throw new Error('未找到浏览器：请设置 CHROME_PATH');
+  if (!chromePath)
+    throw new Error('未找到浏览器：请先运行 npm run browser:install，或设置 CHROME_PATH');
   const profileDir = mkdtempSync(join(tmpdir(), 'obact-bench-'));
   let fx: FixtureServer | undefined;
   let lab: Lab | undefined;
@@ -118,6 +119,8 @@ async function startEnv(local: boolean): Promise<Env> {
       profileDir,
       chromePath,
       mode: process.env.HEADED === '1' ? 'headed' : 'headless',
+      // TMPDIR 含 .. 片段时 Chrome 会取消所有下载，先规范化
+      env: { TMPDIR: resolve(tmpdir()) },
     });
     session = await Session.attach(browser);
   } catch (e) {

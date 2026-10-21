@@ -6,15 +6,15 @@ M2 出口：BW-1、BW-2、BW-9、BW-10；C-1、C-3、C-4、C-5。
 
 ## 1. 现状
 
-### 1.1 M1 暂停点
+### 1.1 M1 完成状态
 
 M1 内核已可用并推送：observe、act（20 种动作，`extract` 走工作流）、定位器、浏览器池、版本检测、页面提示条、12 类夹具、Lab 四个模块；节点测试与 bench 测试全部通过，CI 四个任务（node、bench、python、spikes-cft）全绿，另有手动或每周触发的 `live.yml`。
 
-M1 还欠的 4 件事（不阻塞 M2 开工，但要在 M2 评审前清掉或明确推迟）：
+M1 的整体评审与修复已完成（112 个问题，100 个已修，见 [M1_REVIEW](M1_REVIEW.md)；修复后 `npm run check` 415 项、bench 8 项全过）。仍待外部条件的 3 件事不阻塞 M2 开工：
 
 | # | 事项 | 处理 |
 |---|---|---|
-| 1 | M1 整体评审与修复 | 与 M2 评审合并为一次，对象含 core 与 workflow（见 W5） |
+| 1 | M1 整体评审与修复 | 已完成；M2 的评审（W5）只评 `packages/workflow` 与 M2 新增的 core 改动 |
 | 2 | `bench/test` 不在 `npm test` 里（约 2~3 分钟） | 已完成：`ci.yml` 的独立任务 `bench`，不拖慢 `node` 任务（W0） |
 | 3 | BW-3、BW-6、BW-7、BW-12 的 `--live` 公开站点版本未实测 | 容器访问不了公开站点；联网任务已写在 `live.yml`（`bench-live`，手动或每周触发，W0），还没有真实运行结果；本地版本已通过，`--live` 路径只做过类型检查、没有测试执行过 |
 | 4 | 完整 Chrome（有头 / 新无头）点击导航后输入失效 | 无头已用 chrome-headless-shell 规避；有头需要在真实桌面上确认，M2 不依赖它，记入风险 |
@@ -135,3 +135,13 @@ BW-1、BW-2 的原题是公开站点（Books to Scrape、Quotes to Scrape），�
 4. **C-1 的随机注入次数**：M2 做 5 次，PRD 的 20 次放到 M4 浸泡。是否合适？
 
 确认后按 W0 → W1∥W2 → W3 → W4 → W5 → W6 的顺序执行。
+
+## 10. M1 评审带给 M2 的接口约定
+
+详见 [M1_REVIEW](M1_REVIEW.md) 第 5 节。开工时先落实到 runner / 抽取 / 设计文档：
+
+1. **`dialog_blocking` 不再一律是“未发出”**：后置检查或等待期间被对话框打断时，错误的 `details.dispatched` 为 true，表示动作已执行。runner 对 `once_only` 步骤必须读它：为 true 按“已发出、结果未确认”处理（记 unverified、不重试），否则会重复提交。`packages/workflow/DESIGN.md` 第 7 条要同步改。
+2. **接口缓存的大整数**：超过 2^53 的整数以十进制字符串保留；抽取到的行里该字段是 string。`DESIGN.md` 第 12 条补一句，`extractFromResponse` 的 notes 提示一下。
+3. **BW-9 的数据量**：Lab 的 `_lab/reset` 可带 `{"orders": 1000}`（约 600~640 条待审核）；故障开关有校验，拼错键名返回 400；`drop_rate` 对写接口是“先落库再断开”，可测“连接被重置但已落库”。
+4. **定时改版**：Lab 的 `redesign_after_requests` / `redesign_after_ms` / `redesign_to`，用于长任务中途改版的演练。
+5. **导航协议**：`navigate_page` / `new_page` 只放行 http、https、about:blank 和工作区内的 file:；工作流里写其他协议会得到 `invalid_params`。

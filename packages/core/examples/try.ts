@@ -45,6 +45,14 @@ async function show(): Promise<void> {
   console.log(r.text_md);
 }
 
+async function tryShow(): Promise<void> {
+  try {
+    await show();
+  } catch (e) {
+    console.log(`\n（观察失败：${(e as Error).message}）`);
+  }
+}
+
 await show();
 const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '\n动作> ' });
 try {
@@ -52,7 +60,7 @@ try {
   for await (const raw of rl) {
     const line = raw.trim();
     if (line === 'q') break;
-    if (line === 'o') await show();
+    if (line === 'o') await tryShow();
     else if (line) {
       let action: Action | null = null;
       try {
@@ -63,7 +71,7 @@ try {
       if (action) {
         const r = await act(session, action);
         console.log(JSON.stringify(r, null, 2));
-        if (r.status === 'ok') await show();
+        if (r.status === 'ok') await tryShow();
       }
     }
     rl.prompt();

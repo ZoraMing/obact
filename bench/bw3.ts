@@ -93,7 +93,8 @@ type Env = {
 
 async function startEnv(local: boolean): Promise<Env> {
   const chromePath = (await testChrome()) ?? '';
-  if (!chromePath) throw new Error('未找到浏览器：请设置 CHROME_PATH');
+  if (!chromePath)
+    throw new Error('未找到浏览器：请先运行 npm run browser:install，或设置 CHROME_PATH');
   const profileDir = mkdtempSync(join(tmpdir(), 'obact-bench-'));
   let fx: FixtureServer | undefined;
   let lab: Lab | undefined;

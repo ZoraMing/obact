@@ -24,7 +24,7 @@ import { axtreeText, type SomBox, takeScreenshot, takeSom } from './views.ts';
 export type ObserveOptions = {
   /** 页面签名（FR-08）；命中的 ID 写入 result.signature。 */
   signatures?: PageSignature[];
-  /** 截图类视图（screenshot、som）的保存目录；省略时用系统临时目录下的 obact-shots/。 */
+  /** 截图类视图（screenshot、som）的保存目录；省略时用本进程私有的临时目录（权限 0700）。 */
   outDir?: string;
   /** 页面无响应（如被对话框挂起）时的等待上限（毫秒），默认 30000；超时报 timeout，不等 CDP 的协议超时。 */
   timeoutMs?: number;

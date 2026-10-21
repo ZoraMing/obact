@@ -39,7 +39,8 @@ jobs:
           name: bench-live-out
           path: bench/out
 
-  # 运行时支持区间的抽测（PRD 8.3）：在当前最新稳定版 Chrome 上跑全套浏览器测试
+  # 运行时支持区间的抽测（PRD 8.3）：在当前最新稳定版 chrome-headless-shell 上只跑核心与夹具测试
+  # （pool.test.ts 里有一条有头用例，需要完整 Chrome，这里不跑）
   compat-stable:
     runs-on: ubuntu-latest
     steps:
@@ -55,5 +56,6 @@ jobs:
           npx @puppeteer/browsers install chrome-headless-shell@stable --path "$HOME/.cache/cft-stable" | tee stable.txt
           echo "CHROME_PATH=$(tail -1 stable.txt | awk '{print $2}')" >> "$GITHUB_ENV"
       - run: $CHROME_PATH --version
-      - run: npm test
-      - run: npm run test:bench
+      - run: node --test $(ls packages/core/test/*.test.ts | grep -v pool.test.ts) "fixtures/test/**/*.test.ts"
+        env:
+          OBACT_REQUIRE_BROWSER: '1'

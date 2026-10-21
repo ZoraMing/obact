@@ -41,7 +41,7 @@ export function resolveChromePath(explicit?: string): string {
   if (!path) {
     throw new ObactError(
       'invalid_params',
-      '未指定浏览器：传入 chromePath 或设置环境变量 CHROME_PATH（Chrome for Testing 固定版本）',
+      '未指定浏览器：传入 chromePath 或设置环境变量 CHROME_PATH；没装浏览器先运行 npm run browser:install，路径用 node tools/browser.ts path 取',
     );
   }
   return path;

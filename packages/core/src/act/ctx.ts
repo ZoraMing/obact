@@ -32,7 +32,7 @@ export type ObscuredInfo = {
 export type ActOptions = {
   /** 上传等文件路径的根（工作区）；越出报 path_outside_workspace。 */
   filesRoot?: string;
-  /** 截图目录；省略时用系统临时目录下的 obact-shots。 */
+  /** 截图目录；省略时用本进程私有的临时目录（权限 0700）。 */
   outDir?: string;
   /** 被遮挡时的回调：返回 true 表示已处理（如关掉了弹窗），随后重试当前动作；已处理的不计入连续不符的次数（最多处理 10 轮）。 */
   onObscured?: (info: ObscuredInfo) => boolean | Promise<boolean>;

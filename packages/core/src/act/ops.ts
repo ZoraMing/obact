@@ -980,7 +980,7 @@ const evaluateScript: Handler = async (ctx) => {
     v = await within(p.mainFrame().evaluate(expr), ctx.timeout, TIMEOUT);
   } catch (e) {
     const msg = String((e as Error)?.message ?? e);
-    if (/Target closed|Session closed|detached/i.test(msg)) throw e;
+    if (!ctx.s.browser.connected || p.isClosed()) throw e;
     fail('script_error', `脚本出错：${msg.split('\n')[0]}`);
   }
   if (v === TIMEOUT) fail('timeout', `脚本执行超过 ${ctx.timeout} 毫秒`);

@@ -8,7 +8,7 @@ on:
   pull_request:
 
 env:
-  # Chrome for Testing 固定版本（docs/spikes/M0-spikes.md 第 5 节）；升级时 spikes-cft 会复核扩展加载
+  # Chrome for Testing 固定版本（docs/spikes/M0-spikes.md 第 5 节）；spikes-cft 复跑的是 M0 预研留档
   CFT_VERSION: '141.0.7390.122' # 须与 tools/browser.ts 的 BASELINE_VERSION 一致
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       # lint、类型检查、生成类型一致性、契约测试（T）与浏览器测试（F）
       - run: npm run check
 
-  # BW-3、6、7、12 的本地基准（桩站点 + Lab + 夹具），约 2~3 分钟；与 node 任务分开，避免拖慢常规反馈
+  # BW-3、6、7、12 的本地基准（Lab + 夹具），约 2~3 分钟；与 node 任务分开，避免拖慢常规反馈
   bench:
     runs-on: ubuntu-latest
     env:

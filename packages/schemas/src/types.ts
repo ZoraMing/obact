@@ -1229,7 +1229,7 @@ export interface AskHumanResult {
   option_index?: number;
 }
 /**
- * 界面（侧边栏、终端）回答 need_human / ask_save（FR-21、FR-34）。PRD 7.1 未列，为接管闭环补充。
+ * 终端或接口调用方回答 need_human / ask_save（FR-21、FR-34）。PRD 7.1 未列，为接管闭环补充。
  */
 export interface HumanReplyParams {
   request_id: string;
