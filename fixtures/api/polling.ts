@@ -131,13 +131,14 @@ const ws: UpgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) 
   };
   const onMessage = (text: string) => {
     stats.wsReceived++;
-    let msg: { type?: string; text?: unknown } = {};
+    let msg: { type?: string; text?: unknown } | null = {};
     try {
       msg = JSON.parse(text);
     } catch {
       msg = { type: 'echo', text };
     }
-    if (msg.type === 'echo') sendJson({ type: 'echo', text: String(msg.text ?? '') });
+    // JSON 字面量 null（以及数字、字符串）也是合法的 JSON，不是对象就不是 echo
+    if (msg?.type === 'echo') sendJson({ type: 'echo', text: String(msg.text ?? '') });
   };
   const onData = (chunk: Buffer) => {
     buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;

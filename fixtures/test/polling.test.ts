@@ -5,6 +5,7 @@ import { act } from '@obact/core';
 import type { Action, ActResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
 import { pushValue } from '../api/polling.ts';
+import { startFixtures } from '../server.ts';
 import { type FixtureEnv, SKIP, setup } from './helpers.ts';
 
 const contracts = new Contracts();
@@ -199,5 +200,39 @@ describe('常驻请求夹具（FR-14）', { skip: SKIP }, () => {
     assert.equal(r.assertions?.[0]?.pass, true);
     assert.ok(r.duration_ms < FAST_MS, `耗时 ${r.duration_ms}`);
     await page.close();
+  });
+});
+
+// 不需要浏览器：非标准客户端发来的畸形消息只能影响自己的连接，不能让夹具服务退出
+describe('常驻请求夹具：WebSocket 畸形消息', () => {
+  test('文本帧内容为 JSON 字面量 null 时被忽略，连接与服务都还在', async () => {
+    const server = await startFixtures();
+    try {
+      const ws = new WebSocket(
+        `${server.base.replace('http', 'ws')}/api/polling/ws?interval=60000`,
+      );
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener('open', () => resolve());
+        ws.addEventListener('error', () => reject(new Error('WebSocket 连接失败')));
+      });
+      // null 之后再发一条正常的 echo：收到回显说明服务没有退出，这条连接也没有被关掉
+      const echo = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('等待回显超时：服务可能已退出')), 5000);
+        ws.addEventListener('close', () => reject(new Error('连接被服务端关闭')));
+        ws.addEventListener('message', (e) => {
+          const m = JSON.parse(String(e.data)) as { type: string; text?: string };
+          if (m.type !== 'echo') return;
+          clearTimeout(timer);
+          resolve(String(m.text));
+        });
+        ws.send('null');
+        ws.send(JSON.stringify({ type: 'echo', text: 'null 之后' }));
+      });
+      assert.equal(echo, 'null 之后');
+      ws.close();
+      assert.equal((await fetch(`${server.base}/api/polling/stats`)).status, 200);
+    } finally {
+      await server.close();
+    }
   });
 });

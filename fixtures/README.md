@@ -14,7 +14,7 @@ node --test fixtures/test/*.test.ts
 | `structure` | open / closed Shadow DOM、同源与跨域 iframe、嵌套 frame、新标签页 | FR-04、FR-05 | 5 项通过 |
 | `overlays` | 透明遮罩、Cookie 提示条、按 seed 定时弹出的广告层 | FR-13、FR-23 | 8 项通过 |
 | `timing` | 动画按钮、布局偏移、延迟渲染、骨架屏、进度条 | FR-13、FR-14、BW-3 | 8 项通过 |
-| `polling` | 每秒轮询接口 + WebSocket 每 200 毫秒推送 | FR-14 | 4 项通过 |
+| `polling` | 每秒轮询接口 + WebSocket 每 200 毫秒推送 | FR-14 | 5 项通过 |
 | `virtual-table` | 1 万行虚拟滚动表格，只渲染可见行；对应 JSON 接口 | FR-09、FR-10 | 4 项通过 |
 | `formatted-numbers` | 页面显示千分位、“1.2万”，接口返回原值 | FR-09、FR-10 | 4 项通过 |
 | `fast-response` | 点击后约 20 毫秒返回的接口 | FR-10 | 4 项通过 |
