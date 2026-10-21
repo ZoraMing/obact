@@ -106,6 +106,108 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'fill', pageId, target: { css: '#sel' }, value: '不存在' }, 'not_found');
   });
 
+  /** 取出并清空页面记录的事件（act-fill.html：类型:控件:值:是否可信）。 */
+  const drain = (pageId: string) =>
+    env.session.pages
+      .get(pageId)
+      .evaluate(() => (window as unknown as { events: string[] }).events.splice(0));
+
+  test('下拉框填值：跳过的中间项不触发事件，页面只收到目标项一组可信的 input/change；onchange 导航也能完成', async () => {
+    const pageId = await env.open('/pages/act-fill.html');
+    await ok({ op: 'fill', pageId, target: { css: '#sort' }, value: '五' });
+    assert.deepEqual(await drain(pageId), ['input:sort:5:true', 'change:sort:5:true']);
+    await ok({ op: 'fill', pageId, target: { css: '#sort' }, value: '一' });
+    assert.deepEqual(await drain(pageId), ['input:sort:1:true', 'change:sort:1:true']);
+    // 当前项被禁用（占位项）时先按 Home 再逐项移动
+    await ok({ op: 'fill', pageId, target: { css: '#menu' }, value: '页面C' });
+    assert.deepEqual(await drain(pageId), ['input:menu:c:true', 'change:menu:c:true']);
+    // 中间项的 onchange 会导航：不能在第一个中间项就跳走
+    const jump = await env.open('/pages/act-fill.html');
+    await ok({ op: 'fill', pageId: jump, target: { css: '#jump' }, value: '页面C' });
+    assert.match(env.session.pages.get(jump).url(), /act-target\.html\?to=c$/);
+  });
+
+  test('多选下拉框：点选项按 Ctrl 切换、Shift 连选，fill 用逗号分隔多项，每次只派发一组事件', async () => {
+    const pageId = await env.open('/pages/act-fill.html');
+    const page = env.session.pages.get(pageId);
+    const picked = () =>
+      page.$eval('#multi', (e) =>
+        [...(e as HTMLSelectElement).selectedOptions].map((o) => o.value).join('|'),
+      );
+    const opt = (name: string) => ({ role: 'option' as const, name });
+    await ok({ op: 'click', pageId, target: opt('紧急') });
+    assert.deepEqual(await drain(pageId), ['input:multi:1:true', 'change:multi:1:true']);
+    await ok({ op: 'click', pageId, target: opt('普通'), modifiers: ['Control'] });
+    assert.equal(await picked(), '1|3');
+    await ok({ op: 'click', pageId, target: opt('紧急'), modifiers: ['Control'] });
+    assert.equal(await picked(), '3', 'Ctrl 点已选项取消该项');
+    assert.equal((await drain(pageId)).length, 2 * 2, '两次 Ctrl 点击各一组 input/change');
+    await ok({ op: 'click', pageId, target: opt('重要') });
+    await ok({ op: 'click', pageId, target: opt('低'), modifiers: ['Shift'] });
+    assert.equal(await picked(), '2|3|4');
+    await drain(pageId);
+    await ok({ op: 'fill', pageId, target: { css: '#multi' }, value: '紧急,很低' });
+    assert.equal(await picked(), '1|5');
+    assert.deepEqual(await drain(pageId), ['input:multi:1|5:false', 'change:multi:1|5:false']);
+    await ok({ op: 'fill', pageId, target: { css: '#multi' }, value: '紧急，很低' });
+    assert.deepEqual(await drain(pageId), [], '选中状态没变化时不派发事件');
+    await err(
+      { op: 'fill', pageId, target: { css: '#multi' }, value: '紧急,不存在', timeout_ms: 800 },
+      'not_found',
+    );
+    assert.equal(await picked(), '1|5', '有选项找不到时不改动');
+    await ok({ op: 'fill', pageId, target: { css: '#multi' }, value: '' });
+    assert.equal(await picked(), '');
+  });
+
+  test('填日期、颜色、滑块：浏览器会改写或丢弃的值报 invalid_params，页面的原值和事件不受影响', async () => {
+    const pageId = await env.open('/pages/act-fill.html');
+    const page = env.session.pages.get(pageId);
+    const value = (id: string) => page.$eval(id, (e) => (e as HTMLInputElement).value);
+    await ok({ op: 'fill', pageId, target: { css: '#date' }, value: '2026-01-05' });
+    assert.equal((await drain(pageId)).length, 2);
+    await err(
+      { op: 'fill', pageId, target: { css: '#date' }, value: '2026/01/06' },
+      'invalid_params',
+    );
+    assert.equal(await value('#date'), '2026-01-05', '写错格式不能清掉原有的值');
+    const bad = await err(
+      { op: 'fill', pageId, target: { css: '#color' }, value: 'red' },
+      'invalid_params',
+    );
+    assert.equal(bad.error?.details?.actual, '#000000');
+    await err({ op: 'fill', pageId, target: { css: '#range' }, value: 99 }, 'invalid_params');
+    assert.deepEqual(await drain(pageId), [], '被拒绝的值不派发事件');
+    assert.equal(await value('#range'), '5');
+    await ok({ op: 'fill', pageId, target: { css: '#color' }, value: '#FF0000' });
+    await ok({ op: 'fill', pageId, target: { css: '#range' }, value: 7 });
+    assert.equal(await value('#color'), '#ff0000');
+    assert.equal(await value('#range'), '7');
+  });
+
+  test('type_text 带 target：新聚焦的元素光标在末尾；已有焦点的元素保持用户放的选区', async () => {
+    const pageId = await env.open('/pages/act-fill.html');
+    const page = env.session.pages.get(pageId);
+    const type = (css: string, text: string) =>
+      ok({ op: 'type_text', pageId, target: { css }, text });
+    await type('#pre', 'X');
+    await type('#note', 'Y');
+    await type('#mail', 'Z'); // email 不支持选区，靠全选加右方向键折叠到末尾
+    await type('#rich', '尾');
+    assert.equal(await page.$eval('#pre', (e) => (e as HTMLInputElement).value), 'abcX');
+    assert.equal(
+      await page.$eval('#note', (e) => (e as HTMLTextAreaElement).value),
+      '第一行\n第二行Y',
+    );
+    assert.equal(await page.$eval('#mail', (e) => (e as HTMLInputElement).value), 'a@b.cZ');
+    assert.equal(await page.$eval('#rich', (e) => (e as HTMLElement).innerText), '原有内容尾');
+    // #pre 已有焦点时不动光标：全选后再带 target 键入是替换
+    await type('#pre', '1');
+    await ok({ op: 'press_key', pageId, key: 'Control+A' });
+    await type('#pre', 'R');
+    assert.equal(await page.$eval('#pre', (e) => (e as HTMLInputElement).value), 'R');
+  });
+
   test('视觉隐藏的原生复选框：点可见的 label', async () => {
     const pageId = await open();
     await ok({ op: 'click', pageId, target: { role: 'checkbox', name: '自动续费' } });

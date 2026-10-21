@@ -35,9 +35,12 @@ import {
 } from './locate.ts';
 import {
   ACT_DEPS,
+  obActCaretEnd,
   obActDatalistInput,
   obActFocus,
   obActFocusSelectAll,
+  obActHasFocus,
+  obActHoldEvents,
   obActInfo,
   obActIsFocused,
   obActLabelProxy,
@@ -57,6 +60,8 @@ import { parseKeyCombo, pressCombo, resolveInside, sleep, within } from './util.
 const INFO = bundle(obActInfo, ACT_DEPS);
 const FOCUS_SELECT_ALL = bundle(obActFocusSelectAll, ACT_DEPS);
 const IS_FOCUSED = bundle(obActIsFocused, ACT_DEPS);
+const HAS_FOCUS = bundle(obActHasFocus, ACT_DEPS);
+const CARET_END = bundle(obActCaretEnd, ACT_DEPS);
 const FOCUS = bundle(obActFocus, ACT_DEPS);
 const LABEL_PROXY = bundle(obActLabelProxy, ACT_DEPS);
 const LAND_START = bundle(
@@ -71,6 +76,7 @@ const LAND_READ = bundle(
 const SET_NATIVE = bundle(obActSetNativeValue, ACT_DEPS);
 const SELECT_PLAN = bundle(obActSelectPlan, ACT_DEPS);
 const SELECT_APPLY = bundle(obActSelectApply, ACT_DEPS);
+const HOLD_EVENTS = bundle(obActHoldEvents, ACT_DEPS);
 const SELECTED_INDEX = (el: Element) => (el as HTMLSelectElement).selectedIndex;
 const OPTION_OWNER = bundle(obActOptionOwner, ACT_DEPS);
 const DATALIST_INPUT = bundle(obActDatalistInput, ACT_DEPS);
@@ -240,7 +246,7 @@ const click: Handler = async (ctx, fx) => {
   ctx.locator = loc.via;
   try {
     const info = await loc.handle.evaluate(INFO);
-    if (info.click === 'option-select') return await clickOption(ctx, loc);
+    if (info.click === 'option-select') return await clickOption(ctx, loc, a);
     if (info.click === 'option-datalist') return await clickDatalistOption(ctx, loc, fx);
     requireAction(info, 'click');
     const who = await labelProxy(loc, info);
@@ -259,15 +265,25 @@ const click: Handler = async (ctx, fx) => {
   }
 };
 
-/** 点下拉框里的选项：原生下拉弹层不在页面内，改为按选项选择（见 selectOption）。 */
-async function clickOption(ctx: Ctx, loc: Located): Promise<void> {
+/**
+ * 点下拉框里的选项：单选的原生下拉弹层不在页面内，改为按选项选择（见 selectOption）；
+ * 多选下拉框的选项在页面里有真实位置，直接可信点击，Ctrl/Meta 切换、Shift 连选、无修饰键替换都是浏览器原生行为。
+ */
+async function clickOption(ctx: Ctx, loc: Located, a: Click): Promise<void> {
   const h = await loc.handle.evaluateHandle(OPTION_OWNER);
   const select = (await h.getProperty('select')).asElement() as ElementHandle<Element> | null;
   const index = (await (await h.getProperty('index')).jsonValue()) as number;
+  const multiple = (await (await h.getProperty('multiple')).jsonValue()) as boolean;
   await h.dispose();
   if (!select) fail('not_actionable', '选项不在下拉框内');
   try {
-    await selectOption(ctx, sameEl(loc, select), '', index);
+    if (multiple) {
+      await clickElement(ctx, loc, {
+        button: a.button,
+        count: a.double ? 2 : 1,
+        modifiers: a.modifiers,
+      });
+    } else await selectOption(ctx, sameEl(loc, select), '', index);
   } finally {
     await select.dispose().catch(() => {});
   }
@@ -322,7 +338,7 @@ async function focusElement(ctx: Ctx, loc: Located, point: { x: number; y: numbe
  * 填写一个元素（FR-12）：
  * - 文本框、textarea、contenteditable：聚焦 → 全选 → Backspace 删除 → CDP Input.insertText 写入（可信输入事件）；
  * - 复选/单选：按布尔值必要时点击（隐藏的原生控件改点 label）；单选框不能点成未选中；
- * - 下拉框：按选项文本或值选择（见 selectOption）；
+ * - 下拉框：按选项文本或值选择（见 selectOption）；多选下拉框的值用逗号分隔多项（见 selectMulti）；
  * - 日期、时间、颜色、滑块：无法逐字输入，用原生 value 设置器写值并派发 input/change。
  */
 async function fillElement(
@@ -351,8 +367,8 @@ async function fillElement(
       await actionable(ctx, loc);
       ctx.dispatched = true;
       const want = String(value);
-      const got = await loc.handle.evaluate(SET_NATIVE, want);
-      if (want !== '' && got === '') {
+      const r = await loc.handle.evaluate(SET_NATIVE, want);
+      if (!r.ok) {
         const fmt: Record<string, string> = {
           date: 'YYYY-MM-DD',
           time: 'HH:MM',
@@ -361,9 +377,14 @@ async function fillElement(
           week: 'YYYY-Www',
           color: '#rrggbb',
         };
-        fail('invalid_params', `值格式不符：${info.type} 需要 ${fmt[info.type] ?? '有效的值'}`, {
-          value: want,
-        });
+        // 浏览器把不合法的值净化成空串（日期等）或别的值（颜色变黑、滑块被夹进范围）：都没有写进页面
+        fail(
+          'invalid_params',
+          r.got === ''
+            ? `值格式不符：${info.type} 需要 ${fmt[info.type] ?? '有效的值'}`
+            : `值不被接受：${info.type} 会把“${want}”调整为“${r.got}”（格式不符或超出范围）`,
+          { value: want, actual: r.got },
+        );
       }
       return;
     }
@@ -386,26 +407,15 @@ async function fillElement(
       return;
     }
     case 'select':
+      if (info.multiple) return selectMulti(ctx, loc, String(value));
       return selectOption(ctx, loc, String(value), null);
     default:
       fail('not_actionable', '该元素不可直接填写（不是输入框或可编辑区域）', { role: info.role });
   }
 }
 
-/**
- * 下拉框选择：按选项文本或值找到目标（index 给定时直接用下标）。
- * 先用键盘方式：页面脚本聚焦后按 Home/方向键移到目标项，产生可信的 input/change 事件
- * （原生下拉弹层不在页面内，无法用可信鼠标点选）；未生效时（如 macOS 上方向键会打开弹层）
- * 按 Escape 关闭弹层，再用页面脚本选中并派发 input/change。选项可能异步加载，找不到时在期限内轮询。
- */
-async function selectOption(
-  ctx: Ctx,
-  loc: Located,
-  want: string,
-  index: number | null,
-): Promise<void> {
-  const p = page(ctx);
-  await actionable(ctx, loc);
+/** 按选项文本或值找下拉框的目标选项（index 给定时直接用下标）；选项可能异步加载，找不到时在期限内轮询。 */
+async function planOption(ctx: Ctx, loc: Located, want: string, index: number | null) {
   let plan = await loc.handle.evaluate(SELECT_PLAN, want, index);
   while (plan.index < 0) {
     if (Date.now() >= ctx.deadline) {
@@ -418,19 +428,67 @@ async function selectOption(
     plan = await loc.handle.evaluate(SELECT_PLAN, want, index);
   }
   if (plan.disabled) fail('not_actionable', '该选项已禁用', { index: plan.index });
-  const info = await loc.handle.evaluate(INFO);
-  if (plan.index === plan.current && !info.multiple) return;
+  return plan;
+}
+
+/**
+ * 单选下拉框选择：按选项文本或值找到目标（index 给定时直接用下标）。
+ * 先用键盘方式：页面脚本聚焦后按 Home/方向键移到目标项，最后一次按键产生可信的 input/change 事件
+ * （原生下拉弹层不在页面内，无法用可信鼠标点选）；中间项的事件在按键期间被暂扣，页面只收到目标项这一组；
+ * 未生效时（如 macOS 上方向键会打开弹层）按 Escape 关闭弹层，再用页面脚本选中并派发 input/change。
+ */
+async function selectOption(
+  ctx: Ctx,
+  loc: Located,
+  want: string,
+  index: number | null,
+): Promise<void> {
+  const p = page(ctx);
+  await actionable(ctx, loc);
+  const plan = await planOption(ctx, loc, want, index);
+  if (plan.index === plan.current) return;
   ctx.dispatched = true;
   if (await loc.handle.evaluate(FOCUS)) {
-    if (plan.home) await p.keyboard.press('Home');
-    const key = plan.steps > 0 ? 'ArrowDown' : 'ArrowUp';
-    for (let i = 0; i < Math.abs(plan.steps); i++) await p.keyboard.press(key);
-    if ((await loc.handle.evaluate(SELECTED_INDEX)) === plan.index && !info.multiple) return;
+    const keys: KeyInput[] = plan.home ? ['Home'] : [];
+    for (let i = 0; i < Math.abs(plan.steps); i++)
+      keys.push(plan.steps > 0 ? 'ArrowDown' : 'ArrowUp');
+    const last = keys.pop() as KeyInput;
+    if (keys.length) {
+      const hold = await loc.handle.evaluateHandle(HOLD_EVENTS);
+      try {
+        for (const k of keys) await p.keyboard.press(k);
+      } finally {
+        await hold.evaluate((h) => h.stop()).catch(() => {});
+        await hold.dispose().catch(() => {});
+      }
+    }
+    await p.keyboard.press(last);
+    // 最后一次按键的 change 可能让页面跳转（onchange 里导航）：读不到选中项就当作已经生效
+    if ((await loc.handle.evaluate(SELECTED_INDEX).catch(() => plan.index)) === plan.index) return;
     await p.keyboard.press('Escape');
   }
-  if ((await loc.handle.evaluate(SELECTED_INDEX)) !== plan.index || info.multiple) {
-    await loc.handle.evaluate(SELECT_APPLY, plan.index);
-  }
+  await loc.handle.evaluate(SELECT_APPLY, [plan.index]);
+}
+
+/**
+ * 多选下拉框填写：值按逗号（半角或全角）分隔多个选项，选中恰好这些项、其余取消，只派发一组 input/change；
+ * 整个值本身就是某个选项的文本或值时按单个处理（选项文本里可以有逗号）；值为空时取消全部。
+ * 逐项可信点击（Ctrl/Meta/Shift）请用 click 点选项。
+ */
+async function selectMulti(ctx: Ctx, loc: Located, want: string): Promise<void> {
+  await actionable(ctx, loc);
+  const whole = await loc.handle.evaluate(SELECT_PLAN, want, null);
+  const wants =
+    whole.index >= 0
+      ? [want]
+      : want
+          .split(/[,，]/)
+          .map((w) => w.trim())
+          .filter(Boolean);
+  const indexes: number[] = [];
+  for (const w of wants) indexes.push((await planOption(ctx, loc, w, null)).index);
+  ctx.dispatched = true;
+  await loc.handle.evaluate(SELECT_APPLY, indexes);
 }
 
 const fill: Handler = async (ctx, fx) => {
@@ -475,7 +533,10 @@ const typeText: Handler = async (ctx, fx) => {
       requireAction(await loc.handle.evaluate(INFO), 'type_text');
       const { point } = await actionable(ctx, loc);
       ctx.dispatched = true;
+      // 新聚焦的元素把光标放到末尾，键入接在原有内容后面；已有焦点的元素保持用户放的光标和选区
+      const fresh = !(await loc.handle.evaluate(HAS_FOCUS));
       await focusElement(ctx, loc, point);
+      if (fresh && !(await loc.handle.evaluate(CARET_END))) await p.keyboard.press('ArrowRight');
     } finally {
       await loc.handle.dispose().catch(() => {});
     }

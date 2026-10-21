@@ -401,16 +401,45 @@ export function obActInfo(el: Element): {
   };
 }
 
+/** 元素是否已经是焦点、且所在文档有真实焦点（iframe 里的可编辑 body 默认就是 activeElement，但文档可能没有焦点）。 */
+export function obActHasFocus(el: Element): boolean {
+  return obActiveElement() === el && document.hasFocus();
+}
+
 /**
  * 聚焦元素并返回是否成功。元素已经是 activeElement、但所在文档（如 iframe 里的可编辑 body，它默认就是
  * activeElement）并没有真实焦点时，键盘输入仍会发给别的 frame：这种情况也要补一次 focus。
  */
 export function obActFocus(el: Element): boolean {
-  if (obActiveElement() !== el || !document.hasFocus()) {
+  if (!obActHasFocus(el)) {
     if (!document.hasFocus()) window.focus();
     (el as HTMLElement).focus({ preventScroll: true });
   }
   return obActiveElement() === el;
+}
+
+/**
+ * 光标移到末尾：Chrome 对从未聚焦、值来自 HTML 属性的输入框，focus() 后光标在开头，直接键入会插到最前面。
+ * 输入框/textarea 用 setSelectionRange，可编辑区域折叠到末尾，返回 true；email、number 等类型不支持选区（抛错），
+ * 改为全选并返回 false，调用方再按一次右方向键把选区折叠到末尾。
+ */
+export function obActCaretEnd(el: Element): boolean {
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const input = el as HTMLInputElement;
+    try {
+      input.setSelectionRange(input.value.length, input.value.length);
+      return true;
+    } catch {
+      input.select();
+      return false;
+    }
+  }
+  if ((el as HTMLElement).isContentEditable) {
+    const sel = (el.getRootNode() as Document).getSelection?.() ?? document.getSelection();
+    sel?.selectAllChildren(el);
+    sel?.collapseToEnd();
+  }
+  return true;
 }
 
 /** 聚焦并全选文本类控件的内容；返回聚焦是否成功、原内容是否非空。 */
@@ -436,16 +465,32 @@ export function obActIsFocused(el: Element): boolean {
 /**
  * 用原生 value 设置器写值并派发 input/change（日期、颜色、滑块等无法逐字输入的控件；
  * 走原型上的设置器，React 等框架的受控组件也能感知）。
+ * 先在脱离文档的克隆上试设并读回：浏览器会净化不合法的值（日期写错变空串、颜色变 #000000、滑块被夹进范围），
+ * 净化结果与要写的值不符时不碰真实元素（页面不会收到事件，原有的值也不会被清掉），返回 ok 为 false 和净化后的值。
  */
-export function obActSetNativeValue(el: Element, value: string): string {
+export function obActSetNativeValue(el: Element, value: string): { ok: boolean; got: string } {
   const proto =
     el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  if (setter) setter.call(el, value);
-  else (el as HTMLInputElement).value = value;
+  const put = (target: Element, v: string) => {
+    if (setter) setter.call(target, v);
+    else (target as HTMLInputElement).value = v;
+  };
+  const probe = el.cloneNode(false) as HTMLInputElement;
+  put(probe, value);
+  const got = probe.value;
+  const same =
+    value === '' ||
+    (probe.type === 'color'
+      ? got === value.toLowerCase()
+      : probe.type === 'range'
+        ? Number(got) === Number(value)
+        : got !== '');
+  if (!same) return { ok: false, got };
+  put(el, value);
   el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
-  return (el as HTMLInputElement).value;
+  return { ok: true, got: (el as HTMLInputElement).value };
 }
 
 /** 当前值：输入框/下拉框的 value，复选/单选为 "true"/"false"，可编辑区域与其他元素取文本。 */
@@ -505,20 +550,66 @@ export function obActSelectPlan(
   };
 }
 
-/** 下拉框选中第 index 项（键盘方式未生效时的退路）：只选这一项，派发 input/change。 */
-export function obActSelectApply(select: Element, index: number): string {
+/**
+ * 下拉框选中 indexes 指定的项（只选这些，其余取消）并派发一组 input/change；选中状态本来就一致时不动，返回是否改动。
+ * 单选框的键盘方式未生效时用它做退路；多选框用它一次设定整组选项。
+ */
+export function obActSelectApply(select: Element, indexes: number[]): boolean {
   const s = select as HTMLSelectElement;
-  if (s.multiple) for (const o of s.options) o.selected = false;
-  s.selectedIndex = index;
+  const want = new Set(indexes);
+  const opts = [...s.options];
+  if (opts.every((o, i) => o.selected === want.has(i))) return false;
+  if (s.multiple) for (const [i, o] of opts.entries()) o.selected = want.has(i);
+  else s.selectedIndex = indexes[0] ?? -1;
   s.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   s.dispatchEvent(new Event('change', { bubbles: true }));
-  return s.value;
+  return true;
 }
 
-/** 选项所属的下拉框，及选项下标。 */
-export function obActOptionOwner(opt: Element): { select: Element | null; index: number } {
+/**
+ * 暂扣下拉框的 input/change：逐项按键选择时，中间项的事件不能让页面看到（onchange 里导航、联动加载会跑错）。
+ * 在 window（以及下拉框所在的 Shadow Root，change 不穿出 Shadow 边界）上以捕获方式监听，目标是该下拉框的事件
+ * 被 stopImmediatePropagation 拦下；返回的 stop 撤掉监听。已经在本监听之前注册了捕获监听的页面脚本拦不住（极少见）。
+ * 动作被打断、没人来撤时 5 秒后自动撤掉。
+ */
+export function obActHoldEvents(el: Element): { stop: () => void } {
+  const hold = (e: Event) => {
+    const first = e.composedPath()[0];
+    if (first instanceof Element && obActHits(el, first)) e.stopImmediatePropagation();
+  };
+  const scopes: EventTarget[] = [window];
+  for (let n: Node = el, i = 0; i < 32; i++) {
+    const root = n.getRootNode();
+    if (!(root instanceof ShadowRoot)) break;
+    scopes.push(root);
+    n = root.host;
+  }
+  for (const t of scopes) {
+    t.addEventListener('input', hold, true);
+    t.addEventListener('change', hold, true);
+  }
+  const stop = () => {
+    for (const t of scopes) {
+      t.removeEventListener('input', hold, true);
+      t.removeEventListener('change', hold, true);
+    }
+  };
+  setTimeout(stop, 5000);
+  return { stop };
+}
+
+/** 选项所属的下拉框、选项下标，及该下拉框是否多选。 */
+export function obActOptionOwner(opt: Element): {
+  select: Element | null;
+  index: number;
+  multiple: boolean;
+} {
   const select = opt.closest('select');
-  return { select, index: select ? [...select.options].indexOf(opt as HTMLOptionElement) : -1 };
+  return {
+    select,
+    index: select ? [...select.options].indexOf(opt as HTMLOptionElement) : -1,
+    multiple: !!select?.multiple,
+  };
 }
 
 /** datalist 选项对应的输入框（list 属性指向该 datalist），及要填入的值。 */
@@ -836,13 +927,16 @@ export const ACT_DEPS = [
   obActScrollIntoView,
   obActFrameHit,
   obActInfo,
+  obActHasFocus,
   obActFocus,
+  obActCaretEnd,
   obActFocusSelectAll,
   obActIsFocused,
   obActSetNativeValue,
   obActValue,
   obActSelectPlan,
   obActSelectApply,
+  obActHoldEvents,
   obActOptionOwner,
   obActDatalistInput,
   obActTrack,

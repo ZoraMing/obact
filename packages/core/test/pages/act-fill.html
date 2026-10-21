@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>填值测试</title></head>
+<body>
+  <label>排序 <select id="sort"><option value="1">一</option><option value="2">二</option><option value="3">三</option><option value="4">四</option><option value="5">五</option></select></label>
+  <label>菜单 <select id="menu"><option value="" disabled selected>请选择</option><option value="a">页面A</option><option value="b">页面B</option><option value="c">页面C</option></select></label>
+  <label>跳转 <select id="jump" onchange="location.href = '/pages/act-target.html?to=' + this.value"><option value="">请选择</option><option value="a">页面A</option><option value="b">页面B</option><option value="c">页面C</option></select></label>
+  <label>优先级 <select id="multi" multiple size="4"><option value="1">紧急</option><option value="2">重要</option><option value="3">普通</option><option value="4">低</option><option value="5">很低</option><option value="6">极低</option></select></label>
+  <label>日期 <input id="date" type="date"></label>
+  <label>颜色 <input id="color" type="color"></label>
+  <label>滑块 <input id="range" type="range" min="0" max="10"></label>
+  <label>预填 <input id="pre" value="abc"></label>
+  <label>备注 <textarea id="note">第一行
+第二行</textarea></label>
+  <label>邮箱 <input id="mail" type="email" value="a@b.c"></label>
+  <div id="rich" contenteditable="true" aria-label="富文本">原有<b>内容</b></div>
+  <script>
+    window.events = [];
+    const val = (el) => el.multiple ? [...el.selectedOptions].map((o) => o.value).join('|') : el.value;
+    for (const id of ['sort', 'menu', 'multi', 'date', 'color', 'range']) {
+      const el = document.getElementById(id);
+      for (const t of ['input', 'change']) el.addEventListener(t, (e) => window.events.push(`${t}:${id}:${val(el)}:${e.isTrusted}`));
+    }
+  </script>
+</body>
+</html>
