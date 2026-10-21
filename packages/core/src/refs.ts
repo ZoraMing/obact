@@ -1,4 +1,5 @@
 import type { Frame } from 'puppeteer-core';
+import { ObactError } from './errors.ts';
 
 export type RefEntry = { ref: number; pageId: string; frame: Frame };
 
@@ -19,7 +20,7 @@ export class RefRegistry {
 
   /** 页面内编号完成后，推进计数并登记新编号。 */
   commit(next: number, added: number[], pageId: string, frame: Frame): void {
-    if (next < this.#next) throw new Error(`编号回退：${next} < ${this.#next}`);
+    if (next < this.#next) throw new ObactError('internal', `编号回退：${next} < ${this.#next}`);
     this.#next = next;
     for (const ref of added) this.#map.set(ref, { ref, pageId, frame });
   }

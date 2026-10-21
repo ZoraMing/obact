@@ -44,8 +44,9 @@ const SET_CLICKABLE =
  * 编号前用一次 DOMSnapshot 补齐页面脚本看不到的信息（只处理与主文档同进程的文档，OOPIF 内暂不支持）：
  * - 封闭的 Shadow Root：挂到宿主元素的不可枚举属性 __obactClosedRoot 上，让页面内助手能遍历；
  * - 绑定了点击类监听（click、mousedown、pointerdown 等）的非原生元素：打上不可枚举标记 __obactClickable，
- *   让它们算作可交互（Vue、jQuery 等直接绑定事件的自绘控件）。事件委托到根节点的框架（如 React）
- *   看不到监听，由页面内的 cursor:pointer 推断兜底（obInferredKind）。
+ *   让它们算作可交互（Vue、jQuery 等直接绑定事件的自绘控件）。事件委托到 document 的框架（如 React 16）
+ *   看不到监听，由页面内的 cursor:pointer 推断兜底（obInferredKind）；委托到容器的（React 17+ 的 #root、
+ *   jQuery 的 .on('click', 'li')）标记会落在容器上，页面内按委托挂载点处理（obIsDelegationRoot）。
  */
 export async function exposeForMarking(
   page: Page,
@@ -117,14 +118,30 @@ export async function exposeForMarking(
   }
 }
 
+/** 各会话正在排队的编号任务：编号会话内全局递增，从读起点到登记完成之间不能让另一次编号插进来。 */
+const marking = new WeakMap<Session, Promise<unknown>>();
+
 /**
  * 给标签页内所有 frame 的可交互元素编号（会话内递增、不复用），并登记到编号表。
- * 返回每个 frame 内当前有效的全部编号（按文档顺序）。
+ * 返回每个 frame 内当前有效的全部编号（按文档顺序）。同一会话的并发调用（多个标签页、同一页重复观察）按顺序执行。
  */
-export async function markPage(
+export function markPage(
   s: Session,
   pageId: string,
   opts: { closedShadow?: boolean; clickListeners?: boolean } = {},
+): Promise<FrameRefs[]> {
+  const run = (marking.get(s) ?? Promise.resolve()).then(() => markPageNow(s, pageId, opts));
+  marking.set(
+    s,
+    run.catch(() => {}),
+  );
+  return run;
+}
+
+async function markPageNow(
+  s: Session,
+  pageId: string,
+  opts: { closedShadow?: boolean; clickListeners?: boolean },
 ): Promise<FrameRefs[]> {
   const page = s.pages.get(pageId);
   if (opts.closedShadow !== false || opts.clickListeners !== false) {

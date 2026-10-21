@@ -256,8 +256,13 @@ export function obName(el: Element): string {
     'tooltip',
   ];
   const role = obRole(el);
+  // 可编辑区域（contenteditable、role=textbox/searchbox）的内容是它的值，不是名称：名称会随输入变化，值也会被重复写进 name
+  const editable =
+    role === 'textbox' ||
+    role === 'searchbox' ||
+    ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable'));
   // 可点击的行、列表项、单元格等（点击监听、onclick、pointer 推断）也按内容取名，后台系统里很常见
-  if (fromContent.includes(role) || obIsClickableGeneric(el)) {
+  if (!editable && (fromContent.includes(role) || obIsClickableGeneric(el))) {
     // 没有子元素时 textContent 折叠空白后与 innerText 相同，且不触发排版：
     // innerText 首次调用要为每个块建立排版映射，5000 个按钮约 2.6 秒（大表 observe 的主要耗时）
     const raw =
@@ -346,8 +351,11 @@ export function obHint(el: Element): string {
   return words.slice(0, 3).join(' ').slice(0, 40);
 }
 
-/** 可交互元素的判定（与 BrowserGym 的可交互角色对齐，另含原生控件、tabindex、contenteditable、onclick）。 */
-export function obIsInteractive(el: Element): boolean {
+/**
+ * 可交互元素的判定（与 BrowserGym 的可交互角色对齐，另含原生控件、tabindex、contenteditable、onclick）。
+ * ignoreListener 为 true 时不看点击监听标记，只认原生、role、tabindex 这类“真”交互依据。
+ */
+export function obIsInteractive(el: Element, ignoreListener = false): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === 'input') return (el.getAttribute('type') ?? '').toLowerCase() !== 'hidden';
   // datalist 里的 option 不渲染、不可单独操作，已作为输入框的 options 返回
@@ -384,14 +392,42 @@ export function obIsInteractive(el: Element): boolean {
   if (tabindex !== null && tabindex !== '-1') return true;
   if ((el as HTMLElement).isContentEditable && el.hasAttribute('contenteditable')) return true;
   if (el.getAttribute('draggable') === 'true') return true;
-  // Node 侧用 DOMSnapshot 的 isClickable 找到绑定了点击类监听的元素后打上的不可枚举标记（见 mark.ts）
-  if ((el as unknown as { __obactClickable?: boolean }).__obactClickable) return true;
-  return el.hasAttribute('onclick');
+  if (el.hasAttribute('onclick')) return true;
+  // Node 侧用 DOMSnapshot 的 isClickable 找到绑定了点击类监听的元素后打上的不可枚举标记（见 mark.ts）；
+  // 事件委托的挂载点只是监听挂在那里，不算
+  return (
+    !ignoreListener &&
+    Boolean((el as unknown as { __obactClickable?: boolean }).__obactClickable) &&
+    !obIsDelegationRoot(el)
+  );
+}
+
+/**
+ * 事件委托的挂载点（React 17+ 把监听挂在 #root，jQuery 的 .on('click', 'li') 挂在 ul）：只靠监听标记算可交互
+ * （调用方已排除其他依据），自身 cursor 不是 pointer，并且满足其一：
+ * - 里面有只靠 cursor:pointer 判定的自绘控件，监听多半是替它们委托的；
+ * - 它是页面外壳（没有显式 role 的 body 直接子元素，如 #root），里面还有别的可交互元素。
+ * 真正可操作的是里面的元素；它自己若也列出来，名称是整块文字，会吞掉纯网页信息，还会挤掉里面自绘控件的推断。
+ * 带 role 的容器（可拖拽的 dialog、事件委托的 tablist）、包着原生控件的小包装（滑块轨道、表单项外层）、
+ * svg 绘图区（图表、地图的空白处本身也可点）不在此列，仍按可交互处理（BW-14 对照里它们都是 BrowserGym 认定的可点击元素）。
+ */
+export function obIsDelegationRoot(el: Element): boolean {
+  if (el.tagName.toLowerCase() === 'svg' || getComputedStyle(el).cursor === 'pointer') return false;
+  const inside = obDeepAll(el, '*');
+  if (
+    el.parentElement === document.body &&
+    !el.hasAttribute('role') &&
+    inside.some((d) => obIsInteractive(d, true))
+  ) {
+    return true;
+  }
+  return inside.some((d) => !obIsInteractive(d, true) && obInferredKind(d) === 'pointer');
 }
 
 /**
  * 推断的可操作元素（需要计算样式，比 obIsInteractive 贵）：
  * - 自绘控件：cursor 为 pointer 的最外层元素，且不在已有可交互元素之内（常见于事件委托到根节点的框架，如 React）；
+ *   监听挂在祖先容器上（React 17+ 的 #root）不影响推断；
  * - 滚动容器：内容超出且 overflow 为 auto/scroll 的区域（虚拟滚动表格等），可执行 scroll。
  * 返回推断类型，不是则返回 null。
  */
@@ -417,7 +453,8 @@ export function obInferredKind(el: Element): 'pointer' | 'scroll' | null {
   if (r.width < 4 || r.height < 4) return null;
   let a: Element | null = parent;
   while (a) {
-    if (obIsInteractive(a)) return null;
+    // 只靠监听标记的祖先不算：多半是事件委托的挂载点，里面 cursor:pointer 的才是控件
+    if (obIsInteractive(a, true)) return null;
     a = a.parentElement;
   }
   return 'pointer';
@@ -578,11 +615,18 @@ export function obFindRef(ref: number, attr: string, key: string): Element | nul
   return null;
 }
 
-/** 多个候选时，只剩一个可见的就取它（响应式页面常见的隐藏副本）。 */
+/**
+ * 多个候选时，只剩一个已渲染的就取它（响应式页面常见的隐藏副本）。
+ * 只看是否渲染（display、visibility、opacity、零尺寸），不看是否在视口内：同名元素的唯一性不能随滚动位置变化。
+ */
 export function obPickUnique(list: Element[]): Element | null {
   if (list.length === 1) return list[0] ?? null;
-  const visible = list.filter((e) => obVisibleRatio(e) > 0);
-  return visible.length === 1 ? (visible[0] ?? null) : null;
+  const shown = list.filter((e) => {
+    if (!e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  return shown.length === 1 ? (shown[0] ?? null) : null;
 }
 
 /**
@@ -718,6 +762,7 @@ export const DOM_LIB = [
   obName,
   obHint,
   obIsInteractive,
+  obIsDelegationRoot,
   obInferredKind,
   obIsClickableGeneric,
   obActions,

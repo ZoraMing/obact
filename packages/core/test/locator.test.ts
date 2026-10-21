@@ -134,6 +134,60 @@ describe('定位器生成（FR-07、FR-32）', { skip: SKIP }, () => {
     assert.equal(r.unique, false);
   });
 
+  test('同名元素只有一个在视口内：唯一性不随滚动位置变化，display:none 的副本仍可消歧', async () => {
+    const s = env.session;
+    const pageId = await env.open('/pages/basic.html');
+    const page = s.pages.get(pageId);
+    await page.setContent(
+      `<body style="margin:0">
+        <button data-k="near">编辑</button>
+        <button data-k="copy" style="display:none">保存</button><button data-k="save">保存</button>
+        <div style="height:3000px"></div>
+        <button data-k="far">编辑</button>
+      </body>`,
+    );
+    const refs = await refsByKey(s, pageId);
+    // 两个“编辑”都已渲染：far 此刻在视口外，不能因此把 near 当成唯一
+    const near = await generateLocator(s, pageId, refs.get('near') as number);
+    assert.equal(near.unique, false);
+    // 滚到 far 那里，同一个定位器也不能换成解析到 far
+    await page.evaluate(() => window.scrollTo(0, 3000));
+    await rejectsWithCode(
+      resolveLocator(s, pageId, { role: 'button', name: '编辑' }),
+      'not_unique',
+    );
+    // 隐藏的副本仍然只算一个，与滚动位置无关
+    const save = await generateLocator(s, pageId, refs.get('save') as number);
+    assert.ok(save.unique);
+    assert.equal(await keyOf(s, pageId, save.locator), 'save');
+  });
+
+  test('可编辑区域不按内容取名：输入后定位器不变', async () => {
+    const s = env.session;
+    const pageId = await env.open('/pages/basic.html');
+    const page = s.pages.get(pageId);
+    await page.setContent(
+      '<body><div id="ed" contenteditable tabindex="0" data-k="ed">初始内容</div></body>',
+    );
+    const refs = await refsByKey(s, pageId);
+    const { locator, unique } = await generateLocator(s, pageId, refs.get('ed') as number);
+    assert.ok(unique);
+    assert.deepEqual([locator.role, locator.name], ['textbox', undefined]);
+    await page.type('#ed', '，追加');
+    assert.equal(await keyOf(s, pageId, locator), 'ed');
+  });
+
+  test('选择器语法无效（CSS、within、iframe 链）是 invalid_params，不是脚本错误', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    for (const loc of [
+      { css: 'div[' },
+      { css: 'button', within: '###' },
+      { role: 'button', frame: ['iframe['] },
+    ] as Locator[]) {
+      await rejectsWithCode(resolveLocator(env.session, pageId, loc), 'invalid_params');
+    }
+  });
+
   test('刷新后（id 与类名全变）原定位器仍解析到等价元素', async () => {
     const pageId = await env.open('/pages/locator-dynamic.html');
     await waitFrames(env, pageId);
@@ -230,5 +284,24 @@ describe('定位器生成（FR-07、FR-32）', { skip: SKIP }, () => {
     assert.equal(await keyOf(s, pageId, inFrame?.locator as Locator), 'frame-send');
 
     await rejectsWithCode(locatorAtPoint(s, pageId, Number.NaN, 0), 'invalid_params');
+  });
+
+  test('坐标换算：封闭 Shadow 内的按钮换算成按钮自己的定位器，不是宿主（页面没观察过）', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    const page = env.session.pages.get(pageId);
+    await page.waitForFunction(() => !!customElements.get('closed-widget'));
+    const box = await (await page.$('closed-widget'))?.boundingBox();
+    assert.ok(box);
+    const at = await locatorAtPoint(
+      env.session,
+      pageId,
+      box.x + box.width / 2,
+      box.y + box.height / 2,
+    );
+    assert.deepEqual([at?.role, at?.name], ['button', '封闭按钮']);
+    assert.ok(at?.unique);
+    const r = await resolveLocator(env.session, pageId, at.locator);
+    assert.equal(await r.handle.evaluate((el) => el.textContent), '封闭按钮');
+    await r.handle.dispose();
   });
 });

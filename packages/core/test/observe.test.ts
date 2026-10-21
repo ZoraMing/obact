@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { after, before, describe, test } from 'node:test';
 import type { ObservedElement, ObserveResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { observe } from '../src/index.ts';
+import { observe, resolveRef } from '../src/index.ts';
 import { rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
 
 const contracts = new Contracts();
@@ -96,6 +96,46 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     assert.ok(r.text_md.includes('请输入账号和密码。'));
     assert.ok(!r.text_md.includes('半出视口'));
     assert.ok(!r.text_md.includes('账号 '), '控件的标签文字不进纯网页信息');
+  });
+
+  test('事件委托的容器（React 17+ 的 #root、jQuery 的 ul）不单独列出：自绘控件各有编号，正文留在纯网页信息里', async () => {
+    const pageId = await env.open('/pages/observe-delegate.html');
+    const r = await observe(env.session, { pageId });
+    // 卡片、菜单项靠 cursor:pointer 推断，不能被挂在容器上的监听挤掉
+    for (const name of ['商品 A', '商品 B', '首页', '订单管理', '提交', '邮箱', '订阅提交'])
+      byName(r, name);
+    // 容器本身（#root、ul、页面外壳）不列出：它们的名称都是整块文字
+    assert.deepEqual(
+      r.elements.filter((e) => e.name.length > 12).map((e) => e.name),
+      [],
+    );
+    assert.ok(r.text_md.includes('点击卡片查看详情。'), '正文没有被容器的名称吞掉');
+    // 对照：自己绑了监听的控件、cursor:pointer 的行、带 role 的容器仍然列出
+    for (const name of ['自绘面板', '订单行 详情', '确认框']) byName(r, name);
+  });
+
+  test('同一会话并发 observe：编号不重复，也不抛“编号回退”，各页编号都能用', async () => {
+    const a = await openMisc();
+    const b = await env.open('/pages/observe-long.html');
+    const [ra, rb, ra2] = await Promise.all([
+      observe(env.session, { pageId: a }),
+      observe(env.session, { pageId: b }),
+      observe(env.session, { pageId: a }),
+    ]);
+    const refsA = new Set(ra.elements.map((e) => e.ref));
+    for (const e of rb.elements) assert.ok(!refsA.has(e.ref), `两个标签页的编号重复：${e.ref}`);
+    assert.deepEqual(
+      ra2.elements.map((e) => e.ref),
+      ra.elements.map((e) => e.ref),
+      '同一页重复观察得到同一批编号',
+    );
+    for (const [pageId, r] of [
+      [a, ra],
+      [b, rb],
+    ] as const) {
+      const first = r.elements[0] as ObservedElement;
+      await (await resolveRef(env.session, pageId, first.ref)).handle.dispose();
+    }
   });
 
   test('字符预算：截断并标注，elements 与 snapshot_text 始终一致', async () => {
