@@ -22,6 +22,7 @@
   <label>状态 <select id="sel"><option value="a">全部</option><option value="p">待审核</option><option value="d">已审核</option></select></label>
   <label><input type="checkbox" id="cb"> 同意</label>
   <label class="toggle"><input type="checkbox" id="hidden-cb" class="vh"> 自动续费</label>
+  <label class="toggle"><input type="checkbox" id="agree" class="vh"> 同意<a id="terms" href="/pages/act-target.html" onclick="log('terms')">《服务条款与隐私政策服务条款与隐私政策服务条款》</a></label>
   <div id="editor" contenteditable="true" aria-label="编辑器">原内容</div>
   <label>附件 <input type="file" id="file"></label>
   <button id="alert" onclick="alert('提示一下')">弹 alert</button>
@@ -49,6 +50,7 @@
     document.getElementById('sel').addEventListener('change', (e) => log('change:sel:' + e.target.value));
     document.getElementById('cb').addEventListener('change', (e) => log('cb:' + e.target.checked + ':' + e.isTrusted));
     document.getElementById('hidden-cb').addEventListener('change', (e) => log('hcb:' + e.target.checked));
+    document.getElementById('agree').addEventListener('change', (e) => log('agree:' + e.target.checked));
     document.getElementById('file').addEventListener('change', (e) => log('file:' + [...e.target.files].map((f) => f.name).join(',')));
     const pad = document.getElementById('pad');
     pad.addEventListener('click', (e) => log(`pad:${Math.round(e.offsetX)},${Math.round(e.offsetY)}:${e.isTrusted}`));

@@ -214,6 +214,14 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.ok((await events(pageId)).includes('hcb:true'));
   });
 
+  test('隐藏的原生复选框的 label 里带链接：点在链接以外的地方，不会跟随链接；click 和 fill 都一样', async () => {
+    const pageId = await open();
+    await ok({ op: 'click', pageId, target: { css: '#agree' } });
+    await ok({ op: 'fill', pageId, target: { css: '#agree' }, value: false });
+    assert.deepEqual(await events(pageId), ['agree:true', 'agree:false'], '链接没有被点到');
+    assert.match(env.session.pages.get(pageId).url(), /act-main\.html$/);
+  });
+
   test('被遮挡：重试 3 次后报 obscured；onObscured 处理后成功', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);
@@ -242,6 +250,45 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.equal(calls, 1);
     assert.deepEqual(await events(pageId), ['click:true']);
     assert.ok(r.duration_ms < 4000);
+  });
+
+  test('onObscured 返回 true 的不计入连续不符次数：三层遮罩逐层处理后点击成功；总说已处理而遮罩不消失时有上限', async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    await page.evaluate(() => {
+      for (let i = 1; i <= 3; i++) {
+        const m = document.createElement('div');
+        m.className = 'layer';
+        m.style.cssText = `position:fixed;inset:0;z-index:${100 + i}`;
+        document.body.append(m);
+      }
+    });
+    let calls = 0;
+    await ok(
+      { op: 'click', pageId, target: { css: '#btn' } },
+      {
+        onObscured: async () => {
+          calls++;
+          await page.evaluate(() => [...document.querySelectorAll('.layer')].pop()?.remove());
+          return true;
+        },
+      },
+    );
+    assert.equal(calls, 3);
+    assert.deepEqual(await events(pageId), ['click:true']);
+
+    const stuck = await open();
+    await env.session.pages.get(stuck).$eval('#mask', (e) => {
+      (e as HTMLElement).style.display = 'block';
+    });
+    let tries = 0;
+    await err({ op: 'click', pageId: stuck, target: { css: '#btn' } }, 'obscured', {
+      onObscured: async () => {
+        tries++;
+        return true;
+      },
+    });
+    assert.ok(tries > 3, `已处理的不按 3 次截断：${tries}`);
   });
 
   test('落点防护：最后一次复核之后布局又变了，点击被拦截，不会落到别的元素上；重试后点中目标', async () => {
@@ -306,7 +353,7 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.equal(text, '新的内容');
   });
 
-  test('移动中的按钮等位置稳定后再点；禁用按钮报 not_actionable', async () => {
+  test('移动中的按钮等位置稳定后再点；禁用按钮不能点，但能悬停和截图', async () => {
     const pageId = await open();
     const page = env.session.pages.get(pageId);
     await page.$eval('#moving', (e) => {
@@ -318,6 +365,62 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       { op: 'click', pageId, target: { css: '#disabled' }, timeout_ms: 600 },
       'not_actionable',
     );
+    // 悬停和截图不要求启用：禁用按钮上的悬停提示、禁用态的截图都要能做，不能白等满超时
+    await ok({ op: 'hover', pageId, target: { css: '#disabled' }, timeout_ms: 600 });
+    await ok({ op: 'take_screenshot', pageId, target: { css: '#disabled' }, timeout_ms: 600 });
+  });
+
+  test('定位器目标在可操作性检查期间被框架重绘替换：重新定位后 fill、type_text、下拉框、勾选都用新节点', async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    // 第一次取该元素位置之后 20 毫秒，把它换成克隆出来的新节点（模拟框架重渲染）
+    const swapAfterProbe = (css: string) =>
+      page.evaluate((sel) => {
+        const orig = Element.prototype.getBoundingClientRect;
+        let done = false;
+        Element.prototype.getBoundingClientRect = function (this: Element) {
+          if (!done && this.matches(sel)) {
+            done = true;
+            setTimeout(() => this.replaceWith(this.cloneNode(true)), 20);
+          }
+          return orig.call(this);
+        };
+      }, css);
+    const value = (css: string) => page.$eval(css, (e) => (e as HTMLInputElement).value);
+    await swapAfterProbe('#text');
+    await ok({ op: 'fill', pageId, target: { css: '#text' }, value: '新值' });
+    assert.equal(await value('#text'), '新值');
+    await swapAfterProbe('#area');
+    await ok({ op: 'type_text', pageId, target: { css: '#area' }, text: 'abc' });
+    assert.equal(await value('#area'), 'abc');
+    await swapAfterProbe('#sel');
+    await ok({ op: 'fill', pageId, target: { css: '#sel' }, value: '待审核' });
+    assert.equal(await value('#sel'), 'p');
+    await swapAfterProbe('#cb');
+    await ok({ op: 'fill', pageId, target: { css: '#cb' }, value: true });
+    assert.equal(await page.$eval('#cb', (e) => (e as HTMLInputElement).checked), true);
+  });
+
+  test('目标在比视口高的 iframe 深处：先对目标本身居中，把父文档带到目标处再点', async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    await page.setContent(
+      '<!doctype html><body style="margin:0"><div style="height:100px"></div><iframe id="tall" style="display:block;width:600px;height:1200px;border:0"></iframe>',
+    );
+    await page.evaluate(() => {
+      (window as unknown as { events: string[] }).events = [];
+      (document.getElementById('tall') as HTMLIFrameElement).srcdoc =
+        "<body style='margin:0'><div style='height:1000px'></div><button id='deep' onclick=\"parent.events.push('deep')\">深处的按钮</button>";
+    });
+    await page.waitForFunction(
+      () =>
+        !!(document.getElementById('tall') as HTMLIFrameElement).contentDocument?.getElementById(
+          'deep',
+        ),
+    );
+    await ok({ op: 'click', pageId, target: { css: '#deep', frame: ['iframe#tall'] } });
+    assert.deepEqual(await events(pageId), ['deep']);
+    assert.ok((await page.evaluate(() => scrollY)) > 0, '父文档被滚动到目标处');
   });
 
   test('页面外的元素先滚动到视口再点', async () => {
@@ -429,6 +532,17 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
 
   test('拖放：元素拖到元素（HTML5 拖放）', async () => {
     const pageId = await open();
+    await ok({ op: 'drag', pageId, from: { css: '#card' }, to: { css: '#drop' } });
+    assert.ok((await events(pageId)).includes('drop:card'));
+  });
+
+  test('拖放：终点只有一部分在视口内时落在可见部分的中心，不是整个矩形的中心', async () => {
+    const pageId = await open();
+    // 放置区上沿在视口底边上方 40 像素、高 400：矩形中心在视口外，可见部分只有一条
+    await env.session.pages.get(pageId).$eval('#drop', (e) => {
+      (e as HTMLElement).style.cssText =
+        `position:absolute;left:300px;top:${innerHeight - 40}px;width:200px;height:400px`;
+    });
     await ok({ op: 'drag', pageId, from: { css: '#card' }, to: { css: '#drop' } });
     assert.ok((await events(pageId)).includes('drop:card'));
   });

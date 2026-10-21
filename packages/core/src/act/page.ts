@@ -73,6 +73,22 @@ export function obActHits(el: Element, hit: Element | null): boolean {
   return false;
 }
 
+/**
+ * 命中元素是否算落在这次动作的目标上（el 是点击对象，subject 是 label 代点时被代点的控件）。
+ * label 代点时，落在 label 里点了不会勾选控件的后代上（链接、按钮、其他表单控件、嵌套 label 等）不算：
+ * 浏览器对它们不触发 label 的激活行为，只做后代自己的事（如跟随链接）。
+ */
+export function obActLands(el: Element, subject: Element | null, hit: Element | null): boolean {
+  if (!hit) return false;
+  if (subject) {
+    const inner = hit.closest(
+      'a[href],button,input,select,textarea,summary,label,iframe,img[usemap],audio[controls],video[controls]',
+    );
+    if (inner && inner !== el && inner !== subject && el.contains(inner)) return false;
+  }
+  return obActHits(subject ?? el, hit) || obActHits(el, hit);
+}
+
 /** 元素是否禁用：:disabled、aria-disabled、位于 inert 子树内。 */
 export function obActDisabled(el: Element): boolean {
   return (
@@ -187,11 +203,18 @@ export function obActClip(el: Element): [number, number, number, number] {
 /**
  * 候选点击点：取元素在可见区域（视口减去祖先裁剪）内面积最大的一段 client rect，
  * 先取其可见部分的中心，再取四个象限的中心作为备选（部分被吸顶栏等盖住时仍能命中）。
+ * label 代点时（edge 为 true）再加各段 client rect 贴着左边缘的点：自绘复选框的方框通常在 label 最左侧，
+ * label 中间被链接占满时其余候选点都落在链接上；行内 label 的 client rect 里还含着链接等后代的矩形，
+ * 面积最大的一段可能整个是链接，label 自己的文字落在别的段上。
  */
-export function obActPoints(el: Element): { points: [number, number][]; inView: boolean } {
+export function obActPoints(
+  el: Element,
+  edge = false,
+): { points: [number, number][]; inView: boolean } {
   const [cl, ct, cr, cb] = obActClip(el);
   let best: { l: number; t: number; r: number; b: number; area: number } | null = null;
   let any: DOMRect | null = null;
+  const edges: [number, number][] = [];
   for (const rect of el.getClientRects()) {
     if (rect.width <= 0 || rect.height <= 0) continue;
     if (!any || rect.width * rect.height > any.width * any.height) any = rect;
@@ -201,6 +224,7 @@ export function obActPoints(el: Element): { points: [number, number][]; inView: 
     const b = Math.min(rect.bottom, cb);
     const area = Math.max(0, r - l) * Math.max(0, b - t);
     if (area > 0 && (!best || area > best.area)) best = { l, t, r, b, area };
+    if (area > 0) edges.push([l + Math.min(6, (r - l) / 2), (t + b) / 2]);
   }
   if (!best) {
     const r = any ?? el.getBoundingClientRect();
@@ -211,10 +235,9 @@ export function obActPoints(el: Element): { points: [number, number][]; inView: 
   // 可见部分太小（不到 2×2）时也视为不在视口内，交给滚动处理
   const inView = w >= 2 && h >= 2;
   const at = (fx: number, fy: number): [number, number] => [best.l + w * fx, best.t + h * fy];
-  return {
-    points: [at(0.5, 0.5), at(0.25, 0.25), at(0.75, 0.25), at(0.25, 0.75), at(0.75, 0.75)],
-    inView,
-  };
+  const points = [at(0.5, 0.5), at(0.25, 0.25), at(0.75, 0.25), at(0.25, 0.75), at(0.75, 0.75)];
+  if (edge) points.push(...edges.slice(0, 6));
+  return { points, inView };
 }
 
 /**
@@ -253,7 +276,8 @@ export function obActAnimating(el: Element): boolean {
 
 /**
  * 可操作性探测（FR-13）：subject 决定是否启用（label 代点时 subject 是控件本身），el 决定位置与命中。
- * withHit 为 true 时同时做命中测试：依次尝试候选点，返回第一个落在目标上的点。
+ * withHit 为 true 时同时做命中测试：依次尝试候选点，返回第一个落在目标上的点；
+ * 不做命中测试时只给出可见区域的中心 center（拖拽终点这类不要求点在目标上的动作用它）。
  */
 export function obActProbe(
   el: Element,
@@ -265,6 +289,7 @@ export function obActProbe(
   enabled: boolean;
   inView: boolean;
   rect: Rect;
+  center: [number, number] | null;
   hit: Hit | null;
   animating: boolean;
 } {
@@ -278,17 +303,19 @@ export function obActProbe(
     enabled: connected && !obActDisabled(subj),
     inView: false,
     rect,
+    center: null as [number, number] | null,
     hit: null as Hit | null,
     animating: connected && obActAnimating(el),
   };
   if (!out.visible) return out;
-  const { points, inView } = obActPoints(el);
+  const { points, inView } = obActPoints(el, !!subject);
   out.inView = inView;
+  if (inView) out.center = points[0] ?? null;
   if (!withHit || !inView) return out;
   let first: Hit | null = null;
   for (const [x, y] of points) {
     const hit = obActDeepHit(x, y);
-    const ok = obActHits(subj, hit) || obActHits(el, hit);
+    const ok = obActLands(el, subject, hit);
     if (ok) {
       out.hit = { ok, x, y, desc: '' };
       return out;
@@ -302,7 +329,7 @@ export function obActProbe(
 /** 坐标处的命中元素是否仍是目标（派发前一刻的复核）。 */
 export function obActRecheck(el: Element, subject: Element | null, x: number, y: number): Hit {
   const hit = obActDeepHit(x, y);
-  const ok = obActHits(subject ?? el, hit) || obActHits(el, hit);
+  const ok = obActLands(el, subject, hit);
   return { ok, x, y, desc: ok ? '' : obActDescribe(hit) };
 }
 
@@ -747,7 +774,7 @@ export function obActLandStart(key: string, el: Element, subject: Element | null
       rec.fired = true;
       const first = e.composedPath()[0];
       rec.target = first instanceof Element ? first : (e.target as Element | null);
-      rec.ok = obActHits(subject ?? el, rec.target) || obActHits(el, rec.target);
+      rec.ok = obActLands(el, subject, rec.target);
     }
     if (!rec.ok) {
       e.stopImmediatePropagation();
@@ -916,6 +943,7 @@ export const ACT_DEPS = [
   obActDescribe,
   obActDeepHit,
   obActHits,
+  obActLands,
   obActDisabled,
   obActVisible,
   obActLabelProxy,

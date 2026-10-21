@@ -113,7 +113,11 @@ function requireAction(info: Info, op: string): void {
   );
 }
 
-const sameEl = (loc: Located, handle: ElementHandle<Element>): Located => ({ ...loc, handle });
+const sameEl = (loc: Located, handle: ElementHandle<Element>): Located => ({
+  ...loc,
+  handle,
+  derived: true,
+});
 
 /** 鼠标按下状态异常（上次拖拽被打断）时先抬起再重试一次。 */
 async function mouseSafe(page: Page, fn: () => Promise<void>): Promise<void> {
@@ -155,10 +159,9 @@ async function clickElement(
   o: { button?: MouseButton; count?: number; modifiers?: readonly string[]; who?: Subject } = {},
 ): Promise<Located> {
   const p = page(ctx);
-  const streak = { n: 0 };
+  const streak = { n: 0, handled: 0 };
   for (;;) {
     const ready = await actionable(ctx, loc, { move: true, who: o.who, streak });
-    loc = ready.loc;
     const el = o.who?.el ?? loc.handle;
     const subject = o.who?.subject ?? null;
     const key = `__obactLand_${ctx.s.key}`;
@@ -202,9 +205,7 @@ async function clickElement(
     const at: [number, number] = [ready.point.x, ready.point.y];
     if (!land.fired) {
       // 按下事件始终没有到达目标所在的文档：点击没有被页面收到，可以安全重试（连续 3 次报错）
-      streak.n++;
-      await notifyObscured(ctx, loc, at, '（按下事件未送达）', streak.n);
-      if (streak.n >= 3) {
+      if (!(await notifyObscured(ctx, loc, at, '（按下事件未送达）', streak))) {
         fail(
           'landing_mismatch',
           `按下事件没有到达目标所在的文档（连续 ${streak.n} 次；${land.info ?? ''}）`,
@@ -213,9 +214,7 @@ async function clickElement(
       }
       continue;
     }
-    streak.n++;
-    await notifyObscured(ctx, loc, at, land.desc, streak.n);
-    if (streak.n >= 3) {
+    if (!(await notifyObscured(ctx, loc, at, land.desc, streak))) {
       fail(
         'landing_mismatch',
         `点击落在了 ${land.desc} 上，而不是目标元素（连续 ${streak.n} 次，已拦截，页面没有收到点击）`,
@@ -312,7 +311,7 @@ const hover: Handler = async (ctx, fx) => {
   try {
     // 悬停不改变页面数据，不限制元素类型（CSS :hover 菜单常不带 aria-haspopup）
     ctx.dispatched = true;
-    await actionable(ctx, loc, { move: true });
+    await actionable(ctx, loc, { move: true, enabled: false });
   } finally {
     await loc.handle.dispose().catch(() => {});
   }
@@ -575,7 +574,7 @@ async function dragEnd(
     if (!info.actions.includes('drag') && !info.actions.includes('click'))
       requireAction(info, 'drag');
   }
-  const r = await actionable(ctx, loc, { hitTest: role === 'from' });
+  const r = await actionable(ctx, loc, { hitTest: role === 'from', enabled: role === 'from' });
   return { x: r.point.x, y: r.point.y, loc: r.loc };
 }
 
@@ -597,7 +596,7 @@ const drag: Handler = async (ctx, fx) => {
       from.y = r.point.y;
       const still = await to.loc.handle.evaluate(PROBE, null, false);
       if (!still.inView) fail('not_actionable', '拖拽的起点和终点无法同时显示在视口内');
-      const again = await actionable(ctx, to.loc, { hitTest: false });
+      const again = await actionable(ctx, to.loc, { hitTest: false, enabled: false });
       to.x = again.point.x;
       to.y = again.point.y;
     }
@@ -615,6 +614,9 @@ const drag: Handler = async (ctx, fx) => {
           from.y + ((to.y - from.y) * i) / steps,
         );
       }
+      // 最后一步才进入终点元素时只会触发 dragenter、没有 dragover，drop 不被接受：原地再移动一次
+      ctx.alive();
+      await p.mouse.move(to.x, to.y);
     } finally {
       await p.mouse.up().catch(() => {});
     }
@@ -696,7 +698,7 @@ const scroll: Handler = async (ctx, fx) => {
     if (a.target) {
       loc = await locate(ctx, a.target, fx);
       ctx.locator = loc.via;
-      const r = await actionable(ctx, loc, { move: true });
+      const r = await actionable(ctx, loc, { move: true, enabled: false });
       x = r.point.x;
       y = r.point.y;
       fx0 = r.point.fx;
@@ -890,7 +892,7 @@ const takeScreenshot: Handler = async (ctx, fx) => {
     const loc = await locate(ctx, a.target, fx);
     ctx.locator = loc.via;
     try {
-      await actionable(ctx, loc, { hitTest: false, stable: false });
+      await actionable(ctx, loc, { hitTest: false, stable: false, enabled: false });
       ctx.dispatched = true;
       await loc.handle.screenshot({ path: out.path as `${string}.png`, type: out.type });
     } finally {

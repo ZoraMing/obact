@@ -33,6 +33,8 @@ export type Located = {
   frame: Frame;
   via: 'ref' | 'css' | 'role';
   target: Target;
+  /** 由目标派生的元素（如选项所属的下拉框）：失效时不能按目标重新定位。 */
+  derived?: boolean;
 };
 
 /** 可操作性检查后得到的派发点：顶层视口坐标与目标 frame 内坐标。 */
@@ -57,6 +59,15 @@ export async function locate(ctx: Ctx, target: Target, effects?: Effects): Promi
   }
 }
 
+/**
+ * 命中不符的计数（一次动作内，可操作性检查与派发后的落点防护共用）。
+ * n 是不符的总次数（onObscured 的 attempt），handled 是其中被 onObscured 处理掉的次数。
+ */
+export type Streak = { n: number; handled: number };
+
+/** onObscured 总说“已处理”、遮挡物却一直在时，最多这样重试几轮。 */
+const MAX_HANDLED = 10;
+
 /** 换一个元素作为点击对象（如 label 代点隐藏的复选框）；subject 仍是原目标，用于启用判断与落点核对。 */
 export type Subject = { el: ElementHandle<Element>; subject: ElementHandle<Element> | null };
 
@@ -64,8 +75,9 @@ export type Subject = { el: ElementHandle<Element>; subject: ElementHandle<Eleme
  * 可操作性检查（FR-13）：可见（必要时先滚动到视口）、启用、位置稳定（间隔 50 毫秒两次采样，位移 < 1 像素）、
  * 未被遮挡（在目标 frame 内命中测试，并逐级确认各层 iframe 元素没被遮挡）。
  *
- * - 不可见/禁用直到期限：not_actionable；元素失效：编号目标报 stale_ref，定位器目标重新定位。
- * - 命中不符：先调 onObscured，再重试；连续 3 次不符报 obscured。
+ * - 不可见/禁用直到期限：not_actionable；元素失效：编号目标报 stale_ref，定位器目标重新定位
+ *   （原地更新传入的 loc，调用方继续用同一个 loc，收尾时释放的就是最新的句柄）。
+ * - 命中不符：先调 onObscured，再重试；没被 onObscured 处理掉的不符连续 3 次报 obscured。
  * - move 为 true 时把鼠标移到该点，再在派发前一刻复核一次命中（悬停可能触发重绘或弹层）。
  */
 export async function actionable(
@@ -75,15 +87,19 @@ export async function actionable(
     hitTest?: boolean;
     stable?: boolean;
     move?: boolean;
+    /** 是否要求元素启用，默认要求；悬停、截图、滚动、拖拽终点不需要（禁用的按钮上常有悬停提示，也要能截图）。 */
+    enabled?: boolean;
     who?: Subject;
-    /** 连续不符的计数（与派发后的落点防护共用，合计 3 次报错）；省略时本次检查自己计数。 */
-    streak?: { n: number };
+    /** 不符的计数（与派发后的落点防护共用，没被处理掉的合计 3 次报错）；省略时本次检查自己计数。 */
+    streak?: Streak;
   } = {},
 ): Promise<{ point: Point; loc: Located }> {
   const hitTest = opts.hitTest !== false;
   const stable = opts.stable !== false;
-  const streak = opts.streak ?? { n: 0 };
+  const needEnabled = opts.enabled !== false;
+  const streak = opts.streak ?? { n: 0, handled: 0 };
   let scrolls = 0;
+  let lifts = 0;
   let lastState = '';
   const page = ctx.page;
   if (!page) fail('internal', '缺少标签页');
@@ -98,12 +114,12 @@ export async function actionable(
           ref: loc.target.ref,
         });
       }
-      if (opts.who) fail('not_actionable', '目标元素在操作过程中被移除');
+      if (opts.who || loc.derived) fail('not_actionable', '目标元素在操作过程中被移除');
       await loc.handle.dispose().catch(() => {});
-      loc = await locate(ctx, loc.target);
+      Object.assign(loc, await locate(ctx, loc.target));
       continue;
     }
-    if (!p1.visible || !p1.enabled) {
+    if (!p1.visible || (needEnabled && !p1.enabled)) {
       lastState = !p1.visible ? '不可见' : '已禁用';
       if (Date.now() >= ctx.deadline) {
         fail('not_actionable', `元素${lastState}（等待 ${ctx.timeout} 毫秒）`, {
@@ -148,29 +164,27 @@ export async function actionable(
       if (!hit) continue;
       const top = hit.ok ? await liftToTop(loc.frame, hit.x, hit.y) : null;
       if (top && !top.inView) {
-        // iframe 本身不在上层视口内：滚动父文档
-        if (Date.now() >= ctx.deadline) {
-          fail('not_actionable', '元素所在的 iframe 无法滚动到视口内', {
-            reason: 'outside_viewport',
-          });
-        }
-        await top.owner?.evaluate(SCROLL_INTO_VIEW, 'nearest').catch(() => {});
-        await top.owner?.dispose().catch(() => {});
+        await liftIntoView(ctx, el, top.owner, lifts++);
         continue;
       }
       await top?.owner?.dispose().catch(() => {});
       if (!hit.ok || !top?.ok) {
-        streak.n++;
         const desc = hit.ok ? (top?.desc ?? '') : hit.desc;
         const at: [number, number] = top ? [top.x, top.y] : [hit.x, hit.y];
-        await obscured(ctx, loc, at, desc, streak.n);
+        await obscured(ctx, loc, at, desc, streak);
         continue;
       }
       point = { x: top.x, y: top.y, fx: hit.x, fy: hit.y };
     } else {
-      const [x, y, w, h] = p2.rect;
-      const top = await liftToTop(loc.frame, x + w / 2, y + h / 2, false);
-      point = { x: top?.x ?? x + w / 2, y: top?.y ?? y + h / 2, fx: x + w / 2, fy: y + h / 2 };
+      // 不要求点在目标上：取可见区域的中心（整个矩形的中心可能被视口或祖先容器裁到可视区之外）
+      const [x, y] = p2.center ?? [p2.rect[0] + p2.rect[2] / 2, p2.rect[1] + p2.rect[3] / 2];
+      // 只核对 iframe 在上层视口内，不核对遮挡（拖拽开始后才出现的浮层不该拦住终点）
+      const top = await liftToTop(loc.frame, x, y, true, false);
+      if (top && !top.inView) {
+        await liftIntoView(ctx, el, top.owner, lifts++);
+        continue;
+      }
+      point = { x: top?.x ?? x, y: top?.y ?? y, fx: x, fy: y };
     }
     if (opts.move) {
       await page.mouse.move(point.x, point.y);
@@ -178,8 +192,7 @@ export async function actionable(
       if (hitTest) {
         const re = await el.evaluate(RECHECK, subject, point.fx, point.fy).catch(() => null);
         if (!re?.ok) {
-          streak.n++;
-          await obscured(ctx, loc, [point.x, point.y], re?.desc ?? '（节点已变化）', streak.n);
+          await obscured(ctx, loc, [point.x, point.y], re?.desc ?? '（节点已变化）', streak);
           continue;
         }
       }
@@ -188,17 +201,20 @@ export async function actionable(
   }
 }
 
-/** 命中不符：调 onObscured（让调用方处理弹窗等遮挡物）；不抛错。 */
+/**
+ * 命中不符：记一次，调 onObscured（让调用方处理弹窗等遮挡物）；不抛错，返回是否还该重试。
+ * 回调返回 true（已处理）的不计入报错次数，随后直接重试（最多 MAX_HANDLED 轮）；没被处理掉的连续 3 次不符就不再重试。
+ */
 export async function notifyObscured(
   ctx: Ctx,
   loc: Located,
   point: [number, number],
   desc: string,
-  attempt: number,
-): Promise<void> {
-  if (!ctx.opts.onObscured) return;
+  streak: Streak,
+): Promise<boolean> {
+  const attempt = ++streak.n;
   const round = (n: number) => Math.round(n * 10) / 10;
-  await ctx.opts.onObscured({
+  const handled = await ctx.opts.onObscured?.({
     pageId: ctx.pageId,
     op: ctx.action.op,
     target: loc.target,
@@ -206,35 +222,61 @@ export async function notifyObscured(
     hit: desc,
     attempt,
   });
+  if (handled) streak.handled++;
+  return streak.n - streak.handled < 3 && streak.handled <= MAX_HANDLED;
 }
 
-/** 命中不符：调 onObscured；连续 3 次不符报 obscured。 */
+/** 命中不符：调 onObscured；没被处理掉的不符连续 3 次报 obscured。 */
 async function obscured(
   ctx: Ctx,
   loc: Located,
   point: [number, number],
   desc: string,
-  attempt: number,
+  streak: Streak,
 ): Promise<void> {
-  await notifyObscured(ctx, loc, point, desc, attempt);
-  if (attempt >= 3) {
-    const round = (n: number) => Math.round(n * 10) / 10;
-    fail('obscured', `目标被遮挡：点击点上是 ${desc}（连续 ${attempt} 次）`, {
-      hit: desc,
-      point: [round(point[0]), round(point[1])],
-    });
+  if (await notifyObscured(ctx, loc, point, desc, streak)) return;
+  const round = (n: number) => Math.round(n * 10) / 10;
+  const done = streak.handled ? `，其中 ${streak.handled} 次已由回调处理` : '';
+  fail('obscured', `目标被遮挡：点击点上是 ${desc}（连续 ${streak.n} 次${done}）`, {
+    hit: desc,
+    point: [round(point[0]), round(point[1])],
+  });
+}
+
+/**
+ * 目标所在的 iframe 不在上层视口内：先把 iframe 元素滚进视口；目标比 iframe 里已经可见的部分更深时
+ * （iframe 与内容等高、或嵌在滚动容器里），这样带不进目标，下一轮改对目标本身居中
+ * （会连带滚动各级父文档，同源跨域都一样），两种交替直到期限。
+ */
+async function liftIntoView(
+  ctx: Ctx,
+  el: ElementHandle<Element>,
+  owner: ElementHandle<Element> | undefined,
+  n: number,
+): Promise<void> {
+  try {
+    if (Date.now() >= ctx.deadline) {
+      fail('not_actionable', '元素所在的 iframe 无法滚动到视口内', { reason: 'outside_viewport' });
+    }
+    if (n % 2 === 0) await owner?.evaluate(SCROLL_INTO_VIEW, 'nearest').catch(() => {});
+    else await el.evaluate(SCROLL_INTO_VIEW, 'center').catch(() => {});
+  } finally {
+    await owner?.dispose().catch(() => {});
   }
+  if (n >= 2) await sleep(50);
 }
 
 /**
  * 把目标 frame 内的坐标逐级换算到顶层视口，并确认每一层的 iframe 元素在该点没被遮挡。
- * check 为 false 时只换算坐标。owner 是最后一个没通过的 iframe 元素（用于滚动）。
+ * check 为 false 时只换算坐标；occlusion 为 false 时只核对在视口内、不核对遮挡。
+ * owner 是最后一个没通过的 iframe 元素（用于滚动）。
  */
 async function liftToTop(
   frame: Frame,
   x: number,
   y: number,
   check = true,
+  occlusion = true,
 ): Promise<{
   ok: boolean;
   inView: boolean;
@@ -256,7 +298,7 @@ async function liftToTop(
     }
     cx = r.x;
     cy = r.y;
-    if (check && (!r.inView || !r.ok)) {
+    if (check && (!r.inView || (occlusion && !r.ok))) {
       return { ok: false, inView: r.inView, x: cx, y: cy, desc: r.desc, owner };
     }
     await owner.dispose().catch(() => {});

@@ -34,7 +34,7 @@ export type ActOptions = {
   filesRoot?: string;
   /** 截图目录；省略时用系统临时目录下的 obact-shots。 */
   outDir?: string;
-  /** 被遮挡时的回调：返回 true 表示已处理（如关掉了弹窗），随后重试当前动作。 */
+  /** 被遮挡时的回调：返回 true 表示已处理（如关掉了弹窗），随后重试当前动作；已处理的不计入连续不符的次数（最多处理 10 轮）。 */
   onObscured?: (info: ObscuredInfo) => boolean | Promise<boolean>;
   /** 页面签名（assertion 的 signature 检查用，FR-08）。 */
   signatures?: PageSignature[];
