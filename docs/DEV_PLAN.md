@@ -88,7 +88,7 @@ workspace/            运行时目录（gitignore；workflows/ 为独立 git 仓
 
 出口：Schema 评审冻结；`T` 框架可跑；预研结论写入本文。
 
-M1 需要承接的预研结论：编号表以 backendNodeId 为准、克隆节点重新编号、`<option>` 编号、observe 只取视口内元素的可访问性信息、OOPIF 用它自己的 target 会话、扩展的 service worker 用 CDP 会话调用。
+M1 需要承接的预研结论：克隆节点重新编号、`<option>` 编号、OOPIF 用它自己的 target 会话。其中两条 M1 的实际做法与预研建议不同：节点身份由元素属性加会话内不可枚举标记共同判定，编号表只记编号属于哪个标签页的哪个 frame，backendNodeId 只在读 DOMSnapshot 对齐编号时用（`refs.ts`）；observe 不走可访问性树，元素的角色、名称、可用操作全部用 DOM 与布局信息在页面内算，可访问性树只用于 axtree 视图（`observe/page.ts`）。扩展的结论随扩展取消不再承接。
 
 ### 暂停时的状态（2026-10-16）
 
