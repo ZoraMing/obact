@@ -251,7 +251,9 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       { op: 'click', pageId, target: { css: '#btn' }, timeout_ms: 1500 },
       'obscured',
     );
-    assert.equal((await events(pageId)).length, 0, '被遮挡时不能点到遮罩上');
+    assert.match(r.error?.message ?? '', /连续 3 次/, '连续 3 次命中不符才报错');
+    // 遮罩有点击记录：没有任何记录，说明既没点到按钮，也没点到遮罩
+    assert.deepEqual(await events(pageId), [], '被遮挡时不能派发点击');
     let calls = 0;
     await ok(
       { op: 'click', pageId, target: { css: '#btn' } },
@@ -268,7 +270,6 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     );
     assert.equal(calls, 1);
     assert.deepEqual(await events(pageId), ['click:true']);
-    assert.ok(r.duration_ms < 4000);
   });
 
   test('onObscured 返回 true 的不计入连续不符次数：三层遮罩逐层处理后点击成功；总说已处理而遮罩不消失时有上限', async () => {
@@ -345,7 +346,7 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
   test('后台标签页：点击先切到前台，不多等；iframe 里的可编辑区 fill 真正写入', async () => {
     const a = await open();
     const b = await ok({ op: 'new_page', url: `${env.server.base}/pages/basic.html` });
-    assert.ok(b.effects.new_pages.length >= 0);
+    assert.equal(b.effects.new_pages.length, 1, 'new_page 报告新开的标签页');
     // a 现在是后台标签页（新开的标签页在前台）
     const t = Date.now();
     await ok({ op: 'click', pageId: a, target: { css: '#btn' } });

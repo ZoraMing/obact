@@ -374,7 +374,11 @@ describe('observe（FR-05、FR-08、FR-11、FR-31）', { skip: SKIP }, () => {
     const refs = new Set(r.elements.map((e) => e.ref));
     assert.ok(axRefs.length > 0);
     for (const ref of axRefs) assert.ok(refs.has(ref), `可访问性树中的 [${ref}] 不在 elements 中`);
-    assert.equal(r.viewport.scale > 0, true);
+    assert.equal(
+      r.viewport.scale,
+      await page.evaluate(() => devicePixelRatio),
+      '截图像素 = CSS 像素 × scale',
+    );
   });
 
   test('参数校验：未知视图', async () => {

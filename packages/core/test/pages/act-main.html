@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-  <div id="mask"></div>
+  <div id="mask" onclick="log('mask')"></div>
   <button id="btn" onclick="log('click:' + event.isTrusted)">点我</button>
   <button id="moving" onclick="log('moving:' + event.isTrusted)">移动按钮</button>
   <button id="disabled" disabled>不可用</button>

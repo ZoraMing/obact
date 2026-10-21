@@ -79,7 +79,12 @@ describe('observe：组件陈列验收', { skip: SKIP }, () => {
     for (const e of r.elements) {
       const line = (r.snapshot_text ?? '').split('\n').find((l) => l.startsWith(`[${e.ref}] `));
       assert.ok(line, `缺少 [${e.ref}]`);
-      for (const a of e.actions) assert.ok(line.includes(a), `[${e.ref}] 行缺少操作 ${a}：${line}`);
+      // 操作列表在最后一个“ → ”之后；整段精确比较，名称里出现操作名不算
+      assert.equal(
+        line.slice(line.lastIndexOf(' → ') + 3),
+        e.actions.join(','),
+        `[${e.ref}] 行：${line}`,
+      );
     }
   });
 
