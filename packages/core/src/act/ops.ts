@@ -317,6 +317,18 @@ const hover: Handler = async (ctx, fx) => {
   }
 };
 
+/** 页面跳转后旧文档的执行上下文已销毁，旧句柄读不了（浏览器断开等其他失败不在此列）。 */
+const CONTEXT_GONE =
+  /Execution context (was destroyed|is not available)|Cannot find context|same JavaScript world|Inspected target navigated/i;
+
+/** 读取失败是因为上下文已销毁时返回 fallback，其余错误照常抛出。 */
+function contextGone<T>(fallback: T): (e: unknown) => T {
+  return (e) => {
+    if (CONTEXT_GONE.test(String((e as Error)?.message ?? e))) return fallback;
+    throw e;
+  };
+}
+
 function toBool(v: string | number | boolean): boolean {
   if (typeof v === 'boolean') return v;
   const s = String(v).trim().toLowerCase();
@@ -399,7 +411,8 @@ async function fillElement(
       } finally {
         await who?.el.dispose().catch(() => {});
       }
-      while ((await loc.handle.evaluate(CHECKED)) !== want) {
+      // 勾选的 change 可能让页面跳转（onchange 里导航）：旧文档的句柄读不到，点击已经生效，当作完成
+      while ((await loc.handle.evaluate(CHECKED).catch(contextGone(want))) !== want) {
         if (Date.now() >= ctx.deadline) fail('not_actionable', '点击后勾选状态没有变化');
         await sleep(30);
       }
@@ -809,7 +822,8 @@ const navigatePage: Handler = async (ctx) => {
   const p = page(ctx);
   ctx.wait = 'none';
   const type = a.type ?? 'url';
-  const opt = { waitUntil: 'domcontentloaded' as const, timeout: ctx.timeout };
+  // puppeteer 的 timeout 为 0 表示不限时；这里 0 是立即超时，与其他动作一致
+  const opt = { waitUntil: 'domcontentloaded' as const, timeout: Math.max(1, ctx.timeout) };
   let resp: HTTPResponse | null = null;
   if (type === 'url') {
     let url: URL;
@@ -820,11 +834,9 @@ const navigatePage: Handler = async (ctx) => {
     }
     if (url.protocol === 'javascript:') fail('invalid_params', '不允许 javascript: 地址');
     ctx.dispatched = true;
-    ctx.navigated = true;
     resp = await p.goto(url.href, opt).catch((e) => navError(e, '打开页面'));
   } else if (type === 'reload') {
     ctx.dispatched = true;
-    ctx.navigated = true;
     resp = await p.reload(opt).catch((e) => navError(e, '刷新'));
   } else {
     const delta = type === 'back' ? -1 : 1;
@@ -838,11 +850,12 @@ const navigatePage: Handler = async (ctx) => {
       await cdp.detach().catch(() => {});
     }
     ctx.dispatched = true;
-    ctx.navigated = true;
     resp = await (type === 'back' ? p.goBack(opt) : p.goForward(opt)).catch((e) =>
       navError(e, type === 'back' ? '后退' : '前进'),
     );
   }
+  // 导航提交之后才算发生了导航（beforeunload 对话框拦住、导航失败时页面没有变）
+  ctx.navigated = true;
   ctx.data = { url: p.url(), status: resp?.status() ?? null };
 };
 
@@ -871,12 +884,14 @@ const SHOT_TYPES: Record<string, 'png' | 'jpeg' | 'webp'> = {
 /** 截图保存路径：给定 path 时限制在工作区（filesRoot，未配置时为 outDir）内；否则在 outDir 下自动命名。 */
 export function shotPath(ctx: Ctx, path?: string): { path: string; type: 'png' | 'jpeg' | 'webp' } {
   const outDir = ctx.opts.outDir ?? join(tmpdir(), 'obact-shots');
+  const root = ctx.opts.filesRoot ?? outDir;
   let full: string;
-  if (path) full = resolveInside(ctx.opts.filesRoot ?? outDir, path, false);
+  if (path) full = resolveInside(root, path, false);
   else full = join(outDir, `${ctx.pageId || 'page'}-${ctx.seq}-${Date.now()}.png`);
   let type = SHOT_TYPES[extname(full).toLowerCase()];
   if (!type) {
-    full += '.png';
+    // 补后缀后的路径要重新校验：path 解析到工作区根目录本身时，补出来的文件在根目录的同级（工作区外）
+    full = resolveInside(root, `${full}.png`, false);
     type = 'png';
   }
   mkdirSync(dirname(full), { recursive: true });
@@ -934,6 +949,15 @@ export async function newPage(ctx: Ctx): Promise<void> {
   if (a.pageId && ctx.s.pages.has(a.pageId)) {
     fail('invalid_params', `pageId 已被使用：${a.pageId}`, { pageId: a.pageId });
   }
+  // 先校验 URL 再建标签页：URL 无效时不留空白标签页
+  let url: string | undefined;
+  if (a.url) {
+    try {
+      url = new URL(a.url).href;
+    } catch {
+      fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
+    }
+  }
   ctx.dispatched = true;
   const id = await ctx.s.pages.newPage({ pageId: a.pageId });
   const p = ctx.s.pages.get(id);
@@ -941,17 +965,18 @@ export async function newPage(ctx: Ctx): Promise<void> {
   ctx.newPages.push(id);
   ctx.pageId = id;
   ctx.page = p;
-  if (a.url) {
-    ctx.navigated = true;
-    let url: string;
-    try {
-      url = new URL(a.url).href;
-    } catch {
-      fail('invalid_params', `URL 无效：${a.url}`, { url: a.url });
-    }
+  if (url) {
     const resp = await p
-      .goto(url, { waitUntil: 'domcontentloaded', timeout: ctx.timeout })
-      .catch((e) => navError(e, '打开页面'));
+      .goto(url, { waitUntil: 'domcontentloaded', timeout: Math.max(1, ctx.timeout) })
+      .catch(async (e) => {
+        // 打不开就不留空白标签页；页面上挂着对话框时保留，调用方还要 handle_dialog
+        if (!pendingOf(ctx.st, p)) {
+          await p.close({ runBeforeUnload: false }).catch(() => {});
+          ctx.newPages = ctx.newPages.filter((x) => x !== id);
+        }
+        return navError(e, '打开页面');
+      });
+    ctx.navigated = true;
     ctx.data = { pageId: id, url: p.url(), status: resp?.status() ?? null };
   } else ctx.data = { pageId: id };
 }

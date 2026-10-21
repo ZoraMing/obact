@@ -5,6 +5,7 @@
   <label>排序 <select id="sort"><option value="1">一</option><option value="2">二</option><option value="3">三</option><option value="4">四</option><option value="5">五</option></select></label>
   <label>菜单 <select id="menu"><option value="" disabled selected>请选择</option><option value="a">页面A</option><option value="b">页面B</option><option value="c">页面C</option></select></label>
   <label>跳转 <select id="jump" onchange="location.href = '/pages/act-target.html?to=' + this.value"><option value="">请选择</option><option value="a">页面A</option><option value="b">页面B</option><option value="c">页面C</option></select></label>
+  <label>只看未完成 <input id="jumpcb" type="checkbox" onchange="location.href = '/pages/act-target.html?cb=' + this.checked"></label>
   <label>优先级 <select id="multi" multiple size="4"><option value="1">紧急</option><option value="2">重要</option><option value="3">普通</option><option value="4">低</option><option value="5">很低</option><option value="6">极低</option></select></label>
   <label>日期 <input id="date" type="date"></label>
   <label>颜色 <input id="color" type="color"></label>

@@ -33,7 +33,8 @@ const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 /**
  * 判定一组检查项（前置/后置检查、assert、wait_for 共用）：每项只求值一次，不等待；等待由调用方轮询。
  * 结果逐项返回：原检查项 + pass + detail（未通过的原因）。
- * 页面不存在报 page_not_found；正则无效、签名未提供报 invalid_params。
+ * 页面不存在报 page_not_found；正则无效、选择器无效、签名未提供报 invalid_params。
+ * 页面无响应、求值出错时 absent 类检查不通过（不能断定“没有”）。
  */
 export async function checkAssertions(
   s: Session,
@@ -43,7 +44,7 @@ export async function checkAssertions(
 ): Promise<AssertionResult[]> {
   const page = s.pages.get(pageId);
   const limit = opts.timeoutMs ?? 5000;
-  let texts: Promise<string[]> | null = null;
+  let texts: Promise<Texts> | null = null;
   const getTexts = () => {
     texts ??= visibleTexts(page, limit);
     return texts;
@@ -67,14 +68,25 @@ async function checkOne(
   check: Assertion,
   opts: AssertOptions,
   limit: number,
-  getTexts: () => Promise<string[]>,
+  getTexts: () => Promise<Texts>,
 ): Promise<Verdict> {
   if (check.text_present !== undefined || check.text_absent !== undefined) {
     const present = check.text_present !== undefined;
     const needle = norm((check.text_present ?? check.text_absent) as string);
-    const found = (await getTexts()).some((t) => norm(t).includes(needle));
-    if (present) return found ? { pass: true } : { pass: false, detail: `页面上没有“${needle}”` };
-    return found ? { pass: false, detail: `页面上仍有“${needle}”` } : { pass: true };
+    const { texts, partial } = await getTexts();
+    const found = texts.some((t) => norm(t).includes(needle));
+    if (present) {
+      if (found) return { pass: true };
+      return {
+        pass: false,
+        detail: `页面上没有“${needle}”${partial ? '（有 frame 无响应）' : ''}`,
+      };
+    }
+    if (found) return { pass: false, detail: `页面上仍有“${needle}”` };
+    // 有 frame 没取到文本时，不能断定页面上没有
+    return partial
+      ? { pass: false, detail: `页面无响应，无法确认没有“${needle}”` }
+      : { pass: true };
   }
   if (check.element_present || check.element_absent) {
     const present = !!check.element_present;
@@ -82,6 +94,8 @@ async function checkOne(
     const c = await countVisible(page, loc, limit);
     const detail = c.note ?? `可见匹配 ${c.visible} 个（共 ${c.total} 个）`;
     if (present) return c.visible > 0 ? { pass: true } : { pass: false, detail };
+    // 求值没有结果（页面无响应、出错）时，不能断定元素不存在
+    if (c.unknown) return { pass: false, detail };
     return c.visible === 0 ? { pass: true } : { pass: false, detail };
   }
   if (check.url_matches !== undefined) {
@@ -157,8 +171,11 @@ function regex(pattern: string, field: string): RegExp {
   }
 }
 
+/** 可见文本；partial 表示有 frame 超时或求值出错，文本没取到（已移除的 frame 不算）。 */
+type Texts = { texts: string[]; partial: boolean };
+
 /** 主 frame 及同源 frame 的可见文本（跨域 frame 不计）。 */
-async function visibleTexts(page: Page, limit: number): Promise<string[]> {
+async function visibleTexts(page: Page, limit: number): Promise<Texts> {
   const main = page.mainFrame();
   const origin = originOf(main.url());
   const frames = page.frames().filter((f) => {
@@ -167,15 +184,17 @@ async function visibleTexts(page: Page, limit: number): Promise<string[]> {
     const u = f.url();
     return u === 'about:blank' || u === 'about:srcdoc' || originOf(u) === origin;
   });
+  let partial = false;
   const texts = await Promise.all(
-    frames.map(
-      (f) =>
-        within(f.evaluate(FRAME_TEXT, f === main, TEXT_LIMIT), limit, '').catch(
-          () => '',
-        ) as Promise<string>,
-    ),
+    frames.map(async (f) => {
+      const t = (await within(f.evaluate(FRAME_TEXT, f === main, TEXT_LIMIT), limit, null).catch(
+        () => null,
+      )) as string | null;
+      if (t === null && !f.detached) partial = true;
+      return t;
+    }),
   );
-  return texts.filter(Boolean);
+  return { texts: texts.filter(Boolean) as string[], partial };
 }
 
 function originOf(url: string): string {
@@ -186,12 +205,15 @@ function originOf(url: string): string {
   }
 }
 
-/** 按定位器计数可见元素（≥1 即存在，不要求唯一）；frame 链找不到时计为 0。 */
+/**
+ * 按定位器计数可见元素（≥1 即存在，不要求唯一）；frame 链找不到时计为 0。
+ * 页面无响应或求值出错时 unknown 为 true（0 只是没有结果，不代表不存在）；选择器无效报 invalid_params。
+ */
 async function countVisible(
   page: Page,
   loc: Locator,
   limit: number,
-): Promise<{ visible: number; total: number; note?: string }> {
+): Promise<{ visible: number; total: number; note?: string; unknown?: boolean }> {
   let frame: Frame;
   try {
     frame = await frameFor(page, loc.frame);
@@ -202,8 +224,22 @@ async function countVisible(
     throw e;
   }
   const { frame: _f, ...inFrame } = loc;
-  const r = await within(frame.evaluate(COUNT, inFrame), limit, null).catch(() => null);
-  return r ?? { visible: 0, total: 0, note: '页面无响应' };
+  try {
+    const r = await within(frame.evaluate(COUNT, inFrame), limit, null);
+    return r ?? { visible: 0, total: 0, note: '页面无响应', unknown: true };
+  } catch (e) {
+    const msg = firstLine(e);
+    if (/not a valid selector/.test(msg)) {
+      throw new ObactError(
+        'invalid_params',
+        `定位器的选择器无效：${msg.replace(/^SyntaxError: /, '')}`,
+        {
+          locator: loc,
+        },
+      );
+    }
+    return { visible: 0, total: 0, note: `页面求值出错：${msg}`, unknown: true };
+  }
 }
 
 /** 页面签名的最小判定（FR-08）：URL、标题正则，必须存在与必须不存在的元素。 */
@@ -223,7 +259,10 @@ async function matchOne(page: Page, sig: PageSignature, limit: number): Promise<
     }
   }
   for (const loc of sig.must_not_exist ?? []) {
-    if ((await countVisible(page, loc, limit)).visible > 0) {
+    const c = await countVisible(page, loc, limit);
+    if (c.unknown)
+      return { pass: false, detail: `签名 ${sig.id} 无法确认排除的元素不存在：${c.note}` };
+    if (c.visible > 0) {
       return { pass: false, detail: `签名 ${sig.id} 排除的元素存在：${JSON.stringify(loc)}` };
     }
   }

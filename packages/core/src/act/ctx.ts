@@ -93,13 +93,15 @@ export function makeCtx(
   opts: ActOptions,
   seq: number,
 ): Ctx {
-  const timeout = action.timeout_ms ?? opts.timeoutMs ?? 5000;
+  // 契约校验在此之后才做：action 可能是 null、undefined 等非法值，取值不能抛异常
+  const raw = action as { timeout_ms?: number; pageId?: string } | null | undefined;
+  const timeout = raw?.timeout_ms ?? opts.timeoutMs ?? 5000;
   const ctx: Ctx = {
     s,
     st,
     action,
     opts,
-    pageId: action.pageId ?? '',
+    pageId: raw?.pageId ?? '',
     page: null,
     seq,
     timeout,

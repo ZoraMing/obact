@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import type { ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Action, ActResult } from '@obact/schemas';
 import { Contracts } from '@obact/schemas';
-import { type ActOptions, act } from '../src/index.ts';
+import { type ActOptions, act, checkAssertions } from '../src/index.ts';
 import { SKIP, setup, type TestEnv } from './helpers.ts';
 
 const FILES = join(dirname(fileURLToPath(import.meta.url)), 'files');
@@ -14,12 +16,21 @@ const contracts = new Contracts();
 describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
   let env: TestEnv;
   let polls = 0;
+  /** /api/hold 的请求挂起，直到测试放行：页面用同步请求占住主线程，占多久由测试决定。 */
+  const held: ServerResponse[] = [];
+  let onHold: () => void = () => {};
   before(async () => {
     env = await setup({
       '/api/poll': (_req, res) => {
         polls++;
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
       },
+      '/api/hold': (_req, res) => {
+        held.push(res);
+        onHold();
+      },
+      // 永不响应：导航一直等不到结果
+      '/api/hang': () => {},
     });
   });
   after(async () => {
@@ -125,6 +136,14 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     const jump = await env.open('/pages/act-fill.html');
     await ok({ op: 'fill', pageId: jump, target: { css: '#jump' }, value: '页面C' });
     assert.match(env.session.pages.get(jump).url(), /act-target\.html\?to=c$/);
+  });
+
+  test('勾选框的 onchange 会导航：勾选已经生效，fill 不能因为旧文档的句柄失效报 internal', async () => {
+    const pageId = await env.open('/pages/act-fill.html');
+    await ok({ op: 'fill', pageId, target: { css: '#jumpcb' }, value: true });
+    await env.session.pages
+      .get(pageId)
+      .waitForFunction(() => location.search === '?cb=true', { timeout: 3000 });
   });
 
   test('多选下拉框：点选项按 Ctrl 切换、Shift 连选，fill 用逗号分隔多项，每次只派发一组事件', async () => {
@@ -479,7 +498,36 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     assert.equal(back.effects.navigated, true);
     assert.match(env.session.pages.get(pageId).url(), /act-main/);
     await ok({ op: 'navigate_page', pageId, type: 'reload' });
-    await err({ op: 'navigate_page', pageId, url: 'http://127.0.0.1:1/' }, 'navigation_failed');
+    const bad = await err(
+      { op: 'navigate_page', pageId, url: 'http://127.0.0.1:1/' },
+      'navigation_failed',
+    );
+    assert.equal(bad.effects.navigated, false, '导航没有提交，页面没有变');
+  });
+
+  test('new_page 失败不留标签页：URL 无效、导航失败（含 timeout_ms 为 0）；页面挂着对话框时保留', async () => {
+    const count = () => env.session.pages.list().length;
+    const before = count();
+    const bad = await err({ op: 'new_page', url: 'not a url' }, 'invalid_params');
+    assert.deepEqual(bad.effects.new_pages, []);
+    assert.equal(bad.effects.navigated, false);
+    // timeout_ms 为 0 按立即超时处理（puppeteer 的 0 是不限时，会一直等下去）
+    const hang = await err(
+      { op: 'new_page', url: `${env.server.base}/api/hang`, timeout_ms: 0 },
+      'navigation_failed',
+    );
+    assert.deepEqual(hang.effects.new_pages, [], '失败的标签页已关闭，不在 new_pages 里');
+    assert.equal(count(), before, '没有留下标签页');
+    // 加载时弹出对话框：导航等不到结果，但页面要留着让调用方 handle_dialog
+    const alerted = await err(
+      { op: 'new_page', url: `${env.server.base}/pages/act-alert-load.html`, timeout_ms: 800 },
+      'navigation_failed',
+    );
+    const [kept] = alerted.effects.new_pages;
+    assert.ok(kept, '有对话框挂着的标签页保留');
+    await ok({ op: 'handle_dialog', pageId: kept, action: 'accept' });
+    await ok({ op: 'close_page', pageId: kept });
+    assert.equal(count(), before);
   });
 
   test('后置检查：通过即继续；不通过报 assertion_failed', async () => {
@@ -607,6 +655,15 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     );
     const shot = await ok({ op: 'take_screenshot', pageId });
     assert.ok(shot.screenshot_path && existsSync(shot.screenshot_path));
+    // 选择器无效不能当作“元素不存在”
+    await err(
+      { op: 'assert', pageId, checks: [{ element_absent: { css: '###' } }] },
+      'invalid_params',
+    );
+    await err(
+      { op: 'assert', pageId, checks: [{ element_present: { css: '###' } }] },
+      'invalid_params',
+    );
     const after = await ok({
       op: 'click',
       pageId,
@@ -615,6 +672,74 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
       diff: true,
     });
     assert.ok(after.screenshot_path && existsSync(after.screenshot_path));
+  });
+
+  test('页面无响应时，element_absent、text_absent 不通过：求值没有结果不等于“没有”', async () => {
+    const pageId = await open();
+    const page = env.session.pages.get(pageId);
+    const arrived = new Promise<void>((resolve) => {
+      onHold = resolve;
+    });
+    // 同步请求占住页面主线程，直到放行
+    const blocked = page
+      .evaluate(() => {
+        const x = new XMLHttpRequest();
+        x.open('GET', '/api/hold', false);
+        x.send();
+      })
+      .catch(() => {});
+    try {
+      await arrived;
+      const r = await checkAssertions(
+        env.session,
+        pageId,
+        [
+          { element_absent: { css: '#btn' } },
+          { text_absent: '点我' },
+          { element_present: { css: '#btn' } },
+          { text_present: '点我' },
+        ],
+        { timeoutMs: 300 },
+      );
+      assert.deepEqual(
+        r.map((x) => x.pass),
+        [false, false, false, false],
+      );
+      assert.match(r[0]?.detail ?? '', /无响应/);
+      assert.match(r[1]?.detail ?? '', /无响应/);
+    } finally {
+      for (const res of held.splice(0)) res.writeHead(200).end('ok');
+      await blocked;
+    }
+    // 恢复响应后按页面实际内容判定
+    const after = await checkAssertions(
+      env.session,
+      pageId,
+      [{ element_absent: { css: '#btn' } }, { text_absent: '不存在的文字' }],
+      { timeoutMs: 3000 },
+    );
+    assert.deepEqual(
+      after.map((x) => x.pass),
+      [false, true],
+    );
+  });
+
+  test('截图的 path 补 .png 后缀后仍在工作区内：指向工作区根目录本身时报错，不写到根目录的同级', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'obact-shot-'));
+    const ws = join(base, 'ws');
+    mkdirSync(ws);
+    try {
+      const pageId = await open();
+      const opts = { filesRoot: ws, outDir: ws };
+      await err({ op: 'take_screenshot', pageId, path: '.' }, 'path_outside_workspace', opts);
+      await err({ op: 'take_screenshot', pageId, path: 'sub/..' }, 'path_outside_workspace', opts);
+      assert.equal(existsSync(`${ws}.png`), false, '根目录的同级没有多出文件');
+      const good = await ok({ op: 'take_screenshot', pageId, path: 'shots/a' }, opts);
+      assert.equal(good.screenshot_path, join(ws, 'shots', 'a.png'));
+      assert.ok(existsSync(join(ws, 'shots', 'a.png')));
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   test('标签页：新建、切换、关闭', async () => {
@@ -631,6 +756,12 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
 
   test('参数不符合契约报 invalid_params；extract 在 M2', async () => {
     await err({ op: 'click', target: { ref: 1 } } as unknown as Action, 'invalid_params');
+    // 入口收到 null、undefined 也只返回错误，不抛异常
+    for (const bad of [null, undefined]) {
+      const r = await act(env.session, bad as unknown as Action);
+      assert.equal(r.status, 'error');
+      assert.equal(r.error?.code, 'invalid_params');
+    }
     const pageId = await open();
     await err(
       { op: 'extract', pageId, source: { type: 'response', url: 'x', path: 'a' } },
