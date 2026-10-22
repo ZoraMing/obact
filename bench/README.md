@@ -36,15 +36,15 @@ node bench/bw14.ts --limit 20 # 只跑前 20 个 MiniWoB++ 页面
   - 同位置折叠的重复元素：`observe` 把外壳折叠进内层元素，如树节点里的 `span.folder`、控件外面的 `ui-wrapper`（与已匹配的元素 IoU ≥ 0.6）。
 - 匹配分两轮：先要求角色一致（Chrome 内部角色名如 `ColorWell`、`Date` 先换算成 ARIA 角色），再只按位置匹配。
 
-### 最近一次结果（2026-10-21，Chromium 141，142 个页面）
+### 最近一次结果（2026-10-22，Chromium 141，142 个页面；Lab 精简后重跑）
 
 | 指标 | 结果 |
 |---|---|
-| 页面 | 142：组件陈列页 1、Lab 11、MiniWoB++ 130（种子 0）；2026-10-22 Lab 精简后未重跑，Lab 部分的数字待下次运行更新 |
-| BrowserGym 可交互元素（可见） | 653 |
+| 页面 | 142：组件陈列页 1、Lab 11、MiniWoB++ 130（种子 0）；Lab 为精简后的页面 |
+| BrowserGym 可交互元素（可见） | 647 |
 | 从分母扣除 | 15：option 在 options 字段里 9（组件陈列页 3、click-scroll-list 6），同位置折叠的重复元素 6（navigate-tree 3，click-widget、resize-textarea、use-spinner 各 1） |
-| Obact 匹配到 | 638/638（召回 100%）；不做扣除为 638/653（97.7%）。分页面组：组件陈列页 32/32、Lab 62/62、MiniWoB++ 544/544 |
-| label 核对 | 主文档 592 个 label，其中有标注控件的 50 个，控件都在 observe 的元素表里 |
+| Obact 匹配到 | 632/632（召回 100%）；不做扣除为 632/647（97.7%）。分页面组：组件陈列页 32/32、Lab 56/56、MiniWoB++ 544/544 |
+| label 核对 | 主文档 590 个 label，其中有标注控件的 48 个，控件都在 observe 的元素表里 |
 | Obact 额外识别（可见） | 99：坐标图的点、饼图扇区、可拖拽的图形、数字块、滑块手柄、日历与表单里的包装元素，以及 Lab 复杂结构页里 BrowserGym 取不到的金额框、支付按钮和组件库的 tab，都是任务要点击或拖动的元素 |
 | 角色叫法不同 | 114：主要是 CSS `content:url()` 渲染的图标，Chrome 叫 image、Obact 叫 generic；这些元素没有可访问名称，Obact 用 `hint` 给出 star、delete trash、search、reply 等提示 |
 | observe 被字符预算截断的页面 | 0 |
@@ -62,6 +62,6 @@ bench/fetch-miniwob.sh   # 同上
 node bench/miniwob.ts     # 10 个任务 × 5 个种子
 ```
 
-### 最近一次结果（2026-10-15，Chromium 141）
+### 最近一次结果（2026-10-22，Chromium 141）
 
 click-button、click-link、click-dialog、click-tab、focus-text、enter-text、enter-password、login-user、click-checkboxes、click-option 各 5/5，合计 50/50。
