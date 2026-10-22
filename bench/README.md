@@ -1,25 +1,6 @@
-# bench：对照与基准
+# bench：外部基线对照
 
-## 基准工作流 BW-3、BW-6、BW-7、BW-12（`bw3.ts`、`bw6.ts`、`bw7.ts`、`bw12.ts`）
-
-M1 出口要求的四个基准。默认跑本地场景（夹具库、Lab），不需要联网；全部通过时退出码为 0，有失败为 1。浏览器用 `npm run browser:install` 装的版本，设了 `CHROME_PATH` 则用它。
-
-| 脚本 | 基准 | 参数 | 报告（`bench/out/`，不入库） |
-|---|---|---|---|
-| `bw3.ts` | BW-3 延迟与异步 | `--live`、`--only L2,L3`（只跑指定场景）、`--out 目录` | `bw3-local.md/.json`；加 `--live` 为 `bw3-live.*` |
-| `bw7.ts` | BW-7 弹窗与页面结构（不含“存为规则”） | 同 `bw3.ts` | `bw7-local.md/.json`；加 `--live` 为 `bw7-live.*` |
-| `bw6.ts` | BW-6 定位可靠性 | `--live`（只跑公开站点）、`--all`（本地和公开站点都跑） | `bw6-report.md`、`bw6-results.json`；只加 `--live` 时为 `bw6-live-*` |
-| `bw12.ts` | BW-12 视觉观察与坐标动作 | 同 `bw6.ts` | `bw12-report.md`、`bw12-results.json`、`bw12-steps/<场景>.jsonl`；只加 `--live` 时为 `bw12-live-*` |
-
-```bash
-node bench/bw3.ts                            # 本地全部场景
-node bench/bw3.ts --only S0 --out /tmp/bw3   # 只跑 S0（扫描脚本里没有固定延时），报告写到 /tmp/bw3
-node bench/bw6.ts                            # 本地全部场景，约 1 分钟
-node bench/bw12.ts --all                     # 本地加公开站点
-npm run test:bench                           # 上面四个的本地场景加回归用例，约 2~3 分钟；CI 里是独立任务 bench
-```
-
-`--live` 要访问公开站点（quotes.toscrape.com、uitestingplayground.com、the-internet.herokuapp.com），这条路径没有测试执行过，也没有在真站上跑过：`bw6.ts`、`bw12.ts` 只加 `--live` 而访问不了站点时，如实报告“没有结果”并退出 1，`bw3.ts`、`bw7.ts` 把对应场景记为失败。首次真实运行在 `.github/workflows/live.yml`（手动触发或每周一次）。
+只保留两项有外部基线的对照：BW-14（与 BrowserGym 比元素识别）和 MiniWoB++ 任务。BW-3、6、7、12 的场景由 `fixtures/` 与 `lab/` 的测试覆盖，独立基准脚本已在精简时删除（见 git 历史）。
 
 ## BW-14 组件识别对照（`bw14.ts`）
 
@@ -28,10 +9,10 @@ npm run test:bench                           # 上面四个的本地场景加回
 ### 准备
 
 ```bash
-spikes/miniwob/fetch.sh                      # MiniWoB++ 任务页（MIT）
-python3 -m venv spikes/.cache/venv-bg        # BrowserGym 单独的虚拟环境，不进入 obact 依赖
-spikes/.cache/venv-bg/bin/pip install playwright==1.56.0 numpy pillow "lxml<6" beautifulsoup4 pyparsing gymnasium
-spikes/.cache/venv-bg/bin/pip install --no-deps browsergym-core==0.14.3
+bench/fetch-miniwob.sh                      # MiniWoB++ 任务页（MIT）
+python3 -m venv bench/.cache/venv-bg        # BrowserGym 单独的虚拟环境，不进入 obact 依赖
+bench/.cache/venv-bg/bin/pip install playwright==1.56.0 numpy pillow "lxml<6" beautifulsoup4 pyparsing gymnasium
+bench/.cache/venv-bg/bin/pip install --no-deps browsergym-core==0.14.3
 ```
 
 `browsergym-core` 锁定 `playwright==1.44`；这里只用它的提取函数，所以换成与本机 Chromium 141 匹配的 Playwright 1.56。
@@ -77,7 +58,7 @@ node bench/bw14.ts --limit 20 # 只跑前 20 个 MiniWoB++ 页面
 只用 `observe` + `act` 完成 MiniWoB++ 任务：每步先 `observe` 拿到可操作元素及其可用操作，按任务说明选出元素和动作，再用 `act` 执行（可信输入），最后读任务页的 reward 判定成败。求解规则写在脚本里，不读页面私有变量。
 
 ```bash
-spikes/miniwob/fetch.sh   # 同上
+bench/fetch-miniwob.sh   # 同上
 node bench/miniwob.ts     # 10 个任务 × 5 个种子
 ```
 

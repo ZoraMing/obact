@@ -7,15 +7,13 @@
   },
   "workspaces": [
     "packages/*",
-    "lab",
-    "spikes"
+    "lab"
   ],
   "scripts": {
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test \"packages/*/test/**/*.test.ts\" \"lab/test/**/*.test.ts\" \"fixtures/test/**/*.test.ts\"",
-    "test:bench": "node --test --test-concurrency=1 \"bench/test/**/*.test.ts\"",
     "gen:types": "npm run gen:types -w @obact/schemas",
     "check": "npm run lint && npm run typecheck && npm run check:types -w @obact/schemas && npm test",
     "browser:install": "node tools/browser.ts install"

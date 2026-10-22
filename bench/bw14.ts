@@ -2,7 +2,7 @@
 // Obact 一侧取 observe 返回的 elements（智能体实际看到的元素表，含 iframe 内元素），不是识别层的原始编号。
 // 页面：组件陈列页、测试应用（Lab）各模块不需要登录的页面、130 个 MiniWoB++ 任务页。
 // 用法：node bench/bw14.ts [--limit N]   报告写到 bench/out/bw14-report.md
-// 依赖：spikes/miniwob/fetch.sh 准备的 MiniWoB++ 页面、bench/README.md 中的 BrowserGym 虚拟环境。
+// 依赖：bench/fetch-miniwob.sh 准备的 MiniWoB++ 页面、bench/README.md 中的 BrowserGym 虚拟环境。
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -16,8 +16,8 @@ import { testChrome } from '../tools/browser.ts';
 import { resolveStatic } from '../tools/static.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
-const BG_PYTHON = process.env.BG_PYTHON ?? join(ROOT, 'spikes/.cache/venv-bg/bin/python');
+const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'bench/.cache/miniwob-pkg/miniwob/html');
+const BG_PYTHON = process.env.BG_PYTHON ?? join(ROOT, 'bench/.cache/venv-bg/bin/python');
 const CHROME = (await testChrome()) as string;
 const VIEW = { width: 800, height: 600 };
 const SETTLE_MS = 300;
@@ -96,7 +96,7 @@ const LAB_PATHS = [
   '/noise/entry-ad',
 ];
 if (!existsSync(MINIWOB)) {
-  console.error(`找不到 MiniWoB++ 页面：${MINIWOB}（先运行 spikes/miniwob/fetch.sh）`);
+  console.error(`找不到 MiniWoB++ 页面：${MINIWOB}（先运行 bench/fetch-miniwob.sh）`);
   process.exit(1);
 }
 const limitArg = process.argv.indexOf('--limit');

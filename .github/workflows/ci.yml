@@ -7,10 +7,6 @@ on:
     branches: [master]
   pull_request:
 
-env:
-  # Chrome for Testing 固定版本（docs/spikes/M0-spikes.md 第 5 节）；spikes-cft 复跑的是 M0 预研留档
-  CFT_VERSION: '141.0.7390.122' # 须与 tools/browser.ts 的 BASELINE_VERSION 一致
-
 jobs:
   node:
     runs-on: ubuntu-latest
@@ -32,24 +28,6 @@ jobs:
       # lint、类型检查、生成类型一致性、契约测试（T）与浏览器测试（F）
       - run: npm run check
 
-  # BW-3、6、7、12 的本地基准（Lab + 夹具），约 2~3 分钟；与 node 任务分开，避免拖慢常规反馈
-  bench:
-    runs-on: ubuntu-latest
-    env:
-      OBACT_REQUIRE_BROWSER: '1'
-    steps:
-      - uses: actions/checkout@v5.0.0
-      - uses: actions/setup-node@v5.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: 安装 Chrome for Testing
-        run: |
-          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
-          npm run browser:install
-      - run: npm run test:bench
-
   python:
     runs-on: ubuntu-latest
     steps:
@@ -60,25 +38,3 @@ jobs:
       - run: pip install -e "python[dev]"
       - run: ruff check python && ruff format --check python
       - run: pytest python
-
-  # 在 Chrome for Testing 上复跑 M0 预研（扩展加载、进程模型），回答“CfT 上是否可用”
-  spikes-cft:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5.0.0
-      - uses: actions/setup-node@v5.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: 安装 Chrome for Testing
-        run: |
-          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
-          npx @puppeteer/browsers install "chrome@${CFT_VERSION}" --path "$HOME/.cache/cft" | tee cft.txt
-          echo "CHROME_PATH=$(tail -1 cft.txt | awk '{print $2}')" >> "$GITHUB_ENV"
-      - name: 扩展加载（无头）
-        run: ASSERT=1 node spikes/extension/load.ts
-      - name: 扩展加载（有头，Xvfb）
-        run: ASSERT=1 HEADED=1 xvfb-run -a node spikes/extension/load.ts
-      - name: 进程模型与编号
-        run: node spikes/browser/service.ts

@@ -6,14 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": [
-      "**",
-      "!**/node_modules",
-      "!**/package-lock.json",
-      "!spikes/.cache",
-      "!spikes/out",
-      "!.claude"
-    ]
+    "includes": ["**", "!**/node_modules", "!**/package-lock.json", "!.claude"]
   },
   "formatter": {
     "indentStyle": "space",

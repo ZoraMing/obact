@@ -20,8 +20,7 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 | `python/` | Python 包 `obact`（目前只有契约校验） |
 | `fixtures/` | 本地夹具库（12 类确定性页面与接口，PRD 9.3）和它们的测试 |
 | `lab/` | Obact Lab 测试应用：数据空间、重置/状态/故障注入三个接口，登录、订单后台、复杂结构、干扰层四个模块 |
-| `bench/` | 基准与对照：BW-3、6、7、12 基准脚本，BW-14 组件识别对照，MiniWoB++ 任务（用法见 `bench/README.md`） |
-| `spikes/` | M0 预研脚本 |
+| `bench/` | 外部基线对照：BW-14 组件识别对照（与 BrowserGym）、MiniWoB++ 任务（用法见 `bench/README.md`） |
 | `tools/` | 测试与基准共用的浏览器安装与取路径（`npm run browser:install`、`node tools/browser.ts path`）、静态文件的路径解析 |
 
 后续模块（server、recorder）按开发计划第 3 节在各里程碑加入；第一阶段不做浏览器扩展。当前进度见 [开发计划](docs/DEV_PLAN.md) 的总览。
@@ -66,4 +65,4 @@ python3 -m venv .venv
 .venv/bin/pytest python  # 与 TS 端共用同一批契约样例
 ```
 
-修改 Schema 后运行 `npm run gen:types`。预研脚本的用法见 [M0 预研结论](docs/spikes/M0-spikes.md)；其中扩展加载、OOPIF 两个脚本要完整 Chrome，默认的 chrome-headless-shell 跑不出文档里的结果：加 `HEADED=1 xvfb-run -a`，或把 `CHROME_PATH` 设成完整 Chrome。
+修改 Schema 后运行 `npm run gen:types`。M0 预研结论见 [M0-spikes](docs/spikes/M0-spikes.md)（脚本已删除，保留在 git 历史里）；其中扩展加载、OOPIF 两个脚本要完整 Chrome，默认的 chrome-headless-shell 跑不出文档里的结果：加 `HEADED=1 xvfb-run -a`，或把 `CHROME_PATH` 设成完整 Chrome。

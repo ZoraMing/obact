@@ -21,7 +21,6 @@
     "packages/*/test",
     "lab/**/*.ts",
     "fixtures/**/*.ts",
-    "spikes/**/*.ts",
     "bench/**/*.ts",
     "tools/**/*.ts"
   ]

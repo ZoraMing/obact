@@ -13,7 +13,7 @@ import { testChrome } from '../tools/browser.ts';
 import { resolveStatic } from '../tools/static.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'spikes/.cache/miniwob-pkg/miniwob/html');
+const MINIWOB = process.env.MINIWOB_HTML ?? join(ROOT, 'bench/.cache/miniwob-pkg/miniwob/html');
 const CHROME = (await testChrome()) as string;
 const epArg = process.argv.indexOf('--episodes');
 const EPISODES = epArg > 0 ? Number(process.argv[epArg + 1]) : 5;

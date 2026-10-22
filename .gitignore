@@ -7,8 +7,7 @@ __pycache__/
 # 运行时目录（PRD 7.6）；workflows/ 是单独的 git 仓库
 workspace/
 # 预研下载的第三方资源与运行产物
-spikes/.cache/
-spikes/out/
+bench/.cache/
 
 # Claude Code 本机设置与 workflow 的临时 worktree
 .claude/settings.local.json
