@@ -71,7 +71,7 @@ W0 ─▶ W1(S1→S2→S3) ─┬─▶ W2 ─▶ W4 ─▶ W5
 
 ## 6. 质量门
 
-1. 每个切片或包合并前：`npm run check` 全过；涉及浏览器的再跑 `npm run test:bench`；浏览器缺失时测试必须失败（`OBACT_REQUIRE_BROWSER=1`）。
+1. 每个切片或包合并前：`npm run check` 全过；浏览器缺失时测试必须失败（`OBACT_REQUIRE_BROWSER=1`）。
 2. 测试少而有价值：runner 用假执行器测逻辑，真浏览器只在 E2E 里用。
 3. 契约变更只在 W0 做。
 4. 两条线用独立 git 工作树，文件所有权不重叠；小任务一个提交，提交说明写工作包。
