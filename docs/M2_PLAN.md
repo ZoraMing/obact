@@ -2,7 +2,9 @@
 
 编制日期 2026-10-19。依据：[PRD](PRD.md) FR-09、10、16~19、25、26、35；[DEV_PLAN](DEV_PLAN.md) 第 4 节 M2；设计细节见 [`packages/workflow/DESIGN.md`](../packages/workflow/DESIGN.md)。
 
-M2 出口：BW-1、BW-2、BW-9、BW-10；C-1、C-3、C-4、C-5。
+M2 出口：BW-1、BW-2、BW-9、BW-10、BW-15；C-1、C-3、C-4、C-5。
+
+**2026-10-22 新增范围**：任务上下文与多页面流程（FR-37、BW-15），设计见 [多页面设计](DESIGN_MULTIPAGE.md)（待评审）。对应新增工作包 W1b（页面表与导航链、页面别名、可重放段、契约变更）和 Lab“服务器管理”模块，约增加 M2 工作量的 20%。
 
 ## 1. 现状
 

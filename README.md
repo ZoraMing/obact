@@ -4,7 +4,7 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 
 ## 文档
 
-- [PRD v1.5.2](docs/PRD.md)：第一阶段需求基线
+- [PRD v1.5.3](docs/PRD.md)：第一阶段需求基线
 - [开发计划](docs/DEV_PLAN.md)：里程碑、任务拆分、测试矩阵、并行开发规则
 - [M2 工作计划](docs/M2_PLAN.md)、[工作流引擎设计](packages/workflow/DESIGN.md)
 - [M0 预研结论](docs/spikes/M0-spikes.md)

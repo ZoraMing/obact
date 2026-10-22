@@ -22,6 +22,8 @@ packages/workflow/src/
 packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PRD 5.6），core 导出
 ```
 
+> 2026-10-22：多页面流程（页面别名 `opens`、导航链、可重放段）的设计见 [`docs/DESIGN_MULTIPAGE.md`](../../docs/DESIGN_MULTIPAGE.md)，评审通过后并入下面的共享约定与目录。
+
 ## 共享约定
 
 1. **步骤即动作**：普通步骤的 `op` 等于 `action.json` 的动作，`runner` 渲染模板后去掉步骤字段（step_id、section、pre、retry、on_fail、once_only、idempotency_key、volatile、note）交给 `Executor.act`。控制流步骤：`loop_begin / loop_end / break / if / else / end_if / call / set_var / checkpoint`；`extract` 交给 `Executor.extract`。

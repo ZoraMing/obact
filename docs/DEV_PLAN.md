@@ -1,6 +1,6 @@
 # Obact 第一阶段开发计划
 
-基线：[PRD v1.5.2](PRD.md)。本文把 PRD 第 4、9、10 节整理成可执行的开发计划，供多个 agent 并行开发。需求编号（FR-xx）、测试编号（F/T/R/BW/C/E/TS/RS）均沿用 PRD。
+基线：[PRD v1.5.3](PRD.md)。本文把 PRD 第 4、9、10 节整理成可执行的开发计划，供多个 agent 并行开发。需求编号（FR-xx）、测试编号（F/T/R/BW/C/E/TS/RS）均沿用 PRD。
 
 ## 1. 总览
 
