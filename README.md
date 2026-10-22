@@ -18,7 +18,7 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 | `packages/core/` | 观察与执行内核：浏览器启动、标签页、编号、定位器、`observe`、`act`、断言 |
 | `packages/workflow/` | 工作流引擎（M2 进行中）：模板、参数库、工作区文件、加载校验、运行目录存储、页面抽取、采集输出、最小监督；runner 与命令行还没有 |
 | `python/` | Python 包 `obact`（目前只有契约校验） |
-| `fixtures/` | 本地夹具库（12 类确定性页面与接口，PRD 9.3）和它们的测试 |
+| `fixtures/` | 本地夹具库（11 类确定性页面与接口，PRD 9.3）和它们的测试 |
 | `lab/` | Obact Lab 测试应用：数据空间、重置/状态/故障注入三个接口，登录、订单后台、复杂结构、干扰层四个模块 |
 | `bench/` | 外部基线对照：BW-14 组件识别对照（与 BrowserGym）、MiniWoB++ 任务（用法见 `bench/README.md`） |
 | `tools/` | 测试与基准共用的浏览器安装与取路径（`npm run browser:install`、`node tools/browser.ts path`）、静态文件的路径解析 |

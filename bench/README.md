@@ -40,7 +40,7 @@ node bench/bw14.ts --limit 20 # 只跑前 20 个 MiniWoB++ 页面
 
 | 指标 | 结果 |
 |---|---|
-| 页面 | 142：组件陈列页 1、Lab 11、MiniWoB++ 130（种子 0） |
+| 页面 | 142：组件陈列页 1、Lab 11、MiniWoB++ 130（种子 0）；2026-10-22 Lab 精简后未重跑，Lab 部分的数字待下次运行更新 |
 | BrowserGym 可交互元素（可见） | 653 |
 | 从分母扣除 | 15：option 在 options 字段里 9（组件陈列页 3、click-scroll-list 6），同位置折叠的重复元素 6（navigate-tree 3，click-widget、resize-textarea、use-spinner 各 1） |
 | Obact 匹配到 | 638/638（召回 100%）；不做扣除为 638/653（97.7%）。分页面组：组件陈列页 32/32、Lab 62/62、MiniWoB++ 544/544 |
