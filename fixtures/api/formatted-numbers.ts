@@ -1,12 +1,9 @@
 /**
  * 格式化数字夹具的接口（PRD 9.3，FR-09、FR-10）：页面显示千分位、“1.2万”“3.4亿”、百分比，接口返回原始数值。
  *
- * GET /api/formatted-numbers/data?seed= → {seed, kpis:[{key,label,value,format}], daily:[{date,sales,visitors,conversion}]}
- *
- * 同时导出换算函数，供测试断言“显示值 ↔ 原始值”一一对应：
- * - formatValue(原始值, 格式)：与页面上的格式化逻辑相同；
- * - parseDisplay(显示值)：把显示值还原成数值，并给出显示精度（末位的一个单位），
- *   |parseDisplay(显示).value - 原始值| ≤ step / 2。
+ * GET /api/formatted-numbers/data?seed= → {seed, kpis, daily}。
+ * 同时导出换算函数，供测试断言“显示值 ↔ 原始值”：formatValue 与页面的格式化逻辑相同；
+ * parseDisplay 把显示值还原成数值并给出显示精度（末位的一个单位），|还原值 - 原始值| ≤ step / 2。
  */
 import type { FixtureHandler } from '../server.ts';
 

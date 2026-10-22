@@ -3,20 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>外层框架</title>
-<!-- 页面结构夹具的嵌套框架：本页与顶层同源，里面再嵌一个跨域 iframe（frame.html?who=nested）。 -->
-<style>body { font: 13px/1.5 system-ui, sans-serif; margin: 8px; } iframe { width: 380px; height: 150px; border: 1px solid #ccc; }</style>
+<!-- 页面结构夹具的嵌套框架：本页与顶层同源，里面再嵌一个跨域 iframe。 -->
+<style>iframe { width: 340px; height: 100px; }</style>
 </head>
 <body>
-<p>外层框架（同源），里面嵌着跨域框架。 <button type="button" id="outer-btn">外层按钮</button></p>
 <iframe id="inner-frame" title="内层跨域"></iframe>
 <script>
   const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
   document.getElementById('inner-frame').src = `${location.protocol}//${other}:${location.port}/structure/frame.html?who=nested`;
-  let count = 0;
-  document.getElementById('outer-btn').onclick = () => {
-    count++;
-    window.top.postMessage({ type: 'frame-submit', who: 'outer', count }, '*');
-  };
 </script>
 </body>
 </html>

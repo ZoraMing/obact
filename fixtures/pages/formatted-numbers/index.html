@@ -3,19 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>格式化数字</title>
-<style>
-  body { margin: 0; padding: 16px 24px; font: 14px/1.5 sans-serif; color: #222; }
-  h1 { font-size: 20px; margin: 0 0 8px; }
-  h2 { font-size: 16px; margin: 16px 0 6px; }
-  #kpis { display: grid; grid-template-columns: repeat(4, 200px); gap: 12px; }
-  .kpi { border: 1px solid #dde; border-radius: 6px; padding: 8px 12px; }
-  .kpi .label { color: #667; font-size: 12px; }
-  .kpi .value { font-size: 20px; font-weight: bold; }
-  .neg { color: #c33; }
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #dde; padding: 4px 10px; }
-  td.num { text-align: right; }
-</style>
+<!-- 夹具：格式化数字（PRD 9.3，FR-09、FR-10）。页面显示千分位、“1.2万”、百分比，接口 /api/formatted-numbers/data 返回原始值。 -->
 </head>
 <body>
   <h1>经营概览</h1>
@@ -30,7 +18,7 @@
   <script>
     const seed = Number(new URLSearchParams(location.search).get('seed')) || 1;
     const groups = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    // 与 fixtures/api/formatted-numbers.ts 的 formatValue 相同：千分位两位小数、中文单位（万、亿一位小数）、百分比一位小数
+    // 与 fixtures/api/formatted-numbers.ts 的 formatValue 相同
     function fmt(v, format) {
       const sign = v < 0 ? '-' : '';
       const a = Math.abs(v);
@@ -45,45 +33,17 @@
       return `${sign}${(Math.round(a / 1e7) / 10).toFixed(1)}亿`;
     }
 
-    async function main() {
-      const r = await fetch(`/api/formatted-numbers/data?seed=${seed}`);
-      const data = await r.json();
-      const kpis = document.getElementById('kpis');
-      for (const k of data.kpis) {
-        const card = document.createElement('div');
-        card.className = 'kpi';
-        card.dataset.key = k.key;
-        const label = document.createElement('div');
-        label.className = 'label';
-        label.textContent = k.label;
-        const value = document.createElement('div');
-        value.className = k.value < 0 ? 'value neg' : 'value';
-        value.textContent = fmt(k.value, k.format);
-        card.append(label, value);
-        kpis.append(card);
-      }
-      const tbody = document.querySelector('#daily tbody');
-      for (const d of data.daily) {
-        const tr = document.createElement('tr');
-        tr.dataset.key = d.date;
-        const cells = [
-          [d.date, ''],
-          [fmt(d.sales, 'thousands'), 'num'],
-          [fmt(d.visitors, 'cn'), 'num'],
-          [fmt(d.conversion, 'percent'), 'num'],
-        ];
-        for (const [text, cls] of cells) {
-          const td = document.createElement('td');
-          td.textContent = text;
-          if (cls) td.className = cls;
-          tr.append(td);
-        }
-        tbody.append(tr);
-      }
-      document.getElementById('status').textContent = `数据日期：2026-10-07（seed ${seed}）`;
-      document.body.dataset.ready = '1';
-    }
-    main();
+    fetch(`/api/formatted-numbers/data?seed=${seed}`)
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById('kpis').innerHTML = data.kpis
+          .map((k) => `<div class="kpi" data-key="${k.key}"><div class="label">${k.label}</div><div class="value">${fmt(k.value, k.format)}</div></div>`)
+          .join('');
+        document.querySelector('#daily tbody').innerHTML = data.daily
+          .map((d) => `<tr data-key="${d.date}"><td>${d.date}</td><td>${fmt(d.sales, 'thousands')}</td><td>${fmt(d.visitors, 'cn')}</td><td>${fmt(d.conversion, 'percent')}</td></tr>`)
+          .join('');
+        document.getElementById('status').textContent = `数据日期：2026-10-07（seed ${seed}）`;
+      });
   </script>
 </body>
 </html>

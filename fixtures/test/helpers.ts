@@ -1,9 +1,12 @@
 // 夹具测试助手：夹具服务 + 无头浏览器 + 会话。每个测试文件 setup 一次。
 
+import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { launchBrowser, Session } from '@obact/core';
+import { type ActOptions, act, launchBrowser, Session } from '@obact/core';
+import type { Action, ActResult } from '@obact/schemas';
+import { Contracts } from '@obact/schemas';
 import type { Browser } from 'puppeteer-core';
 import { skipIfNoBrowser, testChrome } from '../../tools/browser.ts';
 import { type FixtureServer, startFixtures } from '../server.ts';
@@ -49,4 +52,20 @@ export async function setup(): Promise<FixtureEnv> {
       rmSync(profileDir, { recursive: true, force: true });
     },
   };
+}
+
+let contracts: Contracts | undefined;
+
+/** 执行动作，并校验返回值符合 act-result 契约。 */
+export async function run(env: FixtureEnv, a: Action, opts?: ActOptions): Promise<ActResult> {
+  const r = await act(env.session, a, opts);
+  (contracts ??= new Contracts()).assert('act-result', r);
+  return r;
+}
+
+/** 同 run，但要求 status 为 ok。 */
+export async function ok(env: FixtureEnv, a: Action, opts?: ActOptions): Promise<ActResult> {
+  const r = await run(env, a, opts);
+  assert.equal(r.status, 'ok', `${a.op} 失败：${r.error?.code} ${r.error?.message}`);
+  return r;
 }

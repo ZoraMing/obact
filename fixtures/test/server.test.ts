@@ -24,7 +24,7 @@ describe('夹具服务：畸形请求与静态路径', () => {
     }
     // 之前直接 TypeError / URIError 让进程退出：再请求一次页面和接口
     assert.equal((await get('/timing/')).status, 200);
-    assert.equal((await get('/api/polling/stats')).status, 200);
+    assert.equal((await get('/api/polling/tick')).status, 200);
   });
 
   test('路径逃到名字以 pages 开头的同级目录回 403（%2f 绕过 URL 规范化）', async () => {
