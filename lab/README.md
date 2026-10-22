@@ -46,8 +46,8 @@ node --test "lab/test/**/*.test.ts"
 |---|---|---|
 | `auth` 登录与账号 | `/login`、`/verify`（人机验证页）、`/account`；账号 alice / bob / carol / dave，carol 连续 3 次密码错误锁定，dave 每次登录都要过验证 | FR-02、FR-08、FR-20、FR-22；登录页 4 种改版 |
 | `orders` 订单后台 | `/orders`（默认 200 条订单，数量可由 reset 改；筛选、排序、翻页都不改 URL）、`/orders/:id`；批量审核（confirm → 带幂等键提交）、CSV 导出 | FR-07、FR-09、FR-16~FR-19、FR-25；列表 4 种改版 |
-| `structure` 复杂结构 | `/structure`：同源与跨域 iframe、嵌套 frame、开放与封闭 Shadow DOM、新标签页、同名“查看”、动态 id 与哈希类名；`/structure/library`：Shoelace 组件库实现的差旅申请 | FR-04、FR-06、FR-07 |
-| `noise` 干扰层 | `/noise`：Cookie 提示条、1.5 秒透明遮挡层、布局偏移；`/noise/entry-ad`：每次都弹的 Entry Ad；`popup_rate` 让任意页面随机弹广告 | FR-13、FR-23 |
+| `structure` 复杂结构 | `/structure`：同源与跨域 iframe、嵌套 frame、开放与封闭 Shadow DOM、新标签页（链接与 `window.open`）、同名“查看”、每次加载都变的 id 与哈希类名；`/structure/library`：Shoelace 组件库实现的差旅申请 | FR-04、FR-06、FR-07 |
+| `noise` 干扰层 | 只有广告弹窗（全屏遮罩 + 对话框）一种：`/noise` 说明页，`/noise/entry-ad` 每次加载都弹的 Entry Ad，`popup_rate` 让任意页面随机弹广告；Cookie 提示条、透明遮挡层、布局偏移由 `fixtures/` 覆盖 | FR-13、FR-23 |
 
 后续模块按开发计划加入：大表与数据、文件区在 M2，消息中心、申请向导、看板与画布、实时面板在 M5。设置页（PRD 9.3 列了它，覆盖 FR-12 的 alert / confirm / prompt）还没排进任何里程碑，目前由 `forms-files` 夹具顶替。
 
