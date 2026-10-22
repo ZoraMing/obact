@@ -4,25 +4,15 @@
 <meta charset="utf-8">
 <title>待处理工单（失效编号）</title>
 <!--
-  夹具：失效编号（PRD 9.3，FR-06）。观察之后列表被整块重绘，文字完全相同，但节点都是新的。
-  - “重新渲染（模板）”：按数据重新拼 HTML，list.innerHTML = 新字符串；
-  - “重新渲染（原样替换）”：list.innerHTML = list.innerHTML，新节点连属性（含 data-obact-ref）都和旧节点一样；
-  - “只重绘第 2 行”：只替换一行，其余行的节点不变；
-  - “倒序排列”：节点原样移动，不重建（编号应仍然有效）；
-  - ?rerender=hover：鼠标第一次移到列表里的按钮上时整块重绘（模拟悬停状态触发框架重渲染）。
-  点击记录：window.__log（[{op, id}]），重绘次数：window.__renders。
+  夹具：失效编号（PRD 9.3，FR-06）。观察之后列表被整块重绘，文字完全相同，但节点都是新的：
+  模板重建（innerHTML = 新字符串）、原样替换（innerHTML = innerHTML，新节点连 data-obact-ref 属性都和旧的一样）、
+  只重绘第 2 行、倒序（节点只是移动，不重建）；?rerender=hover 在鼠标第一次移到列表按钮上时整块重绘。
+  点击记录 window.__log（[{op, id}]），重绘次数 window.__renders。
 -->
-<style>
-  body { font: 14px/1.6 system-ui, sans-serif; margin: 24px; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
-  #list { list-style: none; padding: 0; width: 520px; }
-  #list li { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #eee; }
-  #list li span { flex: 1; }
-</style>
 </head>
 <body>
 <h1>待处理工单</h1>
-<div class="toolbar">
+<div>
   <button type="button" id="rerender-template">重新渲染（模板）</button>
   <button type="button" id="rerender-clone">重新渲染（原样替换）</button>
   <button type="button" id="rerender-row">只重绘第 2 行</button>
@@ -30,7 +20,6 @@
 </div>
 <ul id="list"></ul>
 <p id="renders">已重绘 0 次</p>
-<section aria-label="操作记录"><ol id="log"></ol></section>
 <script>
   const tickets = [
     { id: 'T-1', title: '打印机卡纸' },
@@ -38,7 +27,8 @@
     { id: 'T-3', title: '申请新显示器' },
     { id: 'T-4', title: '会议室投影不亮' },
   ];
-  const list = document.getElementById('list');
+  const $ = (id) => document.getElementById(id);
+  const list = $('list');
   const rowHtml = (t) =>
     `<li data-id="${t.id}"><span>工单 ${t.id}：${t.title}</span>` +
     `<button type="button" data-op="处理">处理</button>` +
@@ -49,27 +39,25 @@
   window.__log = [];
   window.__renders = 0;
   const bump = () => {
-    window.__renders++;
-    document.getElementById('renders').textContent = `已重绘 ${window.__renders} 次`;
+    $('renders').textContent = `已重绘 ${++window.__renders} 次`;
   };
   render();
 
-  document.getElementById('rerender-template').onclick = () => {
+  $('rerender-template').onclick = () => {
     render();
     bump();
   };
-  document.getElementById('rerender-clone').onclick = () => {
+  $('rerender-clone').onclick = () => {
     list.innerHTML = list.innerHTML;
     bump();
   };
-  document.getElementById('rerender-row').onclick = () => {
-    const old = list.querySelector('li[data-id="T-2"]');
+  $('rerender-row').onclick = () => {
     const tpl = document.createElement('template');
     tpl.innerHTML = rowHtml(tickets[1]);
-    old.replaceWith(tpl.content.firstElementChild);
+    list.querySelector('li[data-id="T-2"]').replaceWith(tpl.content.firstElementChild);
     bump();
   };
-  document.getElementById('reorder').onclick = () => {
+  $('reorder').onclick = () => {
     for (const li of [...list.children].reverse()) list.append(li);
   };
 
@@ -85,12 +73,7 @@
 
   list.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-op]');
-    if (!btn) return;
-    const id = btn.closest('li').dataset.id;
-    window.__log.push({ op: btn.dataset.op, id });
-    const li = document.createElement('li');
-    li.textContent = `已${btn.dataset.op} ${id}`;
-    document.getElementById('log').append(li);
+    if (btn) window.__log.push({ op: btn.dataset.op, id: btn.closest('li').dataset.id });
   });
 </script>
 </body>

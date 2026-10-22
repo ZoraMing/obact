@@ -1,7 +1,6 @@
 /**
  * 快速响应夹具的接口（PRD 9.3，FR-10：验证不会错过响应）。
- *
- * GET /api/fast-response/data?n=&seed=&delay= → 约 delay 毫秒（默认 20）后返回 {n, order_id, amount, delay_ms}。
+ * GET /api/fast-response/data?n=&seed=&delay= → 约 delay 毫秒（默认 20）后返回 {n, order_id, amount, delay_ms}，
  * 内容只由 seed 与 n（第几次查询）决定。
  */
 import type { FixtureHandler } from '../server.ts';

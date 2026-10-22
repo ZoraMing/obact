@@ -2,12 +2,10 @@
 // 要么命中语义相同的元素，要么报 not_found / not_unique（转人工），误点必须为 0。
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { act, generateLocator, observe, resolveLocator, resolveRef } from '@obact/core';
-import type { Action, ActResult, Locator } from '@obact/schemas';
-import { Contracts } from '@obact/schemas';
-import { type FixtureEnv, SKIP, setup } from './helpers.ts';
+import { generateLocator, observe, resolveLocator, resolveRef } from '@obact/core';
+import type { Action, Locator } from '@obact/schemas';
+import { type FixtureEnv, run, SKIP, setup } from './helpers.ts';
 
-const contracts = new Contracts();
 type Outcome = 'hit' | 'manual' | 'wrong';
 type Event = { type: string; key: string | null; tag: string };
 
@@ -98,46 +96,7 @@ describe('夹具 redesign（FR-07、FR-20、BW-6）', { skip: SKIP }, () => {
     await env.session.pages.get(pageId).close();
   });
 
-  test('解析：各改版上要么命中同一元素，要么转人工，误点为 0', async (t) => {
-    const wrong: string[] = [];
-    const mismatch: string[] = [];
-    for (const v of Object.keys(EXPECT)) {
-      const pageId = await env.open(`/redesign/${v}.html`);
-      const tally: Record<Outcome, string[]> = { hit: [], manual: [], wrong: [] };
-      for (const [key, loc] of recorded) {
-        let outcome: Outcome;
-        try {
-          const r = await resolveLocator(env.session, pageId, loc);
-          const got = await r.handle.evaluate((el) => el.getAttribute('data-x-key'));
-          await r.handle.dispose();
-          outcome = got === key ? 'hit' : 'wrong';
-          if (outcome === 'wrong') wrong.push(`${v} ${key} → 命中了 ${got}（${r.via}）`);
-        } catch (e) {
-          const err = e as { code?: string; details?: { conflict?: boolean } };
-          assert.ok(
-            err.code === 'not_found' || err.code === 'not_unique',
-            `${v} ${key}：意外的错误 ${err.code}`,
-          );
-          outcome = 'manual';
-          if (CONFLICTS[v]?.includes(key)) {
-            assert.equal(err.details?.conflict, true, `${v} ${key} 应报冲突`);
-          }
-        }
-        tally[outcome].push(key);
-        if (outcome !== expected(v, key)) {
-          mismatch.push(`${v} ${key}：期望 ${expected(v, key)}，实际 ${outcome}`);
-        }
-      }
-      t.diagnostic(
-        `${v}：命中 ${tally.hit.length}，转人工 ${tally.manual.length}（${tally.manual.join('、')}），误点 ${tally.wrong.length}`,
-      );
-      await env.session.pages.get(pageId).close();
-    }
-    assert.deepEqual(wrong, [], '误点必须为 0');
-    assert.deepEqual(mismatch, []);
-  });
-
-  test('回放动作：点中的就是同一元素；转人工时页面上没有任何事件', async (t) => {
+  test('各改版上回放：点中的就是同一元素，否则转人工且页面上没有任何事件，误点为 0', async (t) => {
     const wrong: string[] = [];
     const mismatch: string[] = [];
     for (const v of Object.keys(EXPECT)) {
@@ -153,8 +112,7 @@ describe('夹具 redesign（FR-07、FR-20、BW-6）', { skip: SKIP }, () => {
             : role === 'combobox'
               ? { op: 'fill', ...base, value: '已发货' }
               : { op: 'click', ...base };
-        const r: ActResult = await act(env.session, action);
-        contracts.assert('act-result', r);
+        const r = await run(env, action);
         const events = await page.evaluate(() =>
           (window as unknown as { __events: Event[] }).__events.splice(0),
         );
@@ -173,6 +131,9 @@ describe('夹具 redesign（FR-07、FR-20、BW-6）', { skip: SKIP }, () => {
             `${v} ${key}：意外的错误 ${r.error?.code} ${r.error?.message}`,
           );
           assert.deepEqual(events, [], `${v} ${key} 转人工时不应有任何事件`);
+          if (CONFLICTS[v]?.includes(key)) {
+            assert.equal(r.error?.details?.conflict, true, `${v} ${key} 应报冲突`);
+          }
           outcome = 'manual';
         }
         tally[outcome]++;

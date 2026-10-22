@@ -5,14 +5,9 @@
 <title>时序</title>
 <!--
   夹具：时序（PRD 9.3，FR-13、FR-14、BW-3）。每个场景由自己的按钮触发，互不影响：
-  - 动画按钮：“开始动画”后“移动目标”匀速平移 1 秒；“摇摆按钮”一直在动（永远不稳定）；
-  - 布局偏移（悬停触发）：鼠标第一次移到“确认订单”上时，在上方插入一条提示，两个按钮整体下移，
-    原来的点击点正好落到“取消订单”上；
-  - 布局偏移（延迟插入）：“加载推荐”300 毫秒后，上方的推荐区在 500 毫秒内匀速长高，把“放弃支付”“立即支付”往下推；
-  - 延迟渲染：“显示延迟按钮”800 毫秒后才出现“延迟按钮”；
-  - 骨架屏：“加载订单”先显示骨架（aria-busy，带一个 aria-disabled 的“全部导出”），接口 /api/timing/orders
-    返回后整块换成真实表格与新的“全部导出”；?delay= 调整接口延时（默认 700 毫秒）；
-  - 进度条：“开始导出”每 100 毫秒前进 5%，到 100% 显示“导出完成”和“下载报表”；“停止”可中途停下，再点“开始导出”接着走，走完后再点则从 0 重新开始。
+  动画按钮（移动目标 1 秒匀速平移；摇摆按钮永远不稳定）、布局偏移（鼠标移到“确认订单”时上方插入提示，原落点变成“取消订单”；
+  “加载推荐”后推荐区在 500 毫秒内长高，把支付按钮往下推）、延迟渲染（800 毫秒后出现按钮）、
+  骨架屏（接口 /api/timing/orders，?delay= 调延时，默认 700 毫秒）、进度条（每 100 毫秒前进 5%，可停止、可接着走）。
   点击记录：window.__log（如 anim-target:still、view:SO-31002）。
 -->
 <style>
@@ -20,31 +15,25 @@
   html, body { overflow-anchor: none; }
   body { font: 14px/1.6 system-ui, sans-serif; margin: 16px 24px; }
   section { border: 1px solid #eee; padding: 8px 12px; margin-bottom: 12px; }
-  h2 { font-size: 15px; margin: 0 0 6px; }
   #anim-target { position: relative; }
   #wobble { animation: wobble 400ms linear infinite alternate; }
   @keyframes wobble { from { transform: translateX(0); } to { transform: translateX(40px); } }
   .stack button { display: block; height: 40px; width: 160px; margin: 0 0 8px; }
   .notice { height: 40px; margin: 0 0 8px; background: #fffbe6; }
-  #reco { height: 0; overflow: hidden; background: #f0f5ff; }
+  #reco { height: 0; overflow: hidden; }
   #reco.grow { height: 120px; transition: height 500ms linear; }
-  .sk-row { height: 18px; margin: 6px 0; background: #eee; border-radius: 4px; width: 360px; }
-  table { border-collapse: collapse; }
-  td { border-bottom: 1px solid #eee; padding: 2px 10px; }
 </style>
 </head>
 <body>
 <h1>时序</h1>
 
 <section aria-label="动画按钮">
-  <h2>动画按钮</h2>
   <button type="button" id="start-anim">开始动画</button>
   <button type="button" id="anim-target">移动目标</button>
   <button type="button" id="wobble">摇摆按钮</button>
 </section>
 
 <section aria-label="布局偏移（悬停）">
-  <h2>布局偏移（悬停触发）</h2>
   <div class="stack" id="hover-stack">
     <button type="button" id="cancel-order">取消订单</button>
     <button type="button" id="confirm-order">确认订单</button>
@@ -52,7 +41,6 @@
 </section>
 
 <section aria-label="布局偏移（延迟）">
-  <h2>布局偏移（延迟插入）</h2>
   <button type="button" id="load-reco">加载推荐</button>
   <div id="reco" data-state="idle">为您推荐：同款优惠套餐</div>
   <div class="stack">
@@ -62,19 +50,16 @@
 </section>
 
 <section aria-label="延迟渲染">
-  <h2>延迟渲染</h2>
   <button type="button" id="show-delayed">显示延迟按钮</button>
   <span id="delayed-slot"></span>
 </section>
 
 <section aria-label="骨架屏">
-  <h2>骨架屏</h2>
   <button type="button" id="load-orders">加载订单</button>
   <div id="orders"></div>
 </section>
 
 <section aria-label="进度条">
-  <h2>进度条</h2>
   <button type="button" id="start-export">开始导出</button>
   <button type="button" id="stop-export">停止</button>
   <progress id="progress" max="100" value="0"></progress> <span id="pct">0%</span>
@@ -137,7 +122,7 @@
     const box = $('orders');
     box.innerHTML =
       '<div aria-busy="true" class="skeleton"><button type="button" aria-disabled="true" id="export-sk">全部导出</button>' +
-      '<div class="sk-row"></div><div class="sk-row"></div><div class="sk-row"></div></div>';
+      '<p>加载中…</p></div>';
     $('export-sk').onclick = () => log('export-skeleton');
     const res = await fetch(`/api/timing/orders?delay=${params.get('delay') ?? 700}`);
     const { orders } = await res.json();

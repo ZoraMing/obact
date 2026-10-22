@@ -4,20 +4,15 @@
 <meta charset="utf-8">
 <title>申请开通服务（遮挡与弹窗）</title>
 <!--
-  夹具：遮挡与弹窗（PRD 9.3，FR-13、FR-23）。页面不滚动，遮挡物无法靠滚动避开。
-  - 隐藏层（同 UI Testing Playground 的 Hidden Layers）：点一次“绿色按钮”后，它上面盖上一层透明的层；
-  - 透明引导层：完全透明的遮罩盖住“提交申请”，按 Esc 关闭；?tour=full 时盖住整个页面（在 Cookie 提示条之下）；
-  - Cookie 提示条：固定在底部，完全盖住“下一步”，盖住“保存草稿”的下半部分；点“接受全部”或“仅必要”关闭；
-  - 广告层（同 The Internet 的 Entry Ad）：全屏半透明背景 + 对话框“限时优惠”，点“关闭广告”关闭；
-    ?ad=timer：加载后按 seed 决定的延时（300～1199 毫秒）弹出；
-    ?ad=click：第 k 次点击之后弹出（k 由 seed 决定，2～4）；不带 ad 参数时不弹。
-  点击记录：window.__log（落点所在的 data-log，没有则记为“(标签名)”）；广告计划：window.__adPlan；弹出次数：window.__adShown。
+  夹具：遮挡与弹窗（PRD 9.3，FR-13、FR-23）。页面不滚动，遮挡物无法靠滚动避开：
+  点一次“绿色按钮”后盖上透明层；透明引导层盖住“提交申请”，按 Esc 关闭；底部 Cookie 提示条完全盖住“下一步”、盖住“保存草稿”的下半部分；
+  广告层（全屏半透明背景 + 对话框）：?ad=timer 加载后按 seed 决定的延时弹出，?ad=click 第 k 次点击后弹出（k 由 seed 决定，2～4）。
+  点击记录 window.__log（落点所在的 data-log），广告计划 window.__adPlan，弹出次数 window.__adShown。
 -->
 <style>
   html, body { height: 100%; margin: 0; overflow: hidden; }
   body { font: 14px/1.6 system-ui, sans-serif; }
   header { padding: 12px 24px; background: #f5f5f5; }
-  header h1 { margin: 0; font-size: 20px; }
   main { display: flex; gap: 32px; padding: 16px 24px; }
   section { width: 340px; }
   .stack { position: relative; width: 160px; height: 40px; }
@@ -28,15 +23,13 @@
   .submit-area { position: relative; display: inline-block; margin-top: 12px; }
   #submit { width: 140px; height: 40px; }
   #tour-mask { position: absolute; inset: -12px; background: transparent; }
-  #tour-mask.full { position: fixed; inset: 0; z-index: 5; }
-  .tour-tip { position: absolute; left: 160px; top: 0; width: 180px; padding: 6px 8px; background: #e6f4ff; border: 1px solid #91caff; font-size: 12px; }
-  #result { margin-top: 16px; color: #389e0d; }
+  .tour-tip { position: absolute; left: 160px; top: 0; width: 180px; font-size: 12px; }
   #draft { position: fixed; left: 40px; bottom: 100px; width: 120px; height: 40px; }
   #next { position: fixed; left: 200px; bottom: 30px; width: 120px; height: 40px; }
   #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; height: 120px; z-index: 10; background: rgba(20, 20, 20, 0.92); color: #fff; padding: 16px 24px; box-sizing: border-box; }
   #cookie-banner .actions { position: absolute; right: 24px; top: 40px; display: flex; gap: 8px; }
   #ad-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.45); }
-  #ad-dialog { position: fixed; z-index: 21; left: 50%; top: 30%; transform: translateX(-50%); width: 360px; background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+  #ad-dialog { position: fixed; z-index: 21; left: 50%; top: 30%; transform: translateX(-50%); width: 360px; background: #fff; padding: 20px; }
   #ad-close { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; }
 </style>
 </head>
@@ -108,7 +101,6 @@
     $('ad').hidden = false;
   };
   if (mode === 'timer') setTimeout(showAd, plan.delay);
-  if (params.get('tour') === 'full') $('tour-mask').classList.add('full');
 
   document.addEventListener(
     'click',
