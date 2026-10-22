@@ -1,6 +1,8 @@
 # 任务上下文与多页面流程设计（M2）
 
-状态：设计稿，第 12 节的四项决策已确认（2026-10-22），待多 agent 审阅。审阅通过后同步到 [`packages/workflow/DESIGN.md`](../packages/workflow/DESIGN.md)、契约（`packages/schemas`，已冻结，按变更流程评审）和 [M2 计划](M2_PLAN.md)。术语见 PRD 第 3 节。
+状态：已精简（见下方说明）。原同步到 [`packages/workflow/DESIGN.md`](../packages/workflow/DESIGN.md)、契约（`packages/schemas`，已冻结，按变更流程评审）和 [M2 计划](M2_PLAN.md)。术语见 PRD 第 3 节。
+
+> **2026-10-22 精简**：本稿原先的方案过重，M2 只实现其中的最小部分，以 [M2 计划](M2_PLAN.md) 第 3 节为准：runner 里一张别名表（`opens` 绑定、`pageId` 写别名、`extract.into`）；续跑的重做单位用已有的循环条目与 `checkpoint` 步骤。下文的任务上下文（页面表、导航链）、检查点 `pages` / `segment` / `lookup_done`、`segment_begin / end`、静态检查、对账等**均已取消**，保留仅作为将来需要时的参考。
 
 ## 1. 要解决的问题
 
