@@ -30,7 +30,7 @@ describe('命令行层', { skip: SKIP, timeout: 300_000 }, () => {
   });
 
   test('同一 run-id 并发的第二个 resume 被运行锁拒绝（退出码 6）、同一账号的另一个运行被账号锁拒绝，第一个运行的 Chrome 不受影响', async () => {
-    const ws = auditWorkspace(lab, 'cli-lock', await pendingOrders(lab, 'cli-lock', 1000, 12));
+    const ws = auditWorkspace(lab, 'cli-lock', await pendingOrders(lab, 'cli-lock', 1000, 60));
     const first = cli(ws, ['run', NAME, '--run-id', 'r']);
     const store = new RunStore(ws, 'r');
     const chrome = await until(
