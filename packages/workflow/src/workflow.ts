@@ -20,7 +20,9 @@ export type ProblemCode =
   | 'call_not_found'
   | 'bad_template'
   | 'once_only_not_action'
+  | 'once_only_in_preamble'
   | 'missing_idempotency_key'
+  | 'duplicate_idempotency_key'
   | 'key_not_per_item'
   | 'key_var_out_of_scope';
 
@@ -289,7 +291,7 @@ export function loadWorkflow(dir: string, resolveWorkflow?: (name: string) => un
 // ---------- 结构校验 ----------
 
 type Frame =
-  | { kind: 'loop'; step: Step; as: string; vars: Set<string> }
+  | { kind: 'loop'; step: Step; as: string }
   | { kind: 'if'; step: Step; elseSeen: boolean };
 
 /** 控制流的开头、结尾与分支：不能放在前置路径里（前置路径无条件重放，不含循环与分支）。 */
@@ -305,7 +307,7 @@ function hasRef(x: unknown): boolean {
 /**
  * 结构校验，返回全部问题（不抛）：step_id 唯一；loop / if 配对与嵌套；break 在循环内；
  * 前置路径在所有主流程之前且不在循环或分支内；目标不能用 ref；模板写法；call 的工作流存在；
- * 单次提交只能用在动作步骤上，其幂等键要随循环条目变化。
+ * 单次提交只能用在动作步骤上、不在前置路径里，其幂等键要引用每一层外层循环的变量，且各步骤的键模板互不相同。
  */
 export function validateWorkflow(
   w: Workflow,
@@ -323,6 +325,8 @@ export function validateWorkflow(
   let mainSeen = false;
 
   const innermostLoop = () => stack.findLast((f) => f.kind === 'loop');
+  /** 幂等键模板 → 用它的 once_only 步骤。 */
+  const keyOwners = new Map<string, string>();
 
   const close = (step: Step, kind: Frame['kind'], opener: string) => {
     const top = stack.at(-1);
@@ -378,7 +382,7 @@ export function validateWorkflow(
 
     switch (step.op) {
       case 'loop_begin':
-        stack.push({ kind: 'loop', step, as: step.as, vars: new Set([step.as]) });
+        stack.push({ kind: 'loop', step, as: step.as });
         break;
       case 'loop_end':
         close(step, 'loop', 'loop_begin');
@@ -404,12 +408,6 @@ export function validateWorkflow(
           add(step, 'call_not_found', `找不到被调用的工作流：${step.workflow}`);
         }
         break;
-      case 'set_var':
-        innermostLoop()?.vars.add(step.name);
-        break;
-      case 'extract':
-        if (typeof step.as === 'string') innermostLoop()?.vars.add(step.as);
-        break;
     }
 
     if (step.once_only) {
@@ -421,11 +419,22 @@ export function validateWorkflow(
         );
         continue;
       }
+      if (step.section === 'preamble') {
+        add(step, 'once_only_in_preamble', '前置路径续跑时无条件重放，不能 once_only');
+      }
       const key = step.idempotency_key;
       if (!key) {
         add(step, 'missing_idempotency_key', 'once_only 步骤必须有 idempotency_key');
         continue;
       }
+      const owner = keyOwners.get(key);
+      if (owner !== undefined) {
+        add(
+          step,
+          'duplicate_idempotency_key',
+          `idempotency_key 与步骤 ${owner} 的模板完全相同：同一条目的两次提交共用一个键，第二个会被当作已提交而跳过`,
+        );
+      } else keyOwners.set(key, step.step_id);
       const heads = listTemplates(key)
         .filter((t) => t.kind === 'var')
         .map((t) => parsePath(t.name)?.[0])
@@ -440,13 +449,16 @@ export function validateWorkflow(
           );
         }
       }
-      const inner = innermostLoop();
-      if (inner && !heads.some((h) => inner.vars.has(h))) {
-        add(
-          step,
-          'key_not_per_item',
-          `idempotency_key 没有引用循环变量 ${inner.as}：每个条目会得到相同的键，第一条之后都会被当作已提交而跳过`,
-        );
+      // 每一层外层循环的变量都要出现在键里，否则那一层的不同条目会得到相同的键；
+      // 循环内 set_var、extract.as 设的变量不随条目自动变化，不算
+      for (const f of stack) {
+        if (f.kind === 'loop' && !heads.includes(f.as)) {
+          add(
+            step,
+            'key_not_per_item',
+            `idempotency_key 没有引用循环变量 ${f.as}：该循环的不同条目会得到相同的键，第一条之后都会被当作已提交而跳过`,
+          );
+        }
       }
     }
   }
