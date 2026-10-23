@@ -497,6 +497,16 @@ describe('validateWorkflow', () => {
       expect: ['call_not_found'],
     },
     {
+      name: 'call 的工作流名必须是安全名：带路径分隔符、.. 的不行（不依赖 resolveWorkflow）',
+      steps: [
+        S('a', 'call', { workflow: '../evil' }),
+        S('b', 'call', { workflow: 'a/b' }),
+        S('c', 'call', { workflow: '..' }),
+        S('d', 'call', { workflow: 'sub.v2' }),
+      ],
+      expect: ['bad_call_name', 'bad_call_name', 'bad_call_name'],
+    },
+    {
       name: '模板写错：类型不存在、变量路径不合法',
       steps: [S('a', 'fill', { value: '{{params:x}}' }), S('b', 'fill', { value: '{{var:a..b}}' })],
       expect: ['bad_template', 'bad_template'],

@@ -4,18 +4,18 @@
 // run、resume：本进程当监督进程，用同一个入口加 --child 拉起运行子进程，崩溃（退出码非 0、被杀、心跳超时）后
 // 监督进程以 OBACT_RESUME=1 重启，子进程从检查点续跑。子进程只要跑到了结局（DONE、FAILED、STOPPED、
 // NEED_HUMAN）退出码就是 0，否则会被当作崩溃重启；命令行本身的退出码由父进程按检查点状态换算。
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { ObactError, resolveChromePath } from '@obact/core';
+import { assertAccountName, ObactError, resolveChromePath } from '@obact/core';
 import { openSession, sweepBrowser } from './executor.ts';
 import { acquireLock, LockedError } from './lock.ts';
 import { run } from './runner.ts';
 import { RunStore } from './store.ts';
 import { startHeartbeat, superviseRun } from './supervisor.ts';
-import type { RunEvents, RunOptions, RunResult } from './types.ts';
-import { loadWorkflow } from './workflow.ts';
+import type { RunEvents, RunOptions, RunResult, Workflow } from './types.ts';
+import { assertWorkflowName, loadWorkflow } from './workflow.ts';
 
 const USAGE = `用法：
   obact run <工作流> [--workspace DIR] [--run-id ID] [--headed] [--chrome PATH] [--on-unverified stop|skip] [--var k=v]...
@@ -63,15 +63,22 @@ export type RunWorkflowOptions = {
   hooks?: RunOptions['hooks'];
 };
 
+/** 按名字加载 workflows/<名>：名字必须是安全名，且与 workflow.json 的 name 一致。 */
+function loadNamed(workspace: string, name: string): Workflow {
+  assertWorkflowName(name);
+  const workflow = loadWorkflow(join(workspace, 'workflows', name));
+  if (workflow.name !== name) {
+    throw new ObactError('invalid_params', `目录名与 name 不一致：${name} / ${workflow.name}`);
+  }
+  return workflow;
+}
+
 /** 子进程的主体：加载工作流 → 启动浏览器 → 运行 → 关闭浏览器。 */
 export async function runWorkflow(o: RunWorkflowOptions): Promise<RunResult> {
   const cp = o.resume ? new RunStore(o.workspace, o.runId).readCheckpoint() : null;
   const name = o.workflow ?? cp?.workflow;
   if (!name) throw new ObactError('invalid_params', `没有可续跑的检查点：${o.runId}`);
-  const workflow = loadWorkflow(join(o.workspace, 'workflows', name));
-  if (workflow.name !== name) {
-    throw new ObactError('invalid_params', `目录名与 name 不一致：${name} / ${workflow.name}`);
-  }
+  const workflow = loadNamed(o.workspace, name);
   const mode = o.mode ?? cp?.mode ?? workflow.meta.mode ?? 'headless';
   const executor = await openSession({ ...o, workflow, mode });
   try {
@@ -163,8 +170,27 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
     console.log(`运行 ${runId} 已完成`);
     return 0;
   }
-  loadWorkflow(join(workspace, 'workflows', cp?.workflow ?? target));
-  resolveChromePath(v.chrome);
+  // 预检：下面这些错误重启也不会好，在这里挡住，不拉起子进程
+  const workflow = loadNamed(workspace, cp?.workflow ?? target);
+  assertAccountName(workflow.meta.account ?? 'default');
+  const chrome = resolveChromePath(v.chrome);
+  try {
+    if (!statSync(chrome).isFile()) throw new Error('不是文件');
+    accessSync(chrome, constants.X_OK);
+  } catch {
+    throw new ObactError('invalid_params', `浏览器不存在或不可执行：${chrome}`);
+  }
+  const display = process.env.DISPLAY || process.env.WAYLAND_DISPLAY;
+  if (
+    (opts.mode ?? cp?.mode ?? workflow.meta.mode) === 'headed' &&
+    process.platform === 'linux' &&
+    !display
+  ) {
+    throw new ObactError(
+      'invalid_params',
+      '有头模式（--headed）需要图形环境：没有设置 DISPLAY（无显示器的 Linux 请先启动 Xvfb 并设置 DISPLAY，或改用无头）',
+    );
+  }
 
   // 运行锁：同一个运行同一时刻只能有一个监督进程，否则两个子进程会写同一个运行目录、互相清扫对方的浏览器
   const release = acquireLock(join(store.dir, 'run.lock'), `运行 ${runId}`);

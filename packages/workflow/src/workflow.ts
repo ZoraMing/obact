@@ -18,6 +18,7 @@ export type ProblemCode =
   | 'preamble_in_block'
   | 'ref_target'
   | 'call_not_found'
+  | 'bad_call_name'
   | 'bad_template'
   | 'once_only_not_action'
   | 'once_only_in_preamble'
@@ -291,6 +292,20 @@ export function loadWorkflow(dir: string, resolveWorkflow?: (name: string) => un
 
 // ---------- 结构校验 ----------
 
+/** 工作流名要拼进 workflows/<名> 路径：写法与 workflow.json 的 name 一致，且不能全是点（. 与 .. 会逃出目录）。 */
+export function isSafeName(name: unknown): name is string {
+  return typeof name === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(name) && !/^\.+$/.test(name);
+}
+
+export function assertWorkflowName(name: unknown): asserts name is string {
+  if (!isSafeName(name)) {
+    throw new ObactError(
+      'invalid_params',
+      `工作流名不合法：${JSON.stringify(name)}（只允许字母、数字、_ - .，最长 64 个字符，不能含路径分隔符或 ..）`,
+    );
+  }
+}
+
 type Frame =
   | { kind: 'loop'; step: Step; as: string }
   | { kind: 'if'; step: Step; elseSeen: boolean };
@@ -414,7 +429,9 @@ export function validateWorkflow(
         }
         break;
       case 'call':
-        if (resolveWorkflow && !resolveWorkflow(step.workflow)) {
+        if (!isSafeName(step.workflow)) {
+          add(step, 'bad_call_name', `call 的工作流名不合法：${JSON.stringify(step.workflow)}`);
+        } else if (resolveWorkflow && !resolveWorkflow(step.workflow)) {
           add(step, 'call_not_found', `找不到被调用的工作流：${step.workflow}`);
         }
         break;
