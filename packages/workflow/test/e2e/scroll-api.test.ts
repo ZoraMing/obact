@@ -145,6 +145,7 @@ describe('BW-2、BW-10 页面滚动与接口截获', { skip: SKIP }, () => {
     });
     const ms = Date.now() - t0;
     assert.equal(r.state, 'DONE', JSON.stringify(r.error));
+    assert.ok(ms <= LIMIT_MS, `${name} 用时 ${ms} ms，超过 ${LIMIT_MS / 1000} 秒`);
     const rows = lines(outputFile(ws, name, name, 'rows')).map((l) => JSON.parse(l) as object);
     return { rows, ms };
   }

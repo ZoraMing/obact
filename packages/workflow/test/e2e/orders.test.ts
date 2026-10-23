@@ -47,16 +47,14 @@ describe('订单批量审核：单次提交', { skip: SKIP, timeout: 300_000 }, 
         await faults({ commit_timeout: want });
       },
     };
-    // hooks 不在 RunWorkflowOptions 的类型里，但 runWorkflow 会原样交给 run（先放进变量，免得多余属性检查）
-    const opts = {
+    const r = await runWorkflow({
       workspace: ws,
       runId: 'r',
       workflow: NAME,
       chromePath: CHROME,
       ...(skip && { onUnverified: 'skip' as const }),
       hooks,
-    };
-    const r = await runWorkflow(opts);
+    });
     const store = new RunStore(ws, 'r');
     const view = await serverView(lab, space);
     return { r, ws, ids, store, view, faults, ...reconcile(ws, 'r', view) };
@@ -71,7 +69,7 @@ describe('订单批量审核：单次提交', { skip: SKIP, timeout: 300_000 }, 
     assert.equal(store.readCheckpoint()?.state, 'STOPPED');
     assert.deepEqual(done, ids.slice(0, 6));
     assert.deepEqual(unv, [ids[6]]);
-    assert.match(store.listUnverified()[0]?.reason ?? '', /^post_(failed|timeout)$/);
+    assert.equal(store.listUnverified()[0]?.reason, 'post_failed');
     assert.deepEqual([...view.hits.keys()], ids.slice(0, 7), '服务端：前 7 条各一次，之后一条未动');
     // 没有核实就续跑：状态未明的那条不会被重做（故障已关，重做会成功，服务端会多出一次请求），运行再次停下
     await faults({ commit_timeout: false });

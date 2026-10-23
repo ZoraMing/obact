@@ -239,6 +239,11 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
     if (out.state === 'TRIPPED')
       console.error(`1 小时内崩溃超过 3 次，不再拉起；修好后可 obact resume ${runId}`);
     if (out.state === 'STOPPED') console.error(`已中断，可用 obact resume ${runId} 续跑`);
+    if (end?.state === 'STOPPED' || end?.state === 'NEED_HUMAN') {
+      console.error(
+        `处理后可 obact resume ${runId} 续跑（状态未明的条目见 obact unverified ${runId}）`,
+      );
+    }
     return out.state === 'TRIPPED'
       ? 5
       : out.state === 'STOPPED'

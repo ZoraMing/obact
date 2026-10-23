@@ -39,6 +39,15 @@ describe('崩溃续跑', { skip: SKIP, timeout: 300_000 }, () => {
     return { ids, state, view, ...reconcile(ws, 'r', view) };
   }
 
+  /** 被杀后续跑，结果必须与不被杀一模一样：全部完成、没有待核实、服务端按原顺序每条审核一次。 */
+  async function sameAsUnkilled(space: string, n: number, kills: Kill[]) {
+    const { ids, state, view, done, unv } = await killRun(space, n, kills);
+    assert.equal(state, 'DONE');
+    assert.deepEqual(done, ids);
+    assert.deepEqual(unv, []);
+    assert.deepEqual(view.changed, ids, '服务端按原顺序每条审核一次，没有遗漏');
+  }
+
   test(`C-1 随机时刻两次 SIGKILL（种子 ${SEED}）：续跑后与不被杀一致，服务端每条恰好一次、无遗漏`, async (t) => {
     // 随机点只取“安全”的时刻（订单审核提交之外）：重做被打断的那一条，结果应当与没被杀一模一样
     const rnd = seeded(SEED);
@@ -49,11 +58,17 @@ describe('崩溃续跑', { skip: SKIP, timeout: 300_000 }, () => {
       { at: at(), nth: pick(3, 12) },
     ];
     t.diagnostic(`击杀点：${JSON.stringify(kills)}`);
-    const { ids, state, view, done, unv } = await killRun('kill-random', 40, kills);
-    assert.equal(state, 'DONE');
-    assert.deepEqual(done, ids);
-    assert.deepEqual(unv, []);
-    assert.deepEqual(view.changed, ids, '服务端按原顺序每条审核一次，没有遗漏');
+    await sameAsUnkilled('kill-random', 40, kills);
+  });
+
+  // 随机种子不一定三种时刻都抽到（当前种子只抽到 ask 之前和 approve 之后），所以三个候选点再各固定杀一次：
+  // 点“审核通过”弹出确认框、还没点确认时被杀，也要与不被杀一致
+  test('C-1 三个安全击杀点各固定杀一次：ask 之前、确认框打开时（approve 之前）、approve 之后', async () => {
+    await sameAsUnkilled('kill-fixed', 20, [
+      { at: 'before:ask', nth: 3 },
+      { at: 'before:approve', nth: 3 },
+      { at: 'after:approve', nth: 3 },
+    ]);
   });
 
   // 崩在 once_only 步骤中间的三个时刻（第 12 条）：[说明, 击杀点, 跳过模式, 服务端该条提交数, 待核实条数]
