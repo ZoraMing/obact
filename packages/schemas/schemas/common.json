@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/common.json",
+  "title": "Common",
+  "description": "各契约共用的基础类型。坐标与包围盒均为视口 CSS 像素（PRD 7.7）。",
+  "$defs": {
+    "PageId": {
+      "description": "工具内标签页 ID（FR-04）。",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "Ref": {
+      "description": "observe 分配的元素编号；会话内递增、不复用（FR-06）。",
+      "type": "integer",
+      "minimum": 1
+    },
+    "Point": {
+      "description": "视口像素坐标 [x, y]。",
+      "type": "array",
+      "prefixItems": [{ "type": "number" }, { "type": "number" }],
+      "minItems": 2,
+      "maxItems": 2,
+      "tsType": "[number, number]"
+    },
+    "BBox": {
+      "description": "包围盒 [x, y, width, height]，视口像素。",
+      "type": "array",
+      "prefixItems": [
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4,
+      "tsType": "[number, number, number, number]"
+    },
+    "Mode": { "type": "string", "enum": ["headed", "headless"] },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "Locator": {
+      "title": "Locator",
+      "description": "持久定位器（FR-07）：属性/CSS 与 角色+名称 两类，可加 within 容器消歧、frame 路径。工作流中只允许用定位器，不允许用编号。",
+      "type": "object",
+      "properties": {
+        "css": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "exact": { "type": "boolean", "description": "name 是否精确匹配，默认 true。" },
+        "within": {
+          "type": "string",
+          "minLength": 1,
+          "description": "所在容器（业务主键所在行等）的 CSS 选择器。"
+        },
+        "frame": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "从顶层到目标 frame 的 iframe 选择器链。"
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["css"] }, { "required": ["role"] }]
+    },
+    "Target": {
+      "title": "Target",
+      "description": "动作目标：按编号（仅单次调用，会话内有效）或按定位器。",
+      "type": "object",
+      "properties": {
+        "ref": { "$ref": "#/$defs/Ref" },
+        "css": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "exact": { "type": "boolean" },
+        "within": { "type": "string", "minLength": 1 },
+        "frame": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["ref"] }, { "required": ["css"] }, { "required": ["role"] }]
+    },
+    "AssertionCore": {
+      "title": "AssertionCore",
+      "description": "检查项的公共部分（不限制额外字段）。",
+      "type": "object",
+      "properties": {
+        "text_present": { "type": "string", "minLength": 1 },
+        "text_absent": { "type": "string", "minLength": 1 },
+        "element_present": { "$ref": "#/$defs/Locator" },
+        "element_absent": { "$ref": "#/$defs/Locator" },
+        "url_matches": { "type": "string", "description": "正则。" },
+        "title_matches": { "type": "string", "description": "正则。" },
+        "signature": { "type": "string", "description": "页面签名 ID（FR-08）。" },
+        "value_equals": {
+          "type": "object",
+          "properties": { "target": { "$ref": "#/$defs/Locator" }, "value": { "type": "string" } },
+          "required": ["target", "value"],
+          "additionalProperties": false
+        },
+        "expr": { "type": "string", "description": "页面内求值为真值的 JS 表达式。" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "oneOf": [
+        { "required": ["text_present"] },
+        { "required": ["text_absent"] },
+        { "required": ["element_present"] },
+        { "required": ["element_absent"] },
+        { "required": ["url_matches"] },
+        { "required": ["title_matches"] },
+        { "required": ["signature"] },
+        { "required": ["value_equals"] },
+        { "required": ["expr"] }
+      ]
+    },
+    "Assertion": {
+      "title": "Assertion",
+      "type": "object",
+      "description": "检查项，用于前置/后置检查、断言、等待和条件。每项只含一种检查。",
+      "$ref": "#/$defs/AssertionCore",
+      "unevaluatedProperties": false
+    },
+    "AssertionResult": {
+      "title": "AssertionResult",
+      "type": "object",
+      "$ref": "#/$defs/AssertionCore",
+      "properties": { "pass": { "type": "boolean" }, "detail": { "type": "string" } },
+      "required": ["pass"],
+      "unevaluatedProperties": false
+    },
+    "ErrorCode": {
+      "description": "失败原因代码。",
+      "type": "string",
+      "enum": [
+        "invalid_params",
+        "page_not_found",
+        "stale_ref",
+        "not_found",
+        "not_unique",
+        "not_actionable",
+        "obscured",
+        "landing_mismatch",
+        "timeout",
+        "navigation_failed",
+        "assertion_failed",
+        "dialog_blocking",
+        "response_timeout",
+        "captcha_detected",
+        "login_required",
+        "path_outside_workspace",
+        "script_error",
+        "browser_disconnected",
+        "internal"
+      ]
+    },
+    "Error": {
+      "title": "ObactError",
+      "type": "object",
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": { "type": "string" },
+        "details": { "type": "object", "additionalProperties": true }
+      },
+      "required": ["code", "message"],
+      "additionalProperties": false
+    },
+    "Viewport": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "截图像素 / 视口像素 的比例（FR-31）。"
+        }
+      },
+      "required": ["width", "height", "scale"],
+      "additionalProperties": false
+    }
+  }
+}

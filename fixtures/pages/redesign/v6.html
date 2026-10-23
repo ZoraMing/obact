@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>订单编辑 · 全面改版</title>
+<link rel="stylesheet" href="style.css">
+<!-- 改版夹具 v6：全面改版（改 id、文案、类名、name、链接）。两类定位器都失效，只能报 not_found / not_unique 转人工。 -->
+</head>
+<body>
+<header class="topbar-v2">
+  <input type="search" id="q" name="q" placeholder="订单号 / 客户" data-x-key="search">
+  <button id="do-query" class="btn-main" data-x-key="search-btn">查询</button>
+  <span class="spacer"></span>
+  <a href="#docs" data-x-key="help">文档中心</a>
+  <button type="button" class="close-x" data-x-key="close"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button>
+</header>
+<div class="banner" data-testid="logistics-banner">物流通知：部分地区运费上调。<button type="button" class="close-x" data-x-key="notice-close"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button></div>
+<div class="toolbar">
+  <button type="button" id="act-add" class="btn-main" data-x-key="create">添加</button>
+  <button type="button" id="act-upload" class="btn-main" data-x-key="import">上传文件</button>
+  <button type="button" id="act-download" class="btn-main" data-x-key="export">下载</button>
+</div>
+<form id="f2">
+  <h2>订单 SO-24003</h2>
+  <div class="field"><label for="f-buyer">买家</label><input id="f-buyer" name="buyer" data-x-key="customer"></div>
+  <div class="field"><label for="f-mobile">手机</label><input id="f-mobile" name="mobile" data-x-key="phone"></div>
+  <div class="field"><label for="f-state">进度</label>
+    <select id="f-state" name="state" data-x-key="status"><option>待审核</option><option>已发货</option><option>已取消</option></select>
+  </div>
+  <div class="field"><label for="f-note">说明</label><textarea id="f-note" name="note" data-x-key="remark"></textarea></div>
+  <div class="field"><input type="checkbox" id="f-rush" name="rush" data-x-key="urgent"><label for="f-rush">优先</label></div>
+  <table class="items">
+    <tr data-sku="apple"><td>苹果</td><td>2 箱</td><td><button type="button" class="text-btn" data-x-key="remove-apple">去掉</button></td></tr>
+    <tr data-sku="pear"><td>梨</td><td>1 箱</td><td><button type="button" class="text-btn" data-x-key="remove-pear">去掉</button></td></tr>
+  </table>
+  <div class="actions">
+    <button id="act-submit" class="btn-main" data-x-key="save">提交</button>
+    <button type="button" id="act-back" class="btn-main" data-x-key="cancel">返回列表</button>
+    <button type="button" id="act-void" class="btn-main" data-x-key="delete">作废</button>
+  </div>
+</form>
+<script src="log.js"></script>
+</body>
+</html>

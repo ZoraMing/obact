@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>页面结构</title>
+<!--
+  夹具：页面结构（PRD 9.3，FR-04、FR-05）。开放 / 封闭 Shadow DOM；同源、跨域（127.0.0.1 ↔ localhost）、
+  嵌套（同源外层 → 跨域内层）iframe；target=_blank 新标签页。frame 里的“提交”通过 postMessage 通知顶层，
+  顶层在 #status 显示“跨域框架提交 1 次”这样的文字，供后置检查；Shadow DOM 里的点击记入 window.__log。
+-->
+<style>iframe { width: 360px; height: 120px; }</style>
+</head>
+<body>
+<h1>页面结构</h1>
+<profile-card></profile-card>
+<pay-box></pay-box>
+<iframe id="same-frame" title="同源表单" src="frame.html?who=same"></iframe>
+<iframe id="cross-frame" title="跨域表单"></iframe>
+<iframe id="nested-frame" title="嵌套框架" src="outer.html"></iframe>
+<p><a href="frame.html?who=popup" target="_blank">在新标签页打开表单</a></p>
+<p id="status" role="status">尚无提交</p>
+<script>
+  window.__log = [];
+  const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  document.getElementById('cross-frame').src = `${location.protocol}//${other}:${location.port}/structure/frame.html?who=cross`;
+
+  const define = (name, mode, html, wire) =>
+    customElements.define(name, class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode });
+        root.innerHTML = html;
+        wire(root);
+      }
+    });
+  define('profile-card', 'open', '<strong>店铺：星河贸易</strong> <button type="button">关注</button>', (root) => {
+    root.querySelector('button').onclick = () => window.__log.push('已关注');
+  });
+  // 封闭的 Shadow Root：页面脚本外部拿不到 shadowRoot
+  define('pay-box', 'closed', '<label>金额 <input inputmode="decimal"></label> <button type="button">支付</button>', (root) => {
+    root.querySelector('button').onclick = () => {
+      const text = `已支付 ${root.querySelector('input').value} 元`;
+      window.__log.push(text);
+      document.getElementById('status').textContent = text;
+    };
+  });
+
+  const LABEL = { same: '同源框架', cross: '跨域框架', nested: '嵌套框架' };
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (d?.type === 'frame-submit') {
+      document.getElementById('status').textContent = `${LABEL[d.who]}提交 ${d.count} 次${d.email ? `（${d.email}）` : ''}`;
+    }
+  });
+</script>
+</body>
+</html>

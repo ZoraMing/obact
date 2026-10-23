@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>表单与文件</title>
+<!-- 夹具：表单与文件（PRD 9.3，FR-35）。账号表单（密码框、令牌、下拉框、复选框）、上传（文件输入框与自绘上传按钮）、下载。window.formEvents 记录输入是否可信。 -->
+</head>
+<body>
+  <h1>表单与文件</h1>
+
+  <h2>账号设置</h2>
+  <form id="account">
+    <label for="username">用户名</label><input id="username" name="username" autocomplete="username"><br>
+    <label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password"><br>
+    <label for="api-token">API 令牌</label><input id="api-token" name="api_token"><br>
+    <label for="role">角色</label>
+    <select id="role" name="role">
+      <option value="">请选择</option>
+      <option value="admin">管理员</option>
+      <option value="auditor">审计员</option>
+    </select><br>
+    <label><input type="checkbox" id="remember" name="remember"> 记住登录</label>
+    <label><input type="checkbox" id="agree" name="agree"> 同意服务条款</label><br>
+    <button type="submit">保存设置</button>
+  </form>
+  <p id="account-result" role="status"></p>
+
+  <h2>上传附件</h2>
+  <label for="attach">选择附件</label><input type="file" id="attach" multiple>
+  <ul id="file-list"></ul>
+  <button type="button" id="avatar-btn">上传头像</button>
+  <input type="file" id="avatar" accept=".png,.jpg,.txt" hidden>
+  <span id="avatar-result" role="status"></span>
+
+  <h2>下载</h2>
+  <a id="download" href="/api/forms-files/report.csv?seed=1&amp;rows=10">下载订单报表（CSV）</a>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const events = (window.formEvents = []);
+
+    $('account').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!$('agree').checked) {
+        $('account-result').textContent = '请先同意服务条款';
+        return;
+      }
+      const role = $('role');
+      $('account-result').textContent =
+        `已保存：用户名 ${$('username').value}，角色 ${role.options[role.selectedIndex].text}，` +
+        `记住登录 ${$('remember').checked ? '是' : '否'}，密码 ${$('password').value.length} 位`;
+    });
+    for (const id of ['username', 'password', 'api-token']) {
+      $(id).addEventListener('input', (e) => events.push(`input:${id}:${e.isTrusted}`));
+    }
+
+    const describe = (f) => `${f.name}（${f.size} 字节）`;
+    $('attach').addEventListener('change', (e) => {
+      events.push(`attach:${e.isTrusted}`);
+      $('file-list').replaceChildren(
+        ...[...e.target.files].map((f) => Object.assign(document.createElement('li'), { textContent: describe(f) })),
+      );
+    });
+    $('avatar-btn').addEventListener('click', () => $('avatar').click());
+    $('avatar').addEventListener('change', (e) => {
+      $('avatar-result').textContent = `头像：${describe(e.target.files[0])}`;
+    });
+  </script>
+</body>
+</html>

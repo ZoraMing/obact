@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>提示条测试页</title>
+<style>
+  body { margin: 0; padding: 20px; font: 14px sans-serif; }
+  /* 按钮固定在左下角，正好在提示条下面：真实鼠标点击必须穿过提示条 */
+  #under { position: fixed; left: 12px; bottom: 12px; width: 200px; height: 40px; }
+</style>
+</head>
+<body>
+<h1>订单列表</h1>
+<p>这是页面正文。</p>
+<button type="button" id="query">查询</button>
+<a href="/pages/basic.html">去另一页</a>
+<button type="button" id="under">被盖住的按钮</button>
+<script>
+  window.events = [];
+  document.getElementById('under').addEventListener('click', () => window.events.push('under'));
+</script>
+</body>
+</html>

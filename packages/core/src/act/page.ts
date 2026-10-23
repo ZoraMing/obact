@@ -1,0 +1,999 @@
+/**
+ * act 专用的页面内助手（在浏览器里执行）。约定同 page/bundle.ts：自包含的函数声明，只互相调用，
+ * 并可调用 DOM_LIB 里的助手。用 `bundle(main, ACT_DEPS)` 送进页面。
+ */
+import {
+  DOM_LIB,
+  obActions,
+  obActiveElement,
+  obDeepAll,
+  obIsSensitive,
+  obName,
+  obNorm,
+  obRole,
+  obShadow,
+} from '../page/dom.ts';
+
+type Rect = [number, number, number, number];
+type Hit = { ok: boolean; x: number; y: number; desc: string };
+
+/** 元素简述，用于报错：tag#id.class "文本"。 */
+export function obActDescribe(el: Element | null): string {
+  if (!el) return '（空白处）';
+  let s = el.tagName.toLowerCase();
+  if (el.id) s += `#${el.id}`;
+  const cls =
+    typeof el.className === 'string' ? el.className.trim().split(/\s+/).filter(Boolean) : [];
+  if (cls.length) s += `.${cls.slice(0, 2).join('.')}`;
+  const text = obNorm((el as HTMLElement).innerText ?? el.textContent).slice(0, 24);
+  if (text) s += ` "${text}"`;
+  return s;
+}
+
+/** 穿透 Shadow DOM（含已挂出的封闭 Shadow Root）的命中测试：坐标处最深的元素。 */
+export function obActDeepHit(x: number, y: number): Element | null {
+  let root: Document | ShadowRoot = document;
+  let hit: Element | null = null;
+  for (let i = 0; i < 32; i++) {
+    const next: Element | null = root.elementFromPoint(x, y);
+    if (!next || next === hit) break;
+    hit = next;
+    const sr = obShadow(next);
+    if (!sr) break;
+    root = sr;
+  }
+  return hit;
+}
+
+/**
+ * 命中元素是否算落在目标上：目标本身或其后代；目标的 label 内（点 label 等于点控件）；
+ * 或目标所在 Shadow 树的宿主（封闭 Shadow 内的命中与事件会被重定向到宿主）。
+ */
+export function obActHits(el: Element, hit: Element | null): boolean {
+  if (!hit) return false;
+  if (hit === el || el.contains(hit)) return true;
+  const labels = (el as HTMLInputElement).labels;
+  if (labels) {
+    for (const l of labels) if (l === hit || l.contains(hit)) return true;
+  }
+  let node: Node = el;
+  for (let i = 0; i < 32; i++) {
+    const root = node.getRootNode();
+    if (!(root instanceof ShadowRoot)) break;
+    if (root.host === hit) return true;
+    node = root.host;
+  }
+  // 命中点在目标自己的 Shadow 树里（Web Component 宿主带角色，点到内部的 slot、div 等）：
+  // 沿扁平树（assignedSlot → parentNode → ShadowRoot.host）往上能走到目标，就是点中了目标
+  let up: Node | null = hit;
+  for (let i = 0; i < 64 && up; i++) {
+    if (up === el) return true;
+    const next: Node | null = (up as Element).assignedSlot ?? up.parentNode;
+    up = next instanceof ShadowRoot ? next.host : next;
+  }
+  return false;
+}
+
+/**
+ * 命中元素是否算落在这次动作的目标上（el 是点击对象，subject 是 label 代点时被代点的控件）。
+ * label 代点时，落在 label 里点了不会勾选控件的后代上（链接、按钮、其他表单控件、嵌套 label 等）不算：
+ * 浏览器对它们不触发 label 的激活行为，只做后代自己的事（如跟随链接）。
+ */
+export function obActLands(el: Element, subject: Element | null, hit: Element | null): boolean {
+  if (!hit) return false;
+  if (subject) {
+    const inner = hit.closest(
+      'a[href],button,input,select,textarea,summary,label,iframe,img[usemap],audio[controls],video[controls]',
+    );
+    if (inner && inner !== el && inner !== subject && el.contains(inner)) return false;
+  }
+  return obActHits(subject ?? el, hit) || obActHits(el, hit);
+}
+
+/** 元素是否禁用：:disabled、aria-disabled、位于 inert 子树内。 */
+export function obActDisabled(el: Element): boolean {
+  return (
+    el.matches(':disabled') ||
+    el.getAttribute('aria-disabled') === 'true' ||
+    !!el.closest('[inert]')
+  );
+}
+
+/**
+ * 视觉上可见：未被 display/visibility/opacity 隐藏，且有尺寸。
+ * 原生表单控件（INPUT、SELECT、TEXTAREA、BUTTON）不看 opacity（与 Playwright 的可见性定义一致）：
+ * 组件库的复选框、单选框、开关、文本框常把透明的原生控件铺在自绘外观上，能不能点中由命中测试与落点防护决定
+ * （透明的蜜罐输入框不在点击点最上层照样被拒）；strict 为 true 时仍按 opacity 判断（obActLabelProxy 用它）。
+ */
+export function obActVisible(el: Element, strict = false): boolean {
+  const control = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(el.tagName);
+  const opacityProperty = strict || !control;
+  if (!el.checkVisibility({ opacityProperty, visibilityProperty: true })) return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0;
+}
+
+/**
+ * 视觉上隐藏、但有可见 label 的原生 checkbox/radio（自绘复选框的常见写法）：返回应点击的 label。
+ * 隐藏指不可见或尺寸小于 4 像素（如 sr-only 的 1×1 写法）。
+ */
+export function obActLabelProxy(el: Element): Element | null {
+  if (el.tagName !== 'INPUT') return null;
+  const type = (el as HTMLInputElement).type;
+  if (type !== 'checkbox' && type !== 'radio') return null;
+  const r = el.getBoundingClientRect();
+  if (obActVisible(el, true) && r.width >= 4 && r.height >= 4) return null;
+  for (const l of (el as HTMLInputElement).labels ?? []) {
+    const lr = l.getBoundingClientRect();
+    if (obActVisible(l) && lr.width >= 4 && lr.height >= 4) return l;
+  }
+  return null;
+}
+
+/**
+ * 本 frame 视口（不含滚动条）。怪异模式（无 doctype）下 documentElement.clientHeight 是内容高度而不是视口高度，
+ * 按规范此时视口尺寸取 body 的 client 尺寸。
+ */
+export function obActViewport(): { w: number; h: number } {
+  const de = document.compatMode === 'BackCompat' ? document.body : document.documentElement;
+  return { w: de?.clientWidth || innerWidth, h: de?.clientHeight || innerHeight };
+}
+
+/**
+ * 元素当前真正能被看到的区域 [左, 上, 右, 下]（本 frame 的 client 坐标）：视口与各级裁剪祖先的内边距盒取交集。
+ * 只算会裁剪它的祖先（overflow 不是 visible 的），而且要沿“包含块链”判断：
+ * - 普通流/相对/粘性定位的元素，被所有这样的祖先裁剪；
+ * - absolute 元素不被它与包含块之间的祖先裁剪；fixed 元素除非有 transform、filter 等祖先充当包含块，否则不被任何祖先裁剪。
+ * 目标在视口内却被滚动容器裁掉时，点击点必须落在容器内的可见部分，否则会落到容器外面的元素上。
+ */
+export function obActClip(el: Element): [number, number, number, number] {
+  const vp = obActViewport();
+  let l = 0;
+  let t = 0;
+  let r = vp.w;
+  let b = vp.h;
+  const html = document.documentElement;
+  const parentOf = (n: Element): Element | null => {
+    const p: Node | null = n.assignedSlot ?? n.parentNode;
+    return p instanceof ShadowRoot ? p.host : p instanceof Element ? p : null;
+  };
+  // 祖先是否充当 absolute/fixed 后代的包含块（transform、filter、contain 等）
+  const containsFixed = (st: CSSStyleDeclaration): boolean =>
+    st.transform !== 'none' ||
+    st.translate !== 'none' ||
+    st.rotate !== 'none' ||
+    st.scale !== 'none' ||
+    st.perspective !== 'none' ||
+    st.filter !== 'none' ||
+    (st.backdropFilter !== 'none' && st.backdropFilter !== '') ||
+    /paint|layout|strict|content/.test(st.contain) ||
+    /transform|perspective|filter/.test(st.willChange) ||
+    (st.containerType !== 'normal' && st.containerType !== '');
+  let pos = getComputedStyle(el).position;
+  let a = parentOf(el);
+  for (let i = 0; i < 128 && a && a !== html; i++, a = parentOf(a)) {
+    const st = getComputedStyle(a);
+    if (st.display === 'contents') continue;
+    if (pos === 'fixed' && !containsFixed(st)) continue;
+    if (pos === 'absolute' && st.position === 'static' && !containsFixed(st)) continue;
+    // a 是当前元素的包含块（或在包含块链上）：先应用它的裁剪，再以它为基准往上找
+    pos = st.position;
+    const clipX = st.overflowX !== 'visible';
+    const clipY = st.overflowY !== 'visible';
+    if (!clipX && !clipY) continue;
+    // body 的 overflow 在 html 不裁剪时会传给视口，视口已经算过了
+    if (a === document.body && getComputedStyle(html).overflow === 'visible') continue;
+    // 行内元素的 overflow 不生效
+    if (st.display === 'inline' && a instanceof HTMLElement) continue;
+    const rect = a.getBoundingClientRect();
+    let bl = rect.left;
+    let bt = rect.top;
+    let br = rect.right;
+    let bb = rect.bottom;
+    if (a instanceof HTMLElement && a.offsetWidth > 0 && a.offsetHeight > 0) {
+      // 内边距盒：去掉边框和滚动条（client* 是未变换的尺寸，按当前缩放换算）
+      const sx = rect.width / a.offsetWidth;
+      const sy = rect.height / a.offsetHeight;
+      bl = rect.left + a.clientLeft * sx;
+      bt = rect.top + a.clientTop * sy;
+      br = bl + a.clientWidth * sx;
+      bb = bt + a.clientHeight * sy;
+    }
+    if (clipX) {
+      l = Math.max(l, bl);
+      r = Math.min(r, br);
+    }
+    if (clipY) {
+      t = Math.max(t, bt);
+      b = Math.min(b, bb);
+    }
+  }
+  return [l, t, r, b];
+}
+
+/**
+ * 候选点击点：取元素在可见区域（视口减去祖先裁剪）内面积最大的一段 client rect，
+ * 先取其可见部分的中心，再取四个象限的中心作为备选（部分被吸顶栏等盖住时仍能命中）。
+ * label 代点时（edge 为 true）再加各段 client rect 贴着左边缘的点：自绘复选框的方框通常在 label 最左侧，
+ * label 中间被链接占满时其余候选点都落在链接上；行内 label 的 client rect 里还含着链接等后代的矩形，
+ * 面积最大的一段可能整个是链接，label 自己的文字落在别的段上。
+ */
+export function obActPoints(
+  el: Element,
+  edge = false,
+): { points: [number, number][]; inView: boolean } {
+  const [cl, ct, cr, cb] = obActClip(el);
+  let best: { l: number; t: number; r: number; b: number; area: number } | null = null;
+  let any: DOMRect | null = null;
+  const edges: [number, number][] = [];
+  for (const rect of el.getClientRects()) {
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (!any || rect.width * rect.height > any.width * any.height) any = rect;
+    const l = Math.max(rect.left, cl);
+    const t = Math.max(rect.top, ct);
+    const r = Math.min(rect.right, cr);
+    const b = Math.min(rect.bottom, cb);
+    const area = Math.max(0, r - l) * Math.max(0, b - t);
+    if (area > 0 && (!best || area > best.area)) best = { l, t, r, b, area };
+    if (area > 0) edges.push([l + Math.min(6, (r - l) / 2), (t + b) / 2]);
+  }
+  if (!best) {
+    const r = any ?? el.getBoundingClientRect();
+    return { points: [[r.left + r.width / 2, r.top + r.height / 2]], inView: false };
+  }
+  const w = best.r - best.l;
+  const h = best.b - best.t;
+  // 可见部分太小（不到 2×2）时也视为不在视口内，交给滚动处理
+  const inView = w >= 2 && h >= 2;
+  const at = (fx: number, fy: number): [number, number] => [best.l + w * fx, best.t + h * fy];
+  const points = [at(0.5, 0.5), at(0.25, 0.25), at(0.75, 0.25), at(0.25, 0.75), at(0.75, 0.75)];
+  if (edge) points.push(...edges.slice(0, 6));
+  return { points, inView };
+}
+
+/**
+ * 目标（或它的祖先）上是否有正在运行的、会改变位置或大小的动画（CSS 动画、过渡、Web Animations）。
+ * 渲染慢的机器上两次采样之间位置可能恰好相同，但这类元素本来就不该算稳定；
+ * 只算改变几何的属性（transform、位置、外边距、尺寸），闪烁、颜色、透明度之类的装饰动画不影响点击。
+ */
+export function obActAnimating(el: Element): boolean {
+  const GEOM =
+    /^(transform|translate|rotate|scale|left|right|top|bottom|inset|margin|width|height)/i;
+  const chain = new Set<Node>();
+  let n: Node | null = el;
+  for (let i = 0; i < 64 && n; i++) {
+    chain.add(n);
+    const next: Node | null = (n as Element).assignedSlot ?? n.parentNode;
+    n = next instanceof ShadowRoot ? next.host : next;
+  }
+  for (const a of document.getAnimations()) {
+    if (a.playState !== 'running') continue;
+    const eff = a.effect as KeyframeEffect | null;
+    const target = eff?.target;
+    if (!eff || !target || !chain.has(target)) continue;
+    if (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) {
+      if (GEOM.test(a.transitionProperty)) return true;
+      continue;
+    }
+    for (const k of eff.getKeyframes()) {
+      for (const name of Object.keys(k)) {
+        if (['offset', 'computedOffset', 'easing', 'composite'].includes(name)) continue;
+        if (GEOM.test(name)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 可操作性探测（FR-13）：subject 决定是否启用（label 代点时 subject 是控件本身），el 决定位置与命中。
+ * withHit 为 true 时同时做命中测试：依次尝试候选点，返回第一个落在目标上的点；
+ * 不做命中测试时只给出可见区域的中心 center（拖拽终点这类不要求点在目标上的动作用它）。
+ */
+export function obActProbe(
+  el: Element,
+  subject: Element | null,
+  withHit: boolean,
+): {
+  connected: boolean;
+  visible: boolean;
+  enabled: boolean;
+  inView: boolean;
+  rect: Rect;
+  center: [number, number] | null;
+  hit: Hit | null;
+  animating: boolean;
+} {
+  const subj = subject ?? el;
+  const connected = el.isConnected && subj.isConnected;
+  const r = el.getBoundingClientRect();
+  const rect: Rect = [r.left, r.top, r.width, r.height];
+  const out = {
+    connected,
+    visible: connected && obActVisible(el),
+    enabled: connected && !obActDisabled(subj),
+    inView: false,
+    rect,
+    center: null as [number, number] | null,
+    hit: null as Hit | null,
+    animating: connected && obActAnimating(el),
+  };
+  if (!out.visible) return out;
+  const { points, inView } = obActPoints(el, !!subject);
+  out.inView = inView;
+  if (inView) out.center = points[0] ?? null;
+  if (!withHit || !inView) return out;
+  let first: Hit | null = null;
+  for (const [x, y] of points) {
+    const hit = obActDeepHit(x, y);
+    const ok = obActLands(el, subject, hit);
+    if (ok) {
+      out.hit = { ok, x, y, desc: '' };
+      return out;
+    }
+    first ??= { ok, x, y, desc: obActDescribe(hit) };
+  }
+  out.hit = first;
+  return out;
+}
+
+/** 坐标处的命中元素是否仍是目标（派发前一刻的复核）。 */
+export function obActRecheck(el: Element, subject: Element | null, x: number, y: number): Hit {
+  const hit = obActDeepHit(x, y);
+  const ok = obActLands(el, subject, hit);
+  return { ok, x, y, desc: ok ? '' : obActDescribe(hit) };
+}
+
+/** 滚动到视口中央（瞬时，不受 CSS scroll-behavior 影响）。 */
+export function obActScrollIntoView(el: Element, block: string): void {
+  el.scrollIntoView({
+    block: block as ScrollLogicalPosition,
+    inline: 'center',
+    behavior: 'instant' as ScrollBehavior,
+  });
+}
+
+/**
+ * iframe 元素（在父文档中执行）：把子 frame 内的坐标换算到本文档，并确认该点命中这个 iframe（没被上层遮挡）。
+ * 偏移 = iframe 边框盒位置 + 边框 + 内边距（不处理 iframe 自身的 CSS 变换）。
+ */
+export function obActFrameHit(
+  frameEl: Element,
+  x: number,
+  y: number,
+): { ok: boolean; inView: boolean; x: number; y: number; desc: string } {
+  const r = frameEl.getBoundingClientRect();
+  const st = getComputedStyle(frameEl);
+  const px = x + r.left + (parseFloat(st.borderLeftWidth) || 0) + (parseFloat(st.paddingLeft) || 0);
+  const py = y + r.top + (parseFloat(st.borderTopWidth) || 0) + (parseFloat(st.paddingTop) || 0);
+  // iframe 元素自己也可能被父文档里的滚动容器裁掉
+  const [cl, ct, cr, cb] = obActClip(frameEl);
+  const inView = px >= cl && py >= ct && px < cr && py < cb;
+  if (!inView) return { ok: false, inView, x: px, y: py, desc: '' };
+  const hit = obActDeepHit(px, py);
+  const ok = hit === frameEl || obActHits(frameEl, hit);
+  return { ok, inView, x: px, y: py, desc: ok ? '' : obActDescribe(hit) };
+}
+
+/**
+ * 动作的元素信息：可用操作（与 observe 一致，取自 obActions）、填写方式、点击方式。
+ * - fill：text（文本类输入框、textarea）、editable（contenteditable）、value（日期/颜色/滑块等，用页面脚本设值）、
+ *   check（复选/单选）、select（下拉框）；
+ * - click：option-select（下拉框的选项，改为选择）、option-datalist（datalist 建议项，改为填入输入框）、
+ *   label（隐藏的原生复选/单选，改点可见的 label）、normal。
+ */
+export function obActInfo(el: Element): {
+  tag: string;
+  role: string;
+  name: string;
+  actions: string[];
+  kind: string | null;
+  fill: string | null;
+  click: string;
+  multiple: boolean;
+  checked: boolean | null;
+  type: string;
+  isFileInput: boolean;
+  labelFile: boolean;
+} {
+  const tag = el.tagName.toLowerCase();
+  const type = tag === 'input' ? (el as HTMLInputElement).type : '';
+  const role = obRole(el);
+  let fill: string | null = null;
+  if (tag === 'select') fill = 'select';
+  else if (tag === 'input') {
+    if (type === 'checkbox' || type === 'radio') fill = 'check';
+    else if (['date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(type)) {
+      fill = 'value';
+    } else if (type !== 'file' && type !== 'hidden') fill = 'text';
+  } else if (tag === 'textarea') fill = 'text';
+  else if ((el as HTMLElement).isContentEditable) fill = 'editable';
+  let click = 'normal';
+  if (tag === 'option') {
+    click = el.closest('select')
+      ? 'option-select'
+      : el.closest('datalist')
+        ? 'option-datalist'
+        : 'normal';
+  } else if (obActLabelProxy(el)) click = 'label';
+  const control = tag === 'label' ? (el as HTMLLabelElement).control : null;
+  return {
+    tag,
+    role,
+    name: obName(el).slice(0, 60),
+    actions: obActions(el),
+    kind: el.getAttribute('data-obact-kind'),
+    fill,
+    click,
+    multiple: !!(el as HTMLInputElement | HTMLSelectElement).multiple,
+    checked:
+      fill === 'check'
+        ? (el as HTMLInputElement).checked
+        : el.hasAttribute('aria-checked')
+          ? el.getAttribute('aria-checked') === 'true'
+          : null,
+    type,
+    isFileInput: tag === 'input' && type === 'file',
+    labelFile:
+      !!control && control.tagName === 'INPUT' && (control as HTMLInputElement).type === 'file',
+  };
+}
+
+/** 元素是否已经是焦点、且所在文档有真实焦点（iframe 里的可编辑 body 默认就是 activeElement，但文档可能没有焦点）。 */
+export function obActHasFocus(el: Element): boolean {
+  return obActiveElement() === el && document.hasFocus();
+}
+
+/**
+ * 聚焦元素并返回是否成功。元素已经是 activeElement、但所在文档（如 iframe 里的可编辑 body，它默认就是
+ * activeElement）并没有真实焦点时，键盘输入仍会发给别的 frame：这种情况也要补一次 focus。
+ */
+export function obActFocus(el: Element): boolean {
+  if (!obActHasFocus(el)) {
+    if (!document.hasFocus()) window.focus();
+    (el as HTMLElement).focus({ preventScroll: true });
+  }
+  return obActiveElement() === el;
+}
+
+/**
+ * 光标移到末尾：Chrome 对从未聚焦、值来自 HTML 属性的输入框，focus() 后光标在开头，直接键入会插到最前面。
+ * 输入框/textarea 用 setSelectionRange，可编辑区域折叠到末尾，返回 true；email、number 等类型不支持选区（抛错），
+ * 改为全选并返回 false，调用方再按一次右方向键把选区折叠到末尾。
+ */
+export function obActCaretEnd(el: Element): boolean {
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const input = el as HTMLInputElement;
+    try {
+      input.setSelectionRange(input.value.length, input.value.length);
+      return true;
+    } catch {
+      input.select();
+      return false;
+    }
+  }
+  if ((el as HTMLElement).isContentEditable) {
+    const sel = (el.getRootNode() as Document).getSelection?.() ?? document.getSelection();
+    sel?.selectAllChildren(el);
+    sel?.collapseToEnd();
+  }
+  return true;
+}
+
+/** 聚焦并全选文本类控件的内容；返回聚焦是否成功、原内容是否非空。 */
+export function obActFocusSelectAll(el: Element): { focused: boolean; hadContent: boolean } {
+  const he = el as HTMLElement;
+  const focused = obActFocus(el);
+  if (!focused) return { focused, hadContent: false };
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    const input = el as HTMLInputElement;
+    input.select();
+    return { focused, hadContent: input.value.length > 0 };
+  }
+  const sel = (el.getRootNode() as Document).getSelection?.() ?? document.getSelection();
+  sel?.selectAllChildren(el);
+  return { focused, hadContent: (he.innerText ?? '').replace(/\n$/, '').length > 0 };
+}
+
+/** 是否是当前焦点。 */
+export function obActIsFocused(el: Element): boolean {
+  return obActiveElement() === el;
+}
+
+/**
+ * 用原生 value 设置器写值并派发 input/change（日期、颜色、滑块等无法逐字输入的控件；
+ * 走原型上的设置器，React 等框架的受控组件也能感知）。
+ * 先在脱离文档的克隆上试设并读回：浏览器会净化不合法的值（日期写错变空串、颜色变 #000000、滑块被夹进范围），
+ * 净化结果与要写的值不符时不碰真实元素（页面不会收到事件，原有的值也不会被清掉），返回 ok 为 false 和净化后的值。
+ */
+export function obActSetNativeValue(el: Element, value: string): { ok: boolean; got: string } {
+  const proto =
+    el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  const put = (target: Element, v: string) => {
+    if (setter) setter.call(target, v);
+    else (target as HTMLInputElement).value = v;
+  };
+  const probe = el.cloneNode(false) as HTMLInputElement;
+  put(probe, value);
+  const got = probe.value;
+  const same =
+    value === '' ||
+    (probe.type === 'color'
+      ? got === value.toLowerCase()
+      : probe.type === 'range'
+        ? Number(got) === Number(value)
+        : got !== '');
+  if (!same) return { ok: false, got };
+  put(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true, got: (el as HTMLInputElement).value };
+}
+
+/**
+ * 当前值：输入框/下拉框的 value，复选/单选为 "true"/"false"，可编辑区域与其他元素取文本；
+ * sensitive 表示是敏感字段（obIsSensitive）：调用方比较用真实值，但不能把值写进返回结果。
+ */
+export function obActValue(el: Element): { value: string; sensitive: boolean } {
+  const tag = el.tagName;
+  const plain = (value: string) => ({ value, sensitive: false });
+  const field = (value: string) => ({ value, sensitive: obIsSensitive(el) });
+  if (tag === 'INPUT') {
+    const input = el as HTMLInputElement;
+    if (input.type === 'checkbox' || input.type === 'radio') return plain(String(input.checked));
+    return field(input.value);
+  }
+  if (tag === 'SELECT') return plain((el as HTMLSelectElement).value);
+  if (tag === 'TEXTAREA') return field((el as HTMLTextAreaElement).value);
+  if (el.hasAttribute('aria-checked'))
+    return plain(String(el.getAttribute('aria-checked') === 'true'));
+  return field(obNorm((el as HTMLElement).innerText ?? el.textContent));
+}
+
+/**
+ * 下拉框按选项文本或值找目标选项（依次：文本精确、值精确、文本忽略大小写），并给出键盘选择的步数：
+ * 在可用选项中从当前项移到目标项要按几次方向键（当前无选中时先按 Home）。
+ */
+export function obActSelectPlan(
+  select: Element,
+  want: string,
+  index: number | null,
+): {
+  index: number;
+  current: number;
+  disabled: boolean;
+  steps: number;
+  home: boolean;
+  labels: string[];
+} {
+  const s = select as HTMLSelectElement;
+  const opts = [...s.options];
+  const label = (o: HTMLOptionElement) => obNorm(o.label || o.text);
+  let i = index ?? -1;
+  if (index === null) {
+    const w = obNorm(want);
+    i = opts.findIndex((o) => label(o) === w);
+    if (i < 0) i = opts.findIndex((o) => o.value === want);
+    if (i < 0) i = opts.findIndex((o) => label(o).toLowerCase() === w.toLowerCase());
+  }
+  const enabled = opts
+    .map((o, k) => ({ o, k }))
+    .filter(({ o }) => !o.disabled && !(o.parentElement as HTMLOptGroupElement)?.disabled)
+    .map(({ k }) => k);
+  const current = s.selectedIndex;
+  const to = enabled.indexOf(i);
+  const from = enabled.indexOf(current);
+  const home = from < 0;
+  return {
+    index: i,
+    current,
+    disabled: i >= 0 && to < 0,
+    steps: home ? to : to - from,
+    home,
+    labels: opts.slice(0, 30).map(label),
+  };
+}
+
+/**
+ * 下拉框选中 indexes 指定的项（只选这些，其余取消）并派发一组 input/change；选中状态本来就一致时不动，返回是否改动。
+ * 单选框的键盘方式未生效时用它做退路；多选框用它一次设定整组选项。
+ */
+export function obActSelectApply(select: Element, indexes: number[]): boolean {
+  const s = select as HTMLSelectElement;
+  const want = new Set(indexes);
+  const opts = [...s.options];
+  if (opts.every((o, i) => o.selected === want.has(i))) return false;
+  if (s.multiple) for (const [i, o] of opts.entries()) o.selected = want.has(i);
+  else s.selectedIndex = indexes[0] ?? -1;
+  s.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  s.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
+/**
+ * 暂扣下拉框的 input/change：逐项按键选择时，中间项的事件不能让页面看到（onchange 里导航、联动加载会跑错）。
+ * 在 window（以及下拉框所在的 Shadow Root，change 不穿出 Shadow 边界）上以捕获方式监听，目标是该下拉框的事件
+ * 被 stopImmediatePropagation 拦下；返回的 stop 撤掉监听。已经在本监听之前注册了捕获监听的页面脚本拦不住（极少见）。
+ * 动作被打断、没人来撤时 5 秒后自动撤掉。
+ */
+export function obActHoldEvents(el: Element): { stop: () => void } {
+  const hold = (e: Event) => {
+    const first = e.composedPath()[0];
+    if (first instanceof Element && obActHits(el, first)) e.stopImmediatePropagation();
+  };
+  const scopes: EventTarget[] = [window];
+  for (let n: Node = el, i = 0; i < 32; i++) {
+    const root = n.getRootNode();
+    if (!(root instanceof ShadowRoot)) break;
+    scopes.push(root);
+    n = root.host;
+  }
+  for (const t of scopes) {
+    t.addEventListener('input', hold, true);
+    t.addEventListener('change', hold, true);
+  }
+  const stop = () => {
+    for (const t of scopes) {
+      t.removeEventListener('input', hold, true);
+      t.removeEventListener('change', hold, true);
+    }
+  };
+  setTimeout(stop, 5000);
+  return { stop };
+}
+
+/** 选项所属的下拉框、选项下标，及该下拉框是否多选。 */
+export function obActOptionOwner(opt: Element): {
+  select: Element | null;
+  index: number;
+  multiple: boolean;
+} {
+  const select = opt.closest('select');
+  return {
+    select,
+    index: select ? [...select.options].indexOf(opt as HTMLOptionElement) : -1,
+    multiple: !!select?.multiple,
+  };
+}
+
+/** datalist 选项对应的输入框（list 属性指向该 datalist），及要填入的值。 */
+export function obActDatalistInput(opt: Element): { input: Element | null; value: string } {
+  const list = opt.closest('datalist');
+  const value = (opt as HTMLOptionElement).value;
+  if (!list?.id) return { input: null, value };
+  const root = list.getRootNode() as Document | ShadowRoot;
+  const input = root.querySelector(`input[list="${CSS.escape(list.id)}"]`);
+  return { input, value };
+}
+
+/**
+ * 动作期间的页面变化记录（装在 window 的不可枚举属性上，键名含会话随机串）：
+ * - muts：DOM 变动数（忽略本工具写的 data-obact-* 属性）；inputs：input/change 事件数（表单值变化）。
+ * - lastSig：最近一次“有效变动”的时间。同一节点第 3 次及以后的变动视为周期性刷新（时钟、轮询列表），
+ *   不再推迟稳定判定，这样常驻刷新的页面不会拖慢短时稳定等待（FR-14）。
+ * 跨文档导航后新文档里没有这个记录，据此判定发生了导航。
+ */
+export function obActTrack(key: string): boolean {
+  type Tracker = {
+    muts: number;
+    inputs: number;
+    lastSig: number;
+    url: string;
+    stop: () => void;
+  };
+  const w = window as unknown as Record<string, Tracker | undefined>;
+  w[key]?.stop();
+  const counts = new WeakMap<Node, number>();
+  const t: Tracker = {
+    muts: 0,
+    inputs: 0,
+    lastSig: performance.now(),
+    url: location.href,
+    stop: () => {},
+  };
+  const obs = new MutationObserver((list) => {
+    for (const m of list) {
+      if (m.type === 'attributes' && m.attributeName?.startsWith('data-obact-')) continue;
+      t.muts++;
+      const c = (counts.get(m.target) ?? 0) + 1;
+      counts.set(m.target, c);
+      if (c <= 2) t.lastSig = performance.now();
+    }
+  });
+  obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  const onInput = () => {
+    t.inputs++;
+  };
+  addEventListener('input', onInput, true);
+  addEventListener('change', onInput, true);
+  t.stop = () => {
+    obs.disconnect();
+    removeEventListener('input', onInput, true);
+    removeEventListener('change', onInput, true);
+  };
+  Object.defineProperty(window, key, { value: t, configurable: true, writable: true });
+  return true;
+}
+
+/** 读取变化记录；missing 表示本文档没有记录（已导航到新文档）。reset 为 true 时把稳定计时起点设为现在。 */
+export function obActTrackRead(
+  key: string,
+  opts: { reset?: boolean; stop?: boolean },
+): { missing: boolean; muts: number; inputs: number; age: number; url: string } {
+  const t = (
+    window as unknown as Record<
+      string,
+      { muts: number; inputs: number; lastSig: number; stop: () => void } | undefined
+    >
+  )[key];
+  if (!t) return { missing: true, muts: 0, inputs: 0, age: 0, url: location.href };
+  const now = performance.now();
+  if (opts.reset) t.lastSig = now;
+  const out = {
+    missing: false,
+    muts: t.muts,
+    inputs: t.inputs,
+    age: now - t.lastSig,
+    url: location.href,
+  };
+  if (opts.stop) {
+    t.stop();
+    delete (window as unknown as Record<string, unknown>)[key];
+  }
+  return out;
+}
+
+/**
+ * 等页面渲染 n 帧（requestAnimationFrame）。动画时间只在渲染帧上推进：渲染慢的机器上两次采样之间
+ * 可能一帧都没过，读到的位置相同，把一直在动的元素误判为稳定。标签页不可见时 rAF 不触发，150 毫秒后放行。
+ */
+export function obActFrames(n: number): Promise<void> {
+  return new Promise((resolve) => {
+    let left = n;
+    const timer = setTimeout(resolve, 150);
+    const step = () => {
+      if (--left <= 0) {
+        clearTimeout(timer);
+        resolve();
+      } else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/**
+ * 落点防护（FR-13）：在 window 上以捕获方式监听这一次点击的 pointerdown 等事件。
+ * 按下事件的真实目标（composedPath 的第一个元素）不是目标元素时，记录下来并拦截这一次点击的整个事件序列
+ * （stopImmediatePropagation + preventDefault），页面脚本看不到它：布局在最后一次命中测试之后又移动时，
+ * 点击不会落到别的元素上。已经在本监听之前注册了捕获监听的页面脚本拦不住（极少见）。
+ */
+export function obActLandStart(key: string, el: Element, subject: Element | null): void {
+  const rec = { target: null as Element | null, fired: false, ok: true };
+  // 只计数不拦截：没收到按下事件时，用来判断鼠标移动事件到没到、到了几次
+  const counts: Record<string, number> = {};
+  const SEEN = ['mousemove', 'pointermove', 'pointerover', 'mouseover', 'pointerdown', 'mousedown'];
+  const count = (e: Event) => {
+    counts[e.type] = (counts[e.type] ?? 0) + 1;
+  };
+  for (const t of SEEN) addEventListener(t, count, true);
+  const TYPES = [
+    'pointerdown',
+    'mousedown',
+    'pointerup',
+    'mouseup',
+    'click',
+    'dblclick',
+    'auxclick',
+    'contextmenu',
+  ];
+  const h = (e: Event) => {
+    if (e.type === 'pointerdown' && !rec.fired) {
+      rec.fired = true;
+      const first = e.composedPath()[0];
+      rec.target = first instanceof Element ? first : (e.target as Element | null);
+      rec.ok = obActLands(el, subject, rec.target);
+    }
+    if (!rec.ok) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  };
+  // 上一次没读回的防护（读取超时、页面被对话框挂起）先撤掉，否则它的“拦截”状态会一直留在页面上
+  const prev = (window as unknown as Record<string, { stop?: () => void } | undefined>)[key];
+  prev?.stop?.();
+  for (const t of TYPES) addEventListener(t, h, true);
+  const stop = () => {
+    for (const t of TYPES) removeEventListener(t, h, true);
+    for (const t of SEEN) removeEventListener(t, count, true);
+  };
+  // 兜底：动作被打断、没人来读时也不让防护永远留在页面上
+  setTimeout(stop, 5000);
+  Object.defineProperty(window, key, { value: { rec, stop, counts }, configurable: true });
+}
+
+/**
+ * 读取落点记录。final 为 false 且还没收到按下事件时不撤监听（返回 pending），让调用方稍等再读；
+ * final 为 true 才撤掉监听并清掉记录。fired 为 false 表示本 frame 始终没收到按下事件；ok 为 false 时这次点击已被拦截。
+ * info 在没收到按下事件时带上页面状态，方便排查（标签页是否可见、是否有焦点、加载到哪一步）。
+ */
+export function obActLandRead(
+  key: string,
+  final: boolean,
+  fx: number,
+  fy: number,
+): { fired: boolean; ok: boolean; pending: boolean; desc: string; info?: string } {
+  const w = window as unknown as Record<
+    string,
+    | {
+        rec: { target: Element | null; fired: boolean; ok: boolean };
+        stop: () => void;
+        counts: Record<string, number>;
+      }
+    | undefined
+  >;
+  const land = w[key];
+  if (!land) return { fired: false, ok: true, pending: false, desc: '' };
+  const { fired, ok, target } = land.rec;
+  if (!fired && !final) return { fired: false, ok: false, pending: true, desc: '' };
+  land.stop();
+  delete (window as unknown as Record<string, unknown>)[key];
+  if (!fired) {
+    const under = document.elementFromPoint(fx, fy);
+    const info = [
+      `visibility=${document.visibilityState}`,
+      `focus=${document.hasFocus()}`,
+      `readyState=${document.readyState}`,
+      `events=${JSON.stringify(land.counts)}`,
+      `point=${Math.round(fx)},${Math.round(fy)}`,
+      `under=${under ? obActDescribe(under) : 'null'}`,
+      `viewport=${innerWidth}x${innerHeight}@${devicePixelRatio} scroll=${Math.round(scrollX)},${Math.round(scrollY)}`,
+    ].join(' ');
+    return { fired: false, ok: false, pending: false, desc: '', info };
+  }
+  return { fired: true, ok, pending: false, desc: ok ? '' : obActDescribe(target) };
+}
+
+/** 本 frame 的可见文本：body.innerText 加上 Shadow DOM 内的文本（innerText 不进入 Shadow 树）。 */
+export function obActText(limit: number): string {
+  const body = document.body;
+  if (!body) return '';
+  const parts = [body.innerText];
+  let size = parts[0]?.length ?? 0;
+  for (const host of obDeepAll(document, '*')) {
+    if (size > limit) break;
+    const sr = obShadow(host);
+    if (!sr || !(host as HTMLElement).checkVisibility?.({ visibilityProperty: true })) continue;
+    for (const child of sr.children) {
+      if (child.tagName === 'STYLE' || child.tagName === 'SCRIPT') continue;
+      const t = (child as HTMLElement).innerText ?? '';
+      if (t) {
+        parts.push(t);
+        size += t.length;
+      }
+    }
+  }
+  return parts.join('\n').slice(0, limit);
+}
+
+/** 本 frame 是否实际可见：沿 frameElement 向上（同源才能访问），任何一层 iframe 不可见即不可见。 */
+export function obActFrameShown(): boolean {
+  let w: Window | null = window;
+  for (let i = 0; i < 16 && w; i++) {
+    let fe: Element | null = null;
+    try {
+      fe = w.frameElement;
+    } catch {
+      return true;
+    }
+    if (!fe) return true;
+    if (!obActVisible(fe)) return false;
+    w = fe.ownerDocument.defaultView;
+  }
+  return true;
+}
+
+/**
+ * 按定位器（不含 frame）计数可见的匹配元素：≥1 即存在，不要求唯一。
+ * within 匹配多个容器时在所有容器内计数；CSS 没有可见匹配时再按 角色+名称。
+ */
+export function obActCount(loc: {
+  css?: string;
+  role?: string;
+  name?: string;
+  exact?: boolean;
+  within?: string;
+}): { visible: number; total: number } {
+  let scopes: (Document | Element)[] = [document];
+  if (loc.within) scopes = obDeepAll(document, loc.within);
+  const uniq = (list: Element[]) => [...new Set(list)];
+  let total = 0;
+  let visible = 0;
+  if (loc.css) {
+    const list = uniq(scopes.flatMap((s) => obDeepAll(s, loc.css as string)));
+    total = list.length;
+    visible = list.filter((e) => obActVisible(e)).length;
+  }
+  if (visible === 0 && loc.role) {
+    const want = obNorm(loc.name);
+    const exact = loc.exact !== false;
+    const list = uniq(
+      scopes.flatMap((s) =>
+        obDeepAll(s, '*').filter((e) => {
+          if (obRole(e) !== loc.role) return false;
+          if (loc.name === undefined) return true;
+          const n = obName(e);
+          return exact ? n === want : n.toLowerCase().includes(want.toLowerCase());
+        }),
+      ),
+    );
+    total = Math.max(total, list.length);
+    visible = list.filter((e) => obActVisible(e)).length;
+  }
+  return { visible, total };
+}
+
+/** 滚动位置快照：坐标处元素的各级可滚动祖先与页面的滚动位置，用于判断滚轮是否已生效。 */
+export function obActScrollState(x: number, y: number): number[] {
+  const out = [scrollX, scrollY];
+  let el: Element | null = obActDeepHit(x, y);
+  for (let i = 0; i < 64 && el; i++) {
+    if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
+      out.push(el.scrollLeft, el.scrollTop);
+    }
+    const parent: Element | null = el.parentElement;
+    el = parent ?? ((el.getRootNode() as ShadowRoot).host || null);
+  }
+  return out;
+}
+
+/** 元素默认滚动量：可见高度的 80%。 */
+export function obActScrollAmount(el: Element | null): number {
+  const h = el
+    ? (el as HTMLElement).clientHeight || el.getBoundingClientRect().height
+    : innerHeight;
+  return Math.max(40, Math.round(h * 0.8));
+}
+
+/** act 的页面内依赖：DOM_LIB 加上本文件的助手。 */
+export const ACT_DEPS = [
+  ...DOM_LIB,
+  obActDescribe,
+  obActDeepHit,
+  obActHits,
+  obActLands,
+  obActDisabled,
+  obActVisible,
+  obActLabelProxy,
+  obActViewport,
+  obActClip,
+  obActPoints,
+  obActProbe,
+  obActRecheck,
+  obActScrollIntoView,
+  obActFrameHit,
+  obActInfo,
+  obActHasFocus,
+  obActFocus,
+  obActCaretEnd,
+  obActFocusSelectAll,
+  obActIsFocused,
+  obActSetNativeValue,
+  obActValue,
+  obActSelectPlan,
+  obActSelectApply,
+  obActHoldEvents,
+  obActOptionOwner,
+  obActDatalistInput,
+  obActTrack,
+  obActTrackRead,
+  obActAnimating,
+  obActFrames,
+  obActLandStart,
+  obActLandRead,
+  obActText,
+  obActFrameShown,
+  obActCount,
+  obActScrollState,
+  obActScrollAmount,
+];

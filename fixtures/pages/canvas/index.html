@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Canvas 图表</title>
+<!-- 夹具：Canvas（PRD 9.3，FR-11、FR-32）。大面积 Canvas 画 12 根柱子，点击柱子记入 window.chartLog；布局常量与测试一致。 -->
+<style>
+  body { margin: 0; padding: 12px 20px; font: 14px/1.5 sans-serif; }
+  #chart { display: block; width: 100%; height: 68vh; }
+</style>
+</head>
+<body>
+  <h1>月度销售额（万元）</h1>
+  <canvas id="chart" role="img" aria-label="月度销售额柱状图"></canvas>
+  <script>
+    const PAD = { l: 64, r: 24, t: 40, b: 48 };
+    const values = [42, 67, 35, 88, 54, 71, 93, 28, 60, 77, 45, 82];
+    window.chartLog = [];
+    const canvas = document.getElementById('chart');
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    const slot = (canvas.width - PAD.l - PAD.r) / values.length;
+    const plotH = canvas.height - PAD.t - PAD.b;
+    // 柱宽占槽宽的 60%，高度按 100 万元满格
+    const bars = values.map((v, i) => ({
+      x: PAD.l + i * slot + slot * 0.2,
+      w: slot * 0.6,
+      h: (v / 100) * plotH,
+    }));
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#4a90d9';
+    for (const b of bars) g.fillRect(b.x, canvas.height - PAD.b - b.h, b.w, b.h);
+
+    canvas.addEventListener('click', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const i = bars.findIndex(
+        (b) => x >= b.x && x <= b.x + b.w && y <= canvas.height - PAD.b && y >= canvas.height - PAD.b - b.h,
+      );
+      window.chartLog.push(i < 0 ? '未点中柱子' : `点中柱子 ${i + 1}`);
+    });
+  </script>
+</body>
+</html>

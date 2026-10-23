@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>常驻请求</title>
+<!--
+  夹具：常驻请求（PRD 9.3，FR-14）。页面每秒轮询 /api/polling/tick（?hold=毫秒 让每个请求挂住），
+  并保持一个 WebSocket 连接（?push_ms=毫秒 为推送间隔）：网络永远不空闲。window.fixtureState 供测试读取。
+-->
+</head>
+<body>
+  <h1>常驻请求</h1>
+  <p>轮询 <span id="poll-count">0</span> 次，推送 <span id="push-count">0</span> 条</p>
+  <button type="button" id="save">保存草稿</button>
+  <p id="saved" role="status"></p>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const hold = Number(params.get('hold')) || 0;
+    const pushMs = Number(params.get('push_ms')) || 200;
+    const $ = (id) => document.getElementById(id);
+    // 测试用的状态：完成的轮询次数、正在进行的轮询请求数、收到的推送数、连接是否打开
+    const state = (window.fixtureState = { polls: 0, inflight: 0, pushes: 0, wsOpen: false, saves: 0 });
+
+    async function poll() {
+      state.inflight++;
+      try {
+        await (await fetch(`/api/polling/tick?hold=${hold}`, { cache: 'no-store' })).json();
+        $('poll-count').textContent = String(++state.polls);
+      } catch {
+        // 页面关闭时请求被取消
+      } finally {
+        state.inflight--;
+      }
+    }
+    poll();
+    setInterval(poll, 1000);
+
+    const ws = new WebSocket(`ws://${location.host}/api/polling/ws?interval=${pushMs}`);
+    ws.onopen = () => (state.wsOpen = true);
+    ws.onclose = () => (state.wsOpen = false);
+    ws.onmessage = () => ($('push-count').textContent = String(++state.pushes));
+
+    $('save').addEventListener('click', () => {
+      $('saved').textContent = `已保存 ${++state.saves} 次`;
+    });
+  </script>
+</body>
+</html>

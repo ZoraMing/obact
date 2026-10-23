@@ -1,0 +1,6 @@
+{
+  "run_id": "run_42",
+  "state": "DONE",
+  "stats": { "steps": 1520, "ok": 1517, "failed": 0, "human": 1, "resumes": 2, "unverified": 1 },
+  "report_path": "runs/run_42/report.md"
+}

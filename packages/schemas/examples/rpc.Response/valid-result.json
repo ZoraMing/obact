@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "status": "ok",
+    "locator_used": "css",
+    "duration_ms": 310,
+    "screenshot_path": null,
+    "effects": { "navigated": false, "new_pages": [], "dialogs": [], "changed": true },
+    "assertions": [{ "text_present": "审核通过", "pass": true }],
+    "diff": null
+  }
+}

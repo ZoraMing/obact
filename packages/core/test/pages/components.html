@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>组件陈列</title>
+<!--
+  组件识别验收页：每个应识别为“可操作功能”的元素标注期望值——
+    data-x-role     期望角色
+    data-x-name     期望名称
+    data-x-actions  期望的可用操作（逗号分隔，顺序不限）
+    data-x-options  期望的选项数（下拉框、列表框、datalist）
+    data-x-hint     没有可访问名称时期望的提示（obHint）
+  data-x-info 容器里是“纯网页信息”，除标注了 data-x-actions 的元素外都不应被编号。
+-->
+<style>
+  body { font: 14px sans-serif; margin: 16px; }
+  section { border: 1px solid #ddd; margin: 8px 0; padding: 8px; }
+  .pointer { cursor: pointer; display: inline-block; padding: 4px 8px; background: #eef; }
+  .card { cursor: pointer; width: 160px; border: 1px solid #ccc; padding: 6px; }
+  .log { height: 80px; overflow: auto; border: 1px solid #ccc; }
+  .vh { opacity: 0; position: absolute; width: 1px; height: 1px; }
+  .toggle { display: inline-block; padding: 4px 10px; background: #def; }
+  /* 组件库的复选框写法：原生 input 透明铺满自绘外观，没有包裹它的 label */
+  .bare { position: relative; display: inline-block; width: 18px; height: 18px; background: #def; }
+  .bare input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
+  [role=slider] { display: inline-block; width: 120px; height: 12px; background: #ccc; }
+  [role=listbox] li, [role=menu] div { padding: 2px 6px; }
+</style>
+</head>
+<body>
+<h1>组件陈列</h1>
+
+<section data-c="native" id="native">
+  <h2>原生控件</h2>
+  <button data-x-role="button" data-x-name="提交" data-x-actions="click">提交</button>
+  <input type="submit" value="保存" data-x-role="button" data-x-name="保存" data-x-actions="click">
+  <a href="/help" data-x-role="link" data-x-name="帮助中心" data-x-actions="click">帮助中心</a>
+  <label>用户名 <input name="user" data-x-role="textbox" data-x-name="用户名" data-x-actions="click,fill,type_text,press_key"></label>
+  <label>密码 <input type="password" name="pwd" data-x-role="textbox" data-x-name="密码" data-x-actions="click,fill,type_text,press_key"></label>
+  <input type="email" placeholder="邮箱" data-x-role="textbox" data-x-name="邮箱" data-x-actions="click,fill,type_text,press_key">
+  <label for="phone">手机号</label><input id="phone" type="tel" data-x-role="textbox" data-x-name="手机号" data-x-actions="click,fill,type_text,press_key">
+  <label>数量 <input type="number" value="1" data-x-role="spinbutton" data-x-name="数量" data-x-actions="click,fill,type_text,press_key"></label>
+  <label>开始日期 <input type="date" data-x-role="textbox" data-x-name="开始日期" data-x-actions="click,fill,type_text,press_key"></label>
+  <label>结束日期 <input readonly value="2026-10-15" data-x-role="textbox" data-x-name="结束日期" data-x-actions="click"></label>
+  <label>备注 <textarea data-x-role="textbox" data-x-name="备注" data-x-actions="click,fill,type_text,press_key"></textarea></label>
+  <label>状态
+    <select data-x-role="combobox" data-x-name="状态" data-x-actions="fill" data-x-options="3">
+      <option value="all">全部</option><option value="pending">待审核</option><option value="done">已审核</option>
+    </select>
+  </label>
+  <label>标签
+    <select multiple data-x-role="listbox" data-x-name="标签" data-x-actions="fill" data-x-options="3">
+      <option>紧急</option><option>重要</option><option>普通</option>
+    </select>
+  </label>
+  <label>城市 <input list="cities" data-x-role="combobox" data-x-name="城市" data-x-actions="click,fill,type_text,press_key" data-x-options="2"></label>
+  <datalist id="cities"><option value="杭州"></option><option value="北京"></option></datalist>
+  <label><input type="checkbox" data-x-role="checkbox" data-x-name="同意条款" data-x-actions="click,fill"> 同意条款</label>
+  <label><input type="radio" name="pay" data-x-role="radio" data-x-name="支付宝" data-x-actions="click,fill"> 支付宝</label>
+  <label><input type="radio" name="pay" data-x-role="radio" data-x-name="微信" data-x-actions="click,fill"> 微信</label>
+  <label>音量 <input type="range" min="0" max="100" data-x-role="slider" data-x-name="音量" data-x-actions="fill,drag,press_key"></label>
+  <label>附件 <input type="file" data-x-role="button" data-x-name="附件" data-x-actions="upload_file"></label>
+  <label>主题色 <input type="color" value="#3366ff" data-x-role="button" data-x-name="主题色" data-x-actions="click,fill"></label>
+  <details><summary data-x-role="button" data-x-name="更多选项" data-x-actions="click">更多选项</summary><p>折叠内容</p></details>
+  <div contenteditable="true" aria-label="富文本编辑器" data-x-role="textbox" data-x-name="富文本编辑器" data-x-actions="click,fill,type_text,press_key">可编辑内容</div>
+  <button disabled data-x-role="button" data-x-name="已禁用" data-x-actions="click">已禁用</button>
+  <a href="/" data-x-role="link" data-x-name="首页" data-x-actions="click"><img alt="首页" width="16" height="16" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+  <button aria-label="搜索" data-x-role="button" data-x-name="搜索" data-x-actions="click"><svg width="12" height="12"><circle cx="6" cy="6" r="5"></circle></svg></button>
+  <button title="设置" data-x-role="button" data-x-name="设置" data-x-actions="click,hover"><span class="icon-gear"></span></button>
+</section>
+
+<section data-c="aria" id="aria">
+  <h2>ARIA 自绘组件</h2>
+  <div role="button" tabindex="0" data-x-role="button" data-x-name="自绘按钮" data-x-actions="click">自绘按钮</div>
+  <div role="checkbox" tabindex="0" aria-checked="false" data-x-role="checkbox" data-x-name="记住我" data-x-actions="click">记住我</div>
+  <div role="switch" tabindex="0" aria-checked="true" data-x-role="switch" data-x-name="夜间模式" data-x-actions="click">夜间模式</div>
+  <div role="tablist">
+    <div role="tab" aria-selected="true" tabindex="0" data-x-role="tab" data-x-name="概览" data-x-actions="click">概览</div>
+    <div role="tab" aria-selected="false" tabindex="-1" data-x-role="tab" data-x-name="详情" data-x-actions="click">详情</div>
+  </div>
+  <div role="tabpanel">概览面板内容</div>
+  <div role="combobox" aria-haspopup="listbox" aria-expanded="true" aria-label="部门" tabindex="0" data-x-role="combobox" data-x-name="部门" data-x-actions="click,press_key,hover">选择部门</div>
+  <ul role="listbox" aria-label="部门列表" data-x-role="listbox" data-x-name="部门列表" data-x-actions="click,press_key">
+    <li role="option" data-x-role="option" data-x-name="研发" data-x-actions="click">研发</li>
+    <li role="option" data-x-role="option" data-x-name="市场" data-x-actions="click">市场</li>
+  </ul>
+  <button aria-haspopup="menu" data-x-role="button" data-x-name="操作" data-x-actions="click,hover">操作</button>
+  <div role="menu">
+    <div role="menuitem" data-x-role="menuitem" data-x-name="删除" data-x-actions="click,hover">删除</div>
+  </div>
+  <div role="textbox" tabindex="0" aria-label="自绘输入框" data-x-role="textbox" data-x-name="自绘输入框" data-x-actions="click,type_text,press_key">输入内容</div>
+  <div role="slider" tabindex="0" aria-label="亮度" aria-valuenow="50" data-x-role="slider" data-x-name="亮度" data-x-actions="drag,press_key,click"></div>
+  <ul role="tree"><li role="treeitem" data-x-role="treeitem" data-x-name="根目录" data-x-actions="click">根目录</li></ul>
+  <div role="dialog" aria-label="提示">
+    <p>确定要离开吗？</p>
+    <button data-x-role="button" data-x-name="关闭" data-x-actions="click">关闭</button>
+  </div>
+</section>
+
+<section data-c="js" id="js">
+  <h2>脚本绑定与推断的组件</h2>
+  <div id="card-a" data-x-role="generic" data-x-name="卡片A" data-x-actions="click">卡片A</div>
+  <span id="more" data-x-role="generic" data-x-name="更多" data-x-actions="click">更多</span>
+  <div class="pointer" data-x-role="generic" data-x-name="加入购物车" data-x-actions="click">加入购物车</div>
+  <div class="card" data-x-role="generic" data-x-name="商品卡片 ¥99" data-x-actions="click">
+    <h3>商品卡片</h3><p>¥99</p>
+  </div>
+  <div draggable="true" data-x-role="generic" data-x-name="任务 1" data-x-actions="click,drag">任务 1</div>
+  <div class="log" aria-label="日志" data-x-role="generic" data-x-name="日志" data-x-actions="scroll">
+    <p>第 1 行</p><p>第 2 行</p><p>第 3 行</p><p>第 4 行</p><p>第 5 行</p><p>第 6 行</p><p>第 7 行</p><p>第 8 行</p>
+  </div>
+  <label class="toggle"><input type="checkbox" class="vh" data-x-role="checkbox" data-x-name="自动续费" data-x-actions="click,fill"> 自动续费</label>
+  <span class="bare"><input type="checkbox" aria-label="选择此行" data-x-role="checkbox" data-x-name="选择此行" data-x-actions="click,fill"></span>
+  <button class="btn btn-primary btn-sm" data-x-role="button" data-x-name="" data-x-hint="trash" data-x-actions="click"><i class="fa fa-trash"></i></button>
+  <button class="el-button el-button--danger is-circle" data-x-role="button" data-x-name="" data-x-hint="delete" data-x-actions="click"><i class="el-icon-delete"></i></button>
+  <button class="ant-btn ant-btn-primary" data-x-role="button" data-x-name="" data-x-hint="plus" data-x-actions="click"><span class="anticon anticon-plus"></span></button>
+  <table>
+    <tr id="row-click" data-x-role="row" data-x-name="88233 待付款" data-x-actions="click"><td>88233</td><td>待付款</td></tr>
+  </table>
+  <ul class="nav"><li class="pointer" data-x-role="listitem" data-x-name="消息中心" data-x-actions="click">消息中心</li></ul>
+  <span id="close-x" data-x-role="generic" data-x-name="×" data-x-actions="click">×</span>
+  <button type="button" id="sort-btn" data-x-role="button" data-x-name="下单时间" data-x-actions="click">下单时间<span aria-hidden="true"> ▼</span></button>
+  <a href="#detail" id="detail-link" data-x-role="link" data-x-name="详情" data-x-actions="click">详情<i aria-hidden="true">›</i></a>
+  <span class="icon-delete" id="icon-del" style="display:inline-block;width:12px;height:12px;background:#c00" data-x-role="generic" data-x-name="" data-x-hint="delete" data-x-actions="click"></span>
+  <span id="icon-star" style="display:inline-block;width:12px;height:12px;content:url(/pages/star.svg)" data-x-role="generic" data-x-name="" data-x-hint="star" data-x-actions="click"></span>
+</section>
+
+<section data-c="info" id="info" data-x-info>
+  <h2>纯网页信息</h2>
+  <p>本页用于验收组件识别能力。以下内容都不可操作。</p>
+  <table>
+    <thead><tr><th>订单号</th><th>金额</th><th>操作</th></tr></thead>
+    <tbody>
+      <tr data-id="88231"><td>88231</td><td>1,280.00</td><td><button data-x-role="button" data-x-name="审核" data-x-actions="click">审核</button></td></tr>
+      <tr data-id="88232"><td>88232</td><td>560.00</td><td>已审核</td></tr>
+    </tbody>
+  </table>
+  <ul><li>说明一</li><li>说明二</li></ul>
+  <dl><dt>账户余额</dt><dd>12,000.00</dd><dt>到期时间</dt><dd>2026-12-31</dd></dl>
+  <img alt="示意图" width="40" height="20" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <span tabindex="-1">可聚焦但不可操作</span>
+  <a name="anchor">锚点</a>
+  <label>孤立的标签</label>
+</section>
+
+<script>
+  // 直接绑定的监听：DOMSnapshot 的 isClickable 能看到
+  document.getElementById('card-a').addEventListener('click', () => { document.title = '卡片A'; });
+  document.getElementById('more').addEventListener('mousedown', () => {});
+  document.getElementById('row-click').addEventListener('click', () => { document.title = '88233'; });
+  document.getElementById('close-x').addEventListener('click', (e) => e.target.remove());
+  document.getElementById('icon-del').addEventListener('click', () => {});
+  document.getElementById('icon-star').addEventListener('click', () => {});
+  // 事件委托到根节点（React 等框架的做法）：元素本身没有监听，靠 cursor:pointer 推断
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.pointer, .card')) document.title = '委托点击';
+  });
+</script>
+</body>
+</html>

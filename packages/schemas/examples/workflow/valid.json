@@ -1,0 +1,11 @@
+{
+  "name": "daily_orders",
+  "site": "lab",
+  "account": "lab_admin",
+  "mode": "headed",
+  "speed": "fast",
+  "access": "write",
+  "on_unverified": "stop",
+  "outputs": { "audited": { "key": "id", "export": ["csv"] } },
+  "intercept": ["/api/orders"]
+}

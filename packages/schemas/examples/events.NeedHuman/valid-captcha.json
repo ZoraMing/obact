@@ -1,0 +1,9 @@
+{
+  "request_id": "h1",
+  "run_id": "run_42",
+  "reason": "captcha",
+  "pageId": "main",
+  "message": "检测到人机验证，请在浏览器中处理后点“继续”",
+  "screenshot": "runs/run_42/shots/captcha.webp",
+  "priority": "high"
+}

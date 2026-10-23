@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>订单编辑 · 移动位置</title>
+<link rel="stylesheet" href="style.css">
+<!--
+  改版夹具 v4：移动位置。元素换位置、工具栏换顺序，而工具栏按钮的 id 是按位置编号的（tb-1、tb-2、tb-3），
+  旧 id 现在指向别的按钮：CSS 与 角色+名称 冲突，必须转人工。提示条里无名的关闭图标挪到了条外，条里换成“查看详情”：
+  原定位器在容器内找不到关闭图标，也不能退而点容器里唯一的那个按钮。
+-->
+</head>
+<body>
+<header class="topbar">
+  <button type="button" class="icon-btn icon-close" data-x-key="close"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button>
+  <a href="#help" data-x-key="help">帮助</a>
+  <span class="spacer"></span>
+  <button id="search-btn" class="btn" data-x-key="search-btn">搜索</button>
+  <input type="search" id="order-search" placeholder="搜索订单" data-x-key="search">
+</header>
+<div class="notice" data-testid="shipping-notice">运费调整：偏远地区加收运费。<button type="button" class="link-btn" data-x-key="notice-detail">查看详情</button></div>
+<button type="button" class="icon-btn notice-close" data-x-key="notice-close"><svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="#333"/></svg></button>
+<div class="toolbar">
+  <button type="button" id="tb-1" class="btn" data-x-key="export">导出</button>
+  <button type="button" id="tb-2" class="btn" data-x-key="create">新建</button>
+  <button type="button" id="tb-3" class="btn" data-x-key="import">导入</button>
+</div>
+<form id="order-form">
+  <div class="actions">
+    <button type="button" id="delete-btn" class="btn danger" data-x-key="delete">删除订单</button>
+    <button type="button" id="cancel-btn" class="btn" data-x-key="cancel">取消</button>
+    <button id="save-btn" class="btn primary" data-x-key="save">保存</button>
+  </div>
+  <h2>订单 SO-24003</h2>
+  <div class="field"><label for="status">状态</label>
+    <select id="status" name="status" data-x-key="status"><option>待审核</option><option>已发货</option><option>已取消</option></select>
+  </div>
+  <div class="field"><input type="checkbox" id="urgent" name="urgent" data-x-key="urgent"><label for="urgent">加急处理</label></div>
+  <div class="field"><label for="phone">联系电话</label><input id="phone" name="phone" data-x-key="phone"></div>
+  <div class="field"><label for="customer">客户名称</label><input id="customer" name="customer" data-x-key="customer"></div>
+  <table class="items">
+    <tr data-key="sku-pear"><td>梨</td><td>1 箱</td><td><button type="button" class="link-btn" data-x-key="remove-pear">移除</button></td></tr>
+    <tr data-key="sku-apple"><td>苹果</td><td>2 箱</td><td><button type="button" class="link-btn" data-x-key="remove-apple">移除</button></td></tr>
+  </table>
+  <div class="field"><label for="remark">备注</label><textarea id="remark" name="remark" data-x-key="remark"></textarea></div>
+</form>
+<script src="log.js"></script>
+</body>
+</html>

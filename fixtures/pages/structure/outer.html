@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>外层框架</title>
+<!-- 页面结构夹具的嵌套框架：本页与顶层同源，里面再嵌一个跨域 iframe。 -->
+<style>iframe { width: 340px; height: 100px; }</style>
+</head>
+<body>
+<iframe id="inner-frame" title="内层跨域"></iframe>
+<script>
+  const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  document.getElementById('inner-frame').src = `${location.protocol}//${other}:${location.port}/structure/frame.html?who=nested`;
+</script>
+</body>
+</html>

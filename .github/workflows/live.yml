@@ -1,0 +1,31 @@
+name: Live
+
+# Actions 固定到具体版本号（不用 v5 这类会移动的主版本标签）；compat-stable 里的 chrome-headless-shell@stable 是有意浮动的。
+
+# 需要下载最新稳定版 Chrome 的检查，开发容器访问不了，所以放在这里：手动触发，或每周一次，不阻塞合并。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+jobs:
+  # 运行时支持区间的抽测（PRD 8.3）：在当前最新稳定版 chrome-headless-shell 上只跑核心与夹具测试
+  # （pool.test.ts 里有一条有头用例，需要完整 Chrome，这里不跑）
+  compat-stable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-node@v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 安装最新稳定版 chrome-headless-shell
+        run: |
+          echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          npx @puppeteer/browsers install chrome-headless-shell@stable --path "$HOME/.cache/cft-stable" | tee stable.txt
+          echo "CHROME_PATH=$(tail -1 stable.txt | awk '{print $2}')" >> "$GITHUB_ENV"
+      - run: $CHROME_PATH --version
+      - run: node --test $(ls packages/core/test/*.test.ts | grep -v pool.test.ts) "fixtures/test/**/*.test.ts"
+        env:
+          OBACT_REQUIRE_BROWSER: '1'

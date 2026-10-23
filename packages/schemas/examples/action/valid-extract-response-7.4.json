@@ -1,0 +1,7 @@
+{
+  "op": "extract",
+  "pageId": "main",
+  "source": { "type": "response", "url": "/api/quotes\\?page=\\d+", "path": "quotes" },
+  "key": "text",
+  "wait_ms": 5000
+}

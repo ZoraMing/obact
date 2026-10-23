@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/signatures.json",
+  "title": "Signatures",
+  "description": "workflows/<名称>/signatures.json：页面签名列表（FR-08）。",
+  "type": "array",
+  "items": { "$ref": "#/$defs/Signature" },
+  "$defs": {
+    "Signature": {
+      "title": "PageSignature",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "kind": {
+          "type": "string",
+          "enum": ["page", "login", "captcha"],
+          "description": "login / captcha 用于登录检测与人机验证检测。"
+        },
+        "url": { "type": "string", "description": "URL 正则。" },
+        "title": { "type": "string", "description": "标题正则。" },
+        "must_exist": { "type": "array", "items": { "$ref": "common.json#/$defs/Locator" } },
+        "must_not_exist": { "type": "array", "items": { "$ref": "common.json#/$defs/Locator" } }
+      },
+      "required": ["id"],
+      "anyOf": [{ "required": ["url"] }, { "required": ["title"] }, { "required": ["must_exist"] }],
+      "additionalProperties": false
+    }
+  }
+}

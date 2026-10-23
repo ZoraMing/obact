@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/workflow.json",
+  "title": "WorkflowMeta",
+  "description": "workflows/<名称>/workflow.json：工作流的元信息；步骤在同目录 steps.jsonl（PRD 7.6）。",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+    "description": { "type": "string" },
+    "site": { "type": "string", "description": "参数库按站点查找时使用的站点名。" },
+    "account": { "type": "string", "description": "使用的账号（决定浏览器配置目录）。" },
+    "mode": { "$ref": "common.json#/$defs/Mode" },
+    "speed": {
+      "type": "string",
+      "enum": ["fast", "demo"],
+      "description": "demo 时显示虚拟光标（FR-30）。"
+    },
+    "access": {
+      "type": "string",
+      "enum": ["read", "write"],
+      "description": "只读任务可同账号并行；写操作任务同站点同账号排队（FR-03）。"
+    },
+    "on_unverified": { "type": "string", "enum": ["stop", "skip"] },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string" },
+          "export": { "type": "array", "items": { "type": "string", "enum": ["csv", "xlsx"] } }
+        },
+        "additionalProperties": false
+      },
+      "description": "采集输出名 → 主键与导出格式（FR-25）。"
+    },
+    "intercept": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "运行时要缓存的接口 URL 正则（PRD 5.6）。"
+    },
+    "schedule": { "type": "string", "description": "cron 表达式（FR-28）。" },
+    "research_capture": { "type": "boolean", "description": "研究采集模式，默认 false（FR-26）。" }
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>底座测试页</title></head>
+<body>
+  <h1>订单列表</h1>
+  <button id="query" data-testid="query-btn">查询</button>
+  <label>订单号 <input id="order" name="order"></label>
+  <a href="#detail">详情</a>
+  <select id="status"><option>全部</option><option>待审核</option></select>
+  <div role="button" tabindex="0" id="custom">自绘按钮</div>
+  <table>
+    <tr data-id="88231"><td>88231</td><td><button class="audit">审核</button></td></tr>
+    <tr data-id="88232"><td>88232</td><td><button class="audit">审核</button></td></tr>
+  </table>
+  <div id="dup">
+    <button class="resp" style="display:none">导出</button>
+    <button class="resp">导出</button>
+  </div>
+  <ul id="list"><li><button>条目 A</button></li><li><button>条目 B</button></li></ul>
+  <button id="rerender-clone">克隆重绘</button>
+  <button id="rerender-fresh">新节点重绘</button>
+  <button id="popup" onclick="window.open('/pages/frame.html?who=popup', '_blank')">弹出窗口</button>
+  <open-widget></open-widget>
+  <closed-widget></closed-widget>
+  <iframe id="same" src="/pages/frame.html?who=same" title="same"></iframe>
+  <iframe id="cross" title="cross"></iframe>
+  <script>
+    document.getElementById('cross').src = location.href.replace('127.0.0.1', 'localhost').replace(/\/pages\/.*/, '/pages/frame.html?who=cross');
+    customElements.define('open-widget', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<button class="sh">开放按钮</button>'; }
+    });
+    customElements.define('closed-widget', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: 'closed' }).innerHTML = '<button class="sh-closed">封闭按钮</button>'; }
+    });
+    const list = () => document.getElementById('list');
+    document.getElementById('rerender-clone').onclick = () => { const l = list(); l.outerHTML = l.outerHTML + ''; };
+    document.getElementById('rerender-fresh').onclick = () => {
+      list().innerHTML = '<li><button>条目 A</button></li><li><button>条目 B</button></li>';
+    };
+  </script>
+</body>
+</html>

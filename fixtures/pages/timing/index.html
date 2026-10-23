@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>时序</title>
+<!--
+  夹具：时序（PRD 9.3，FR-13、FR-14、BW-3）。每个场景由自己的按钮触发，互不影响：
+  动画按钮（移动目标 1 秒匀速平移；摇摆按钮永远不稳定）、布局偏移（鼠标移到“确认订单”时上方插入提示，原落点变成“取消订单”；
+  “加载推荐”后推荐区在 500 毫秒内长高，把支付按钮往下推）、延迟渲染（800 毫秒后出现按钮）、
+  骨架屏（接口 /api/timing/orders，?delay= 调延时，默认 700 毫秒）、进度条（每 100 毫秒前进 5%，可停止、可接着走）。
+  点击记录：window.__log（如 anim-target:still、view:SO-31002）。
+-->
+<style>
+  /* 关掉滚动锚定：插入内容时不让浏览器自动调整滚动位置抵消偏移，结果更确定 */
+  html, body { overflow-anchor: none; }
+  body { font: 14px/1.6 system-ui, sans-serif; margin: 16px 24px; }
+  section { border: 1px solid #eee; padding: 8px 12px; margin-bottom: 12px; }
+  #anim-target { position: relative; }
+  #wobble { animation: wobble 400ms linear infinite alternate; }
+  @keyframes wobble { from { transform: translateX(0); } to { transform: translateX(40px); } }
+  .stack button { display: block; height: 40px; width: 160px; margin: 0 0 8px; }
+  .notice { height: 40px; margin: 0 0 8px; background: #fffbe6; }
+  #reco { height: 0; overflow: hidden; }
+  #reco.grow { height: 120px; transition: height 500ms linear; }
+</style>
+</head>
+<body>
+<h1>时序</h1>
+
+<section aria-label="动画按钮">
+  <button type="button" id="start-anim">开始动画</button>
+  <button type="button" id="anim-target">移动目标</button>
+  <button type="button" id="wobble">摇摆按钮</button>
+</section>
+
+<section aria-label="布局偏移（悬停）">
+  <div class="stack" id="hover-stack">
+    <button type="button" id="cancel-order">取消订单</button>
+    <button type="button" id="confirm-order">确认订单</button>
+  </div>
+</section>
+
+<section aria-label="布局偏移（延迟）">
+  <button type="button" id="load-reco">加载推荐</button>
+  <div id="reco" data-state="idle">为您推荐：同款优惠套餐</div>
+  <div class="stack">
+    <button type="button" id="abandon">放弃支付</button>
+    <button type="button" id="pay">立即支付</button>
+  </div>
+</section>
+
+<section aria-label="延迟渲染">
+  <button type="button" id="show-delayed">显示延迟按钮</button>
+  <span id="delayed-slot"></span>
+</section>
+
+<section aria-label="骨架屏">
+  <button type="button" id="load-orders">加载订单</button>
+  <div id="orders"></div>
+</section>
+
+<section aria-label="进度条">
+  <button type="button" id="start-export">开始导出</button>
+  <button type="button" id="stop-export">停止</button>
+  <progress id="progress" max="100" value="0"></progress> <span id="pct">0%</span>
+  <span id="export-result" role="status"></span>
+</section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  window.__log = [];
+  const log = (x) => window.__log.push(x);
+
+  // 动画按钮
+  $('start-anim').onclick = () => {
+    const t = $('anim-target');
+    t.style.transition = 'transform 1000ms linear';
+    t.style.transform = 'translateX(320px)';
+  };
+  $('anim-target').onclick = () => log(`anim-target:${$('anim-target').getAnimations().length ? 'moving' : 'still'}`);
+  $('wobble').onclick = () => log('wobble');
+
+  // 布局偏移（悬停触发）
+  let shifted = false;
+  $('confirm-order').addEventListener('mouseover', () => {
+    if (shifted) return;
+    shifted = true;
+    const n = document.createElement('div');
+    n.className = 'notice';
+    n.textContent = '提示：优惠券已自动使用';
+    $('hover-stack').prepend(n);
+  });
+  $('cancel-order').onclick = () => log('cancel-order');
+  $('confirm-order').onclick = () => log('confirm-order');
+
+  // 布局偏移（延迟插入）
+  $('load-reco').onclick = () => {
+    setTimeout(() => {
+      const r = $('reco');
+      r.dataset.state = 'growing';
+      r.classList.add('grow');
+      r.addEventListener('transitionend', () => { r.dataset.state = 'done'; }, { once: true });
+    }, 300);
+  };
+  $('abandon').onclick = () => log('abandon');
+  $('pay').onclick = () => log(`pay:${$('reco').dataset.state}`);
+
+  // 延迟渲染
+  $('show-delayed').onclick = () => {
+    setTimeout(() => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = '延迟按钮';
+      b.onclick = () => log('delayed');
+      $('delayed-slot').append(b);
+    }, 800);
+  };
+
+  // 骨架屏 + 慢接口
+  $('load-orders').onclick = async () => {
+    const box = $('orders');
+    box.innerHTML =
+      '<div aria-busy="true" class="skeleton"><button type="button" aria-disabled="true" id="export-sk">全部导出</button>' +
+      '<p>加载中…</p></div>';
+    $('export-sk').onclick = () => log('export-skeleton');
+    const res = await fetch(`/api/timing/orders?delay=${params.get('delay') ?? 700}`);
+    const { orders } = await res.json();
+    box.innerHTML =
+      '<button type="button" id="export-all">全部导出</button><table><tbody>' +
+      orders
+        .map((o) => `<tr data-key="${o.no}"><td>${o.no}</td><td>${o.customer}</td><td>${o.amount}</td>` +
+          '<td><button type="button" class="view">查看</button></td></tr>')
+        .join('') +
+      '</tbody></table>';
+    $('export-all').onclick = () => log('export-all');
+    for (const b of box.querySelectorAll('button.view')) {
+      b.onclick = () => log(`view:${b.closest('tr').dataset.key}`);
+    }
+  };
+
+  // 进度条
+  let timer = null;
+  // 停止和走完都要把 timer 清成 null，否则再点“开始导出”会被 if (timer) 静默忽略
+  const stopTimer = () => {
+    clearInterval(timer);
+    timer = null;
+  };
+  $('start-export').onclick = () => {
+    if (timer) return;
+    if ($('progress').value >= 100) {
+      // 上次已走完：从头再来，清掉“导出完成”和旧的“下载报表”
+      $('progress').value = 0;
+      $('pct').textContent = '0%';
+      $('export-result').textContent = '';
+      $('download-report')?.remove();
+    }
+    timer = setInterval(() => {
+      const p = $('progress');
+      p.value = Math.min(100, p.value + 5);
+      $('pct').textContent = `${p.value}%`;
+      if (p.value >= 100) {
+        stopTimer();
+        $('export-result').textContent = '导出完成';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'download-report';
+        b.textContent = '下载报表';
+        b.onclick = () => log('download');
+        $('export-result').after(b);
+      }
+    }, 100);
+  };
+  $('stop-export').onclick = () => {
+    stopTimer();
+    log(`stopped:${$('progress').value}`);
+  };
+</script>
+</body>
+</html>

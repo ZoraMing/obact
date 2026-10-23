@@ -1,0 +1,6 @@
+{
+  "request_id": "h2",
+  "action": "continue",
+  "writeback": "popup_rule",
+  "save_params": [{ "key": "login_password", "scope": "site" }]
+}

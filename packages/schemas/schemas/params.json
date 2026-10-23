@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/params.json",
+  "title": "ParamsFile",
+  "description": "workspace/params.yaml 的结构（FR-22）：按 工作流 → 网站 → 全局 三级查找。名称含 password、token、secret 的参数在日志、留痕和返回结果中显示为 ***。",
+  "type": "object",
+  "properties": {
+    "global": { "$ref": "#/$defs/Scope" },
+    "sites": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Scope" } },
+    "workflows": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Scope" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Scope": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+      "additionalProperties": { "$ref": "#/$defs/Value" }
+    },
+    "Value": {
+      "anyOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array", "items": { "$ref": "#/$defs/Value" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/$defs/Value" } }
+      ]
+    }
+  }
+}

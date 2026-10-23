@@ -1,0 +1,7 @@
+{
+  "run_id": "run_42",
+  "step_id": "s04",
+  "idempotency_key": "audit:88232",
+  "time": "yesterday",
+  "reason": "post_timeout"
+}

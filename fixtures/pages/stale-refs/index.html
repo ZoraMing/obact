@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>待处理工单（失效编号）</title>
+<!--
+  夹具：失效编号（PRD 9.3，FR-06）。观察之后列表被整块重绘，文字完全相同，但节点都是新的：
+  模板重建（innerHTML = 新字符串）、原样替换（innerHTML = innerHTML，新节点连 data-obact-ref 属性都和旧的一样）、
+  只重绘第 2 行、倒序（节点只是移动，不重建）；?rerender=hover 在鼠标第一次移到列表按钮上时整块重绘。
+  点击记录 window.__log（[{op, id}]），重绘次数 window.__renders。
+-->
+</head>
+<body>
+<h1>待处理工单</h1>
+<div>
+  <button type="button" id="rerender-template">重新渲染（模板）</button>
+  <button type="button" id="rerender-clone">重新渲染（原样替换）</button>
+  <button type="button" id="rerender-row">只重绘第 2 行</button>
+  <button type="button" id="reorder">倒序排列</button>
+</div>
+<ul id="list"></ul>
+<p id="renders">已重绘 0 次</p>
+<script>
+  const tickets = [
+    { id: 'T-1', title: '打印机卡纸' },
+    { id: 'T-2', title: '邮箱无法登录' },
+    { id: 'T-3', title: '申请新显示器' },
+    { id: 'T-4', title: '会议室投影不亮' },
+  ];
+  const $ = (id) => document.getElementById(id);
+  const list = $('list');
+  const rowHtml = (t) =>
+    `<li data-id="${t.id}"><span>工单 ${t.id}：${t.title}</span>` +
+    `<button type="button" data-op="处理">处理</button>` +
+    `<button type="button" data-op="转派">转派</button></li>`;
+  const render = () => {
+    list.innerHTML = tickets.map(rowHtml).join('');
+  };
+  window.__log = [];
+  window.__renders = 0;
+  const bump = () => {
+    $('renders').textContent = `已重绘 ${++window.__renders} 次`;
+  };
+  render();
+
+  $('rerender-template').onclick = () => {
+    render();
+    bump();
+  };
+  $('rerender-clone').onclick = () => {
+    list.innerHTML = list.innerHTML;
+    bump();
+  };
+  $('rerender-row').onclick = () => {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = rowHtml(tickets[1]);
+    list.querySelector('li[data-id="T-2"]').replaceWith(tpl.content.firstElementChild);
+    bump();
+  };
+  $('reorder').onclick = () => {
+    for (const li of [...list.children].reverse()) list.append(li);
+  };
+
+  if (new URLSearchParams(location.search).get('rerender') === 'hover') {
+    let done = false;
+    list.addEventListener('pointerover', (e) => {
+      if (done || !e.target.closest('button')) return;
+      done = true;
+      render();
+      bump();
+    });
+  }
+
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-op]');
+    if (btn) window.__log.push({ op: btn.dataset.op, id: btn.closest('li').dataset.id });
+  });
+</script>
+</body>
+</html>

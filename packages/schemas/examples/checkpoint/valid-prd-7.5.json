@@ -1,0 +1,10 @@
+{
+  "run_id": "run_42",
+  "workflow": "daily_orders",
+  "mode": "headed",
+  "state": "RUNNING",
+  "step_id": "s04",
+  "loop_index": { "s03": 37 },
+  "vars": { "order": { "id": "88231" } },
+  "cursor": { "orders_done": 148 }
+}

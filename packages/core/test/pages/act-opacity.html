@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>透明的原生控件</title>
+<style>
+  body { margin: 20px; font: 14px sans-serif; }
+  /* 组件库的写法：原生控件 opacity:0 铺满自绘外观，没有包裹它的 label */
+  .skin { position: relative; display: inline-block; width: 40px; height: 22px; margin: 8px; background: #ccc; vertical-align: middle; }
+  .skin.wide { width: 120px; }
+  .skin input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
+  /* 蜜罐：同样透明，但点击点上盖着别的元素 */
+  .trap { position: relative; width: 120px; height: 30px; margin: 8px; }
+  .trap input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; }
+  .trap div { position: absolute; inset: 0; background: #fcc; }
+</style>
+</head>
+<body>
+  <span class="skin"><input type="checkbox" id="cb" aria-label="选择此行"></span>
+  <span class="skin"><input type="checkbox" role="switch" id="sw" aria-label="消息通知"></span>
+  <span class="skin"><input type="radio" name="plan" id="rd" aria-label="按月付费"></span>
+  <span class="skin wide"><input id="tx" aria-label="备注"></span>
+  <div class="trap"><input id="trap" type="checkbox" aria-label="同意授权"><div>无关内容</div></div>
+  <script>
+    window.events = [];
+    function log(s) { window.events.push(s); }
+    for (const id of ['cb', 'sw', 'rd', 'trap']) {
+      document.getElementById(id).addEventListener('change', (e) => log(`${id}:${e.target.checked}:${e.isTrusted}`));
+    }
+    document.getElementById('tx').addEventListener('input', (e) => log(`tx:${e.target.value}:${e.isTrusted}`));
+  </script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>格式化数字</title>
+<!-- 夹具：格式化数字（PRD 9.3，FR-09、FR-10）。页面显示千分位、“1.2万”、百分比，接口 /api/formatted-numbers/data 返回原始值。 -->
+</head>
+<body>
+  <h1>经营概览</h1>
+  <p id="status">加载中…</p>
+  <section id="kpis" aria-label="核心指标"></section>
+  <h2>近 7 日</h2>
+  <table id="daily">
+    <thead><tr><th>日期</th><th>销售额（元）</th><th>访客</th><th>转化率</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const seed = Number(new URLSearchParams(location.search).get('seed')) || 1;
+    const groups = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    // 与 fixtures/api/formatted-numbers.ts 的 formatValue 相同
+    function fmt(v, format) {
+      const sign = v < 0 ? '-' : '';
+      const a = Math.abs(v);
+      if (format === 'percent') return `${(v * 100).toFixed(1)}%`;
+      if (format === 'thousands') {
+        const [int, frac] = a.toFixed(2).split('.');
+        return `${sign}${groups(int)}.${frac}`;
+      }
+      if (a < 1e4) return `${sign}${groups(String(Math.round(a)))}`;
+      const wan = Math.round(a / 1e3) / 10;
+      if (wan < 1e4) return `${sign}${wan.toFixed(1)}万`;
+      return `${sign}${(Math.round(a / 1e7) / 10).toFixed(1)}亿`;
+    }
+
+    fetch(`/api/formatted-numbers/data?seed=${seed}`)
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById('kpis').innerHTML = data.kpis
+          .map((k) => `<div class="kpi" data-key="${k.key}"><div class="label">${k.label}</div><div class="value">${fmt(k.value, k.format)}</div></div>`)
+          .join('');
+        document.querySelector('#daily tbody').innerHTML = data.daily
+          .map((d) => `<tr data-key="${d.date}"><td>${d.date}</td><td>${fmt(d.sales, 'thousands')}</td><td>${fmt(d.visitors, 'cn')}</td><td>${fmt(d.conversion, 'percent')}</td></tr>`)
+          .join('');
+        document.getElementById('status').textContent = `数据日期：2026-10-07（seed ${seed}）`;
+      });
+  </script>
+</body>
+</html>

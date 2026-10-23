@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>快速响应</title>
+<!-- 夹具：快速响应（PRD 9.3，FR-10、FR-14）。点击后请求接口，约 20 毫秒（?delay= 可调）返回，页面随即显示结果。 -->
+</head>
+<body>
+  <h1>快速响应</h1>
+  <button type="button" id="query">查询订单</button>
+  <p id="result" role="status"></p>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const seed = Number(params.get('seed')) || 1;
+    const delay = params.has('delay') ? Number(params.get('delay')) : 20;
+    const fmt = (n) => n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    let n = 0;
+    document.getElementById('query').addEventListener('click', async () => {
+      const k = ++n;
+      const out = document.getElementById('result');
+      out.textContent = `第 ${k} 次查询中…`;
+      const d = await (await fetch(`/api/fast-response/data?n=${k}&seed=${seed}&delay=${delay}`)).json();
+      out.textContent = `第 ${d.n} 次查询：订单 ${d.order_id}，金额 ${fmt(d.amount)} 元`;
+    });
+  </script>
+</body>
+</html>

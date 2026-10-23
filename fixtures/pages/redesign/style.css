@@ -1,0 +1,28 @@
+/* 改版夹具的共用样式：各版本只改结构、id、文案和位置，类名大多不变。只留布局，不做修饰。 */
+body {
+  margin: 0;
+  font:
+    14px / 1.6 system-ui,
+    sans-serif;
+}
+.topbar,
+.topbar-v2,
+.toolbar,
+.notice,
+.banner,
+.actions,
+.field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 24px;
+}
+.spacer {
+  flex: 1;
+}
+.icon-btn,
+.close-x {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}

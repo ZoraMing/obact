@@ -1,0 +1,21 @@
+{
+  "pageId": "main",
+  "url": "https://example.com",
+  "title": "t",
+  "signature": null,
+  "canvas_warning": false,
+  "elements": [
+    {
+      "ref": 1,
+      "role": "button",
+      "name": "x",
+      "bbox": [0, 0, 1, 1],
+      "visible_ratio": 1,
+      "clickable": true,
+      "actions": ["tap"]
+    }
+  ],
+  "text_md": "",
+  "truncated": false,
+  "viewport": { "width": 1280, "height": 800, "scale": 1 }
+}

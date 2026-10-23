@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>定位器：动态属性</title></head>
+<body>
+  <!-- data-k 只供测试比对元素身份，生成器不使用它 -->
+  <div id="app"></div>
+  <iframe title="内嵌表单" src="/pages/locator-frame.html"></iframe>
+  <iframe title="跨域表单" id="xo"></iframe>
+  <script>
+    const r = () => Math.random().toString(36).slice(2, 8) + Math.floor(Math.random() * 1000);
+    const h = () => 'css-' + Math.random().toString(36).slice(2, 7);
+    document.getElementById('xo').src = location.href.replace('127.0.0.1', 'localhost').replace(/\/pages\/.*/, '/pages/locator-frame.html');
+    document.getElementById('app').innerHTML = `
+      <h1>订单管理</h1>
+      <button id="btn-${r()}" class="${h()}" data-testid="query" data-k="query">查询</button>
+      <input id="in-${r()}" class="${h()}" name="keyword" data-k="keyword" placeholder="关键字">
+      <button id="x${r()}" class="${h()} icon" aria-label="刷新" data-k="refresh"></button>
+      <a href="/help/orders" class="${h()}" data-k="help">帮助</a>
+      <div role="button" tabindex="0" class="${h()}" data-k="custom">自绘提交</div>
+      <select class="${h()}" data-k="status"><option>全部</option><option>待审核</option></select>
+      <table>
+        <tr data-id="88231"><td>88231</td><td><button class="${h()}" data-k="audit-1">审核</button></td></tr>
+        <tr data-id="88232"><td>88232</td><td><button class="${h()}" data-k="audit-2">审核</button></td></tr>
+      </table>
+      <div><span class="${h()}" data-k="twin-1" tabindex="0">重复</span><span class="${h()}" data-k="twin-2" tabindex="0">重复</span></div>
+      <open-box data-k="open-host"></open-box>
+      <closed-box data-k="closed-host"></closed-box>`;
+    customElements.define('open-box', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<button data-k="open-btn">开放按钮</button>'; }
+    });
+    customElements.define('closed-box', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: 'closed' }).innerHTML = '<button data-k="closed-btn">封闭按钮</button>'; }
+    });
+  </script>
+</body>
+</html>

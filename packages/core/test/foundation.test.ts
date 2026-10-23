@@ -1,0 +1,379 @@
+import assert from 'node:assert/strict';
+import { after, before, describe, test } from 'node:test';
+import type { Page } from 'puppeteer-core';
+import {
+  asObactError,
+  browserEnv,
+  markPage,
+  ObactError,
+  PageRegistry,
+  resolveLocator,
+  resolveRef,
+  resolveTarget,
+  Session,
+} from '../src/index.ts';
+import { rejectsWithCode, SKIP, setup, type TestEnv } from './helpers.ts';
+
+let env: TestEnv;
+
+/** basic.html 主文档里的可交互元素数（含 2 个 option、隐藏的导出按钮、开放和封闭 Shadow 内的按钮）。 */
+const MAIN_INTERACTIVE = 18;
+
+async function text(s: Session, pageId: string, ref: number): Promise<string> {
+  const r = await resolveRef(s, pageId, ref);
+  return r.handle.evaluate(
+    (el) => (el as HTMLElement).innerText || el.getAttribute('placeholder') || '',
+  );
+}
+
+/** 找出某段文字对应的编号。 */
+async function refOf(s: Session, pageId: string, label: string): Promise<number> {
+  const frames = await markPage(s, pageId);
+  for (const f of frames) {
+    for (const ref of f.refs) {
+      if ((await text(s, pageId, ref).catch(() => '')) === label) return ref;
+    }
+  }
+  throw new Error(`找不到 ${label}`);
+}
+
+describe('底座：编号、解析与标签页', { skip: SKIP }, () => {
+  before(async () => {
+    env = await setup();
+  });
+  after(async () => {
+    await env?.close();
+  });
+
+  test('给主文档、iframe（含跨域）、开放与封闭 Shadow DOM 的可交互元素编号', async () => {
+    const pageId = await env.open('/pages/basic.html', { pageId: 'main' });
+    const page = env.session.pages.get(pageId);
+    await page.waitForFrame((f) => f.url().includes('who=cross'));
+    await page.waitForFunction(() => document.querySelectorAll('iframe').length === 2);
+    const frames = await markPage(env.session, pageId);
+    const main = frames[0];
+    assert.ok(main);
+    assert.equal(main.refs.length, MAIN_INTERACTIVE);
+    const inFrames = frames.slice(1).map((f) => f.refs.length);
+    assert.deepEqual(inFrames, [2, 2]);
+    const all = frames.flatMap((f) => f.refs);
+    assert.equal(new Set(all).size, all.length, '编号不重复');
+    assert.deepEqual(
+      all,
+      [...all].sort((a, b) => a - b),
+      '按顺序递增',
+    );
+
+    const again = await markPage(env.session, pageId);
+    assert.equal(again.flatMap((f) => f.added).length, 0, '再次编号不新增');
+    assert.deepEqual(
+      again.flatMap((f) => f.refs),
+      all,
+      '已有编号保持不变',
+    );
+
+    assert.equal(
+      await text(env.session, pageId, await refOf(env.session, pageId, '封闭按钮')),
+      '封闭按钮',
+    );
+  });
+
+  test('编号绑定具体节点：克隆重绘与新节点重绘都判定失效，重新编号不复用', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    const a = await refOf(env.session, pageId, '条目 A');
+    const page = env.session.pages.get(pageId);
+
+    await page.click('#rerender-clone');
+    await rejectsWithCode(resolveRef(env.session, pageId, a), 'stale_ref');
+    const a2 = await refOf(env.session, pageId, '条目 A');
+    assert.ok(a2 > a, `克隆节点获得新编号（${a2} > ${a}）`);
+    const attr = await page.$eval('#list button', (el) => el.getAttribute('data-obact-ref'));
+    assert.equal(Number(attr), a2, '属性被新编号覆盖');
+
+    await page.click('#rerender-fresh');
+    await rejectsWithCode(resolveRef(env.session, pageId, a2), 'stale_ref');
+    const a3 = await refOf(env.session, pageId, '条目 A');
+    assert.ok(a3 > a2);
+  });
+
+  test('新会话把旧会话的编号视为失效并重新编号', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    const old = await refOf(env.session, pageId, '查询');
+    const s2 = await Session.attach(env.browser);
+    try {
+      const pageId2 = s2.pages.idOf(env.session.pages.get(pageId));
+      assert.ok(pageId2);
+      await rejectsWithCode(resolveRef(s2, pageId2, old), 'stale_ref');
+      const fresh = await refOf(s2, pageId2, '查询');
+      assert.equal(await text(s2, pageId2, fresh), '查询');
+      // 旧会话的编号也随之失效：属性已被新会话覆盖
+      await rejectsWithCode(resolveRef(env.session, pageId, old), 'stale_ref');
+    } finally {
+      s2.pages.dispose();
+    }
+  });
+
+  test('未分配的编号、属于其他标签页的编号', async () => {
+    const p1 = await env.open('/pages/basic.html');
+    const p2 = await env.open('/pages/basic.html');
+    const ref = await refOf(env.session, p1, '查询');
+    await rejectsWithCode(resolveRef(env.session, p1, 99999), 'stale_ref');
+    await rejectsWithCode(resolveRef(env.session, p2, ref), 'invalid_params');
+  });
+
+  test('定位器：CSS、within 消歧、角色+名称、隐藏副本、Shadow DOM', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    const s = env.session;
+    const css = await resolveLocator(s, pageId, { css: '[data-testid=query-btn]' });
+    assert.equal(css.via, 'css');
+
+    await rejectsWithCode(resolveLocator(s, pageId, { css: 'button.audit' }), 'not_unique');
+    const row = await resolveLocator(s, pageId, {
+      css: 'button.audit',
+      within: "tr[data-id='88232']",
+    });
+    assert.equal(await row.handle.evaluate((el) => el.closest('tr')?.dataset.id), '88232');
+
+    const byRole = await resolveLocator(s, pageId, { role: 'textbox', name: '订单号' });
+    assert.equal(byRole.via, 'role');
+    assert.equal(await byRole.handle.evaluate((el) => el.id), 'order');
+
+    // CSS 不唯一时退到 角色+名称
+    const fallback = await resolveLocator(s, pageId, {
+      css: 'button',
+      role: 'button',
+      name: '自绘按钮',
+    });
+    assert.equal(fallback.via, 'role');
+    await rejectsWithCode(
+      resolveLocator(s, pageId, { role: 'button', name: '审核' }),
+      'not_unique',
+    );
+    const partial = await resolveLocator(s, pageId, { role: 'link', name: '详', exact: false });
+    assert.equal(partial.via, 'role');
+
+    const visible = await resolveLocator(s, pageId, { css: 'button.resp' });
+    assert.equal(
+      await visible.handle.evaluate((el) => getComputedStyle(el).display),
+      'inline-block',
+    );
+
+    const open = await resolveLocator(s, pageId, { css: 'button.sh' });
+    assert.equal(await open.handle.evaluate((el) => el.textContent), '开放按钮');
+    await markPage(s, pageId); // 挂上封闭的 Shadow Root
+    const closed = await resolveLocator(s, pageId, { role: 'button', name: '封闭按钮' });
+    assert.equal(await closed.handle.evaluate((el) => el.className), 'sh-closed');
+
+    await rejectsWithCode(resolveLocator(s, pageId, { css: '#nope' }), 'not_found');
+  });
+
+  test('定位器：进入同源与跨域 iframe', async () => {
+    const pageId = await env.open('/pages/basic.html');
+    const page = env.session.pages.get(pageId);
+    await page.waitForFrame((f) => f.url().includes('who=cross'));
+    for (const id of ['same', 'cross']) {
+      const r = await resolveTarget(env.session, pageId, { css: '#in-frame', frame: [`#${id}`] });
+      assert.equal(await r.frame.evaluate(() => document.body.dataset.who), id);
+    }
+    await rejectsWithCode(
+      resolveLocator(env.session, pageId, { css: '#in-frame', frame: ['#missing'] }),
+      'not_found',
+    );
+  });
+
+  test('标签页登记：指定 ID、弹出窗口自动登记、关闭后报错', async () => {
+    const reg = env.session.pages;
+    const pageId = await env.open('/pages/basic.html', { pageId: 'reg-main' });
+    const mark = reg.mark();
+    await env.session.pages.get(pageId).click('#popup');
+    let created: string[] = [];
+    for (let i = 0; i < 50 && created.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      created = reg.createdSince(mark);
+    }
+    assert.equal(created.length, 1);
+    const popup = reg.get(created[0] as string);
+    await popup.waitForFunction(() => document.body?.dataset.who === 'popup');
+    await popup.close();
+    assert.throws(
+      () => reg.get(created[0] as string),
+      (e: ObactError) => e.code === 'page_not_found',
+    );
+    await assert.rejects(
+      reg.newPage({ pageId: 'reg-main' }),
+      (e: ObactError) => e.code === 'invalid_params',
+    );
+    await assert.rejects(
+      reg.newPage({ pageId: 'bad id' }),
+      (e: ObactError) => e.code === 'invalid_params',
+    );
+  });
+
+  test('标签页登记时回调：新建、弹出窗口（targetcreated）、接管已有标签页都经过它，每个页面只一次', async () => {
+    const seen: Page[] = [];
+    const reg = new PageRegistry(env.browser, (p) => seen.push(p));
+    try {
+      const existing = await reg.adoptExisting();
+      assert.ok(existing.length > 0);
+      assert.deepEqual(
+        seen,
+        existing.map((id) => reg.get(id)),
+        '已有标签页登记时回调',
+      );
+      seen.length = 0;
+      const id = await reg.newPage({ pageId: 'hook-new' });
+      assert.deepEqual(seen, [reg.get(id)], 'newPage 只回调一次（自动登记与显式编号是同一个页面）');
+      // 弹出窗口只经过 targetcreated 的自动登记
+      const mark = reg.mark();
+      await reg.get(id).goto(`${env.server.base}/pages/basic.html`);
+      await reg.get(id).click('#popup');
+      let created: string[] = [];
+      for (let i = 0; i < 100 && created.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        created = reg.createdSince(mark);
+      }
+      assert.equal(created.length, 1);
+      assert.equal(seen.length, 2);
+      assert.equal(seen[1], reg.get(created[0] as string));
+    } finally {
+      reg.dispose();
+    }
+  });
+
+  test('改过名的标签页（newPage 带 pageId）关闭后从登记表移除，pageId 可以再用', async () => {
+    const reg = env.session.pages;
+    for (let round = 0; round < 2; round++) {
+      const id = await reg.newPage({ pageId: 'reg-reuse' });
+      assert.equal(id, 'reg-reuse');
+      assert.ok(reg.has('reg-reuse'));
+      const mark = reg.mark();
+      await reg.get(id).close();
+      assert.equal(reg.has('reg-reuse'), false, `第 ${round + 1} 轮：关闭后不在登记表里`);
+      assert.ok(!reg.list().some((p) => p.pageId === 'reg-reuse'), 'list 不含已关闭的页面');
+      assert.deepEqual(reg.createdSince(mark), [], '登记顺序也已清理');
+    }
+  });
+
+  test('newPage 的 pageId 不合法或重复：先校验再开页，不留孤儿标签页；并发同名只留一个', async () => {
+    const reg = env.session.pages;
+    const open = async () => (await env.browser.pages()).length;
+    await reg.newPage({ pageId: 'reg-dup' });
+    const before = await open();
+    for (const bad of ['reg-dup', 'bad id', '']) {
+      await assert.rejects(
+        reg.newPage({ pageId: bad }),
+        (e: ObactError) => e.code === 'invalid_params',
+        `pageId=${JSON.stringify(bad)}`,
+      );
+    }
+    assert.equal(await open(), before, '校验失败时没有开出标签页');
+    // 并发同名：开页期间编号被抢先占了，后到的一方关掉自己刚开的页面
+    const listed = reg.list().length;
+    const rs = await Promise.allSettled([
+      reg.newPage({ pageId: 'reg-race' }),
+      reg.newPage({ pageId: 'reg-race' }),
+    ]);
+    assert.deepEqual(rs.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(await open(), before + 1, '输的一方没有留下孤儿标签页');
+    for (let i = 0; i < 50 && reg.list().length !== listed + 1; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(reg.list().length, listed + 1, '登记表里也只多一个');
+    await reg.get('reg-dup').close();
+    await reg.get('reg-race').close();
+  });
+
+  test('错误归一', () => {
+    const t = new Error('waiting failed');
+    t.name = 'TimeoutError';
+    assert.equal(asObactError(t).code, 'timeout');
+    assert.equal(asObactError(new Error('Target closed')).code, 'browser_disconnected');
+    assert.equal(asObactError('x').code, 'internal');
+    // 断连只认连接类消息；元素、frame 失效（浏览器还好好的）和页面脚本自己抛的文字不算
+    const code = (m: string) => asObactError(new Error(m)).code;
+    for (const m of [
+      'Protocol error (Runtime.callFunctionOn): Target closed',
+      'Protocol error (Page.navigate): Session closed. Most likely the page has been closed.',
+      'Connection closed.',
+      'Navigation failed because browser has disconnected!',
+    ]) {
+      assert.equal(code(m), 'browser_disconnected', m);
+    }
+    for (const m of [
+      'Node is detached from document',
+      "Attempted to use detached Frame 'F1'.",
+      'Navigating frame was detached',
+      'Session closed by server',
+      'element detached',
+    ]) {
+      assert.equal(code(m), 'internal', m);
+    }
+    assert.equal(code('Evaluation failed: Error: Session closed by server'), 'script_error');
+    const e = new ObactError('not_found', 'x', { a: 1 });
+    assert.deepEqual(e.toJSON(), { code: 'not_found', message: 'x', details: { a: 1 } });
+  });
+});
+
+describe('浏览器进程环境', () => {
+  test('Linux 上缺 UTF-8 locale 时补 C.UTF-8（否则中文文件名的上传与下载失效）', {
+    skip: process.platform !== 'linux' && '只在 Linux 上处理',
+  }, () => {
+    assert.equal(browserEnv({ PATH: '/bin' }).LC_ALL, 'C.UTF-8');
+    assert.equal(browserEnv({ LANG: 'C' }).LC_ALL, 'C.UTF-8');
+    assert.equal(browserEnv({ LANG: 'zh_CN.UTF-8' }).LC_ALL, undefined, '已有 UTF-8 locale 不改');
+    assert.equal(browserEnv({ LC_ALL: 'en_US.utf8' }).LC_ALL, 'en_US.utf8');
+    assert.equal(
+      browserEnv({ LC_ALL: 'POSIX', LANG: 'zh_CN.UTF-8' }).LC_ALL,
+      'C.UTF-8',
+      'LC_ALL 优先',
+    );
+  });
+});
+
+describe('页面内助手：稳定性判断与所在容器', { skip: SKIP }, () => {
+  let env2: TestEnv;
+  before(async () => {
+    env2 = await setup();
+  });
+  after(async () => {
+    await env2?.close();
+  });
+
+  test('obIsStableToken / obIsStableText / obWithin', async () => {
+    const pageId = await env2.open('/pages/basic.html');
+    const page = env2.session.pages.get(pageId);
+    const { bundle } = await import('../src/page/bundle.ts');
+    const { DOM_LIB, obIsStableToken, obIsStableText, obWithin } = await import(
+      '../src/page/dom.ts'
+    );
+    const tokens = await page.evaluate(
+      bundle((list: string[]) => list.map((t) => obIsStableToken(t)), DOM_LIB),
+      [
+        'audit-btn',
+        'submit',
+        'order-list',
+        'id-1696845123',
+        'css-1x2y3z',
+        'Button_btn__3xK9z',
+        ':r1:',
+        'a8f3k2l9q',
+        'sc-bdVaJa',
+        'row-2',
+      ],
+    );
+    assert.deepEqual(tokens, [true, true, true, false, false, false, false, false, false, true]);
+    const texts = await page.evaluate(
+      bundle((l: string[]) => l.map((t) => obIsStableText(t)), DOM_LIB),
+      ['审核', '订单 88231', '2026-10-15'],
+    );
+    assert.deepEqual(texts, [true, false, false]);
+    const within = await page.evaluate(
+      bundle(() => obWithin(document.querySelectorAll('button.audit')[1] as Element), DOM_LIB),
+    );
+    assert.equal(within, "tr[data-id='88232']");
+    const none = await page.evaluate(
+      bundle(() => obWithin(document.getElementById('query') as Element), DOM_LIB),
+    );
+    assert.equal(none, null);
+  });
+});

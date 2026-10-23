@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "packages/*/src",
+    "packages/*/scripts",
+    "packages/*/examples",
+    "packages/*/test",
+    "lab/**/*.ts",
+    "fixtures/**/*.ts",
+    "bench/**/*.ts",
+    "tools/**/*.ts"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obact.local/schemas/v1/checkpoint.json",
+  "title": "Checkpoint",
+  "description": "runs/<run_id>/checkpoint.json：续跑用的进度文件，原子写入（FR-17，PRD 7.5）。",
+  "type": "object",
+  "properties": {
+    "run_id": { "$ref": "#/$defs/RunId" },
+    "workflow": { "type": "string", "minLength": 1 },
+    "mode": { "$ref": "common.json#/$defs/Mode" },
+    "state": { "$ref": "#/$defs/RunState" },
+    "step_id": { "type": "string", "description": "下一步要执行（或正在执行）的步骤。" },
+    "loop_index": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 },
+      "description": "loop_begin 的 step_id → 当前条目下标。"
+    },
+    "vars": {
+      "type": "object",
+      "description": "运行变量（敏感参数不写入）。",
+      "additionalProperties": true
+    },
+    "cursor": {
+      "type": "object",
+      "description": "采集与处理进度游标。",
+      "additionalProperties": true
+    },
+    "seq": { "type": "integer", "minimum": 0, "description": "检查点写入序号，单调递增。" },
+    "updated_at": { "$ref": "common.json#/$defs/Timestamp" }
+  },
+  "required": ["run_id", "workflow", "mode", "state", "step_id"],
+  "additionalProperties": false,
+  "$defs": {
+    "RunId": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+    "RunState": {
+      "type": "string",
+      "enum": [
+        "RUNNING",
+        "PAUSED",
+        "NEED_HUMAN",
+        "SUSPENDED",
+        "STOPPED",
+        "FAILED",
+        "TRIPPED",
+        "DONE"
+      ],
+      "description": "SUSPENDED：为切换有头/无头挂起；TRIPPED：熔断（FR-19）。"
+    }
+  }
+}
