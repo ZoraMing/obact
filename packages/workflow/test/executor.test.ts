@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createLab, type Lab } from '../../../lab/src/app.ts';
@@ -23,6 +23,15 @@ const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const NAME = 'orders-smoke';
 const P = '"pageId":"main"';
 const PRE = `"section":"preamble",${P}`;
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** 登录（前置路径）→ 订单列表 → 页面抽取、接口抽取 → 打开一条待审核订单并审核（单次提交）。 */
 const STEPS = String.raw`
@@ -184,6 +193,22 @@ describe('真执行器与命令行', { skip: SKIP }, () => {
     await (await open('c')).close();
   });
 
+  test('相对路径的工作区：browser.pid 记绝对路径的配置目录（puppeteer 给 Chrome 的是绝对路径），sweepBrowser 才认得出', async () => {
+    const ws = workspace();
+    const rel = relative(process.cwd(), ws);
+    const workflow = loadWorkflow(join(ws, 'workflows', NAME));
+    const ex = await openSession({ workspace: rel, runId: 'rel', workflow, chromePath: CHROME });
+    try {
+      const rec = JSON.parse(readFileSync(join(rel, 'runs', 'rel', 'browser.pid'), 'utf8'));
+      assert.equal(rec.profile, join(ws, 'profiles', 'default'));
+      sweepBrowser(rel, 'rel', process.pid);
+      for (let i = 0; i < 100 && alive(rec.pid); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.equal(alive(rec.pid), false, '浏览器被清扫');
+    } finally {
+      await ex.close();
+    }
+  });
+
   test('命令行：obact run 经监督进程跑到 DONE，status、unverified 可查；参数与工作流错误有退出码', async () => {
     const ws = workspace();
     const s = await labSpace('exec-cli');
@@ -219,15 +244,6 @@ describe('sweepBrowser', () => {
     );
     return { pid: p.pid as number, gone: new Promise((r) => p.once('exit', r)) };
   };
-  const alive = (pid: number) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
   test('只清所有者正是退出的那个子进程的记录；别的进程记下的浏览器不动', async () => {
     const ws = mkdtempSync(join(tmpdir(), 'obact-sweep-'));
     const profile = join(ws, 'profiles', 'a');
@@ -244,6 +260,24 @@ describe('sweepBrowser', () => {
     } finally {
       try {
         process.kill(b.pid, 'SIGKILL'); // 断言失败时别留下进程
+      } catch {}
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  test('命令行里配置目录之后必须是空格或串尾：记录 profiles/a 的不会命中跑在 profiles/ab 上的进程', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'obact-sweep-'));
+    const b = fakeBrowser(join(ws, 'profiles', 'ab'));
+    try {
+      mkdirSync(join(ws, 'runs', 'r'), { recursive: true });
+      const rec = { pid: b.pid, profile: join(ws, 'profiles', 'a'), owner: 1 };
+      writeFileSync(join(ws, 'runs', 'r', 'browser.pid'), JSON.stringify(rec));
+      sweepBrowser(ws, 'r', 1);
+      await new Promise((r) => setTimeout(r, 100));
+      assert.ok(alive(b.pid), '别的账号的浏览器不能被误杀');
+    } finally {
+      try {
+        process.kill(b.pid, 'SIGKILL');
       } catch {}
       rmSync(ws, { recursive: true, force: true });
     }

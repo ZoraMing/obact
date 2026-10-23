@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import * as api from '../src/index.ts';
 import { type SupervisorEvent, superviseRun } from '../src/supervisor.ts';
 
 const CHILD = join(dirname(fileURLToPath(import.meta.url)), 'fixtures-supervisor', 'child.ts');
@@ -178,5 +179,14 @@ test('监督进程自己退出（process.exit）时，同步清扫子进程组�
     try {
       process.kill(child, 'SIGKILL'); // 断言失败时别留下它（它忽略 SIGTERM）
     } catch {}
+  }
+});
+
+test('index.ts 导出监督与清扫的接口（含类型 SupervisorEvent、SuperviseResult）', () => {
+  const result: api.SuperviseResult = { state: 'DONE', restarts: 0 };
+  const event: api.SupervisorEvent = { type: 'restart', restarts: 1, reason: 'signal' };
+  assert.deepEqual([result.state, event.type], ['DONE', 'restart']);
+  for (const f of [api.sweepBrowser, api.startHeartbeat, api.superviseRun]) {
+    assert.equal(typeof f, 'function');
   }
 });

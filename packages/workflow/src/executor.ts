@@ -2,7 +2,7 @@
 // 约定与 test/fake-executor.ts 一致：act 不抛异常，失败以 status:'error' 返回；extract、check 失败抛 ObactError。
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   act,
   assertAccountName,
@@ -162,7 +162,8 @@ export function sweepBrowser(workspace: string, runId: string, owner: number): v
   } catch {
     return;
   }
-  if (!cmd.includes(`--user-data-dir=${rec.profile}`)) return;
+  // 配置目录之后必须是空格或串尾，profiles/a 不能命中 profiles/ab
+  if (!`${cmd.trimEnd()} `.includes(`--user-data-dir=${rec.profile} `)) return;
   try {
     process.kill(-rec.pid, 'SIGKILL'); // 浏览器自己的进程组
   } catch {
@@ -191,7 +192,8 @@ export type OpenSessionOptions = {
 export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> {
   const account = o.account ?? o.workflow.meta.account ?? 'default';
   assertAccountName(account);
-  const profileDir = join(o.workspace, 'profiles', account);
+  // 绝对路径：puppeteer 给 Chrome 的 --user-data-dir 是绝对路径，sweepBrowser 要按它认进程
+  const profileDir = join(resolve(o.workspace), 'profiles', account);
   // 一个账号的配置目录同一时刻只能有一个运行在用（拿不到就报错，不进重启循环）
   const unlock = acquireLock(`${profileDir}.lock`, `账号 ${account}`);
   let browser: Awaited<ReturnType<typeof launchBrowser>>;

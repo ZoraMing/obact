@@ -5,11 +5,18 @@ export {
   type CoreExecutorOptions,
   type OpenSessionOptions,
   openSession,
+  sweepBrowser,
 } from './executor.ts';
 export { Output } from './output.ts';
 export { loadParams } from './params.ts';
 export { run } from './runner.ts';
 export { RunStore } from './store.ts';
-export { type SuperviseOptions, superviseRun } from './supervisor.ts';
+export {
+  type SuperviseOptions,
+  type SuperviseResult,
+  type SupervisorEvent,
+  startHeartbeat,
+  superviseRun,
+} from './supervisor.ts';
 export type * from './types.ts';
 export { loadWorkflow, validateWorkflow } from './workflow.ts';
