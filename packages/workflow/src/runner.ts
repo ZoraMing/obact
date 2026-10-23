@@ -19,6 +19,7 @@ import type {
   RunStats,
   Scope,
   Step,
+  UnverifiedRecord,
   Workflow,
 } from './types.ts';
 import { formatProblems, loadWorkflow, validateWorkflow } from './workflow.ts';
@@ -80,9 +81,11 @@ type Out = {
   items?: unknown[];
   shown?: string;
   out?: Outcome;
+  /** 动作已交给 executor（单次提交据此判断是否可能已发出）。 */
+  sent?: boolean;
 };
-/** 一步处理完的去向：out 终止运行；o 是成功时的结果；都没有表示失败后按 skip 继续。 */
-type Next = { out?: Outcome; o?: Out };
+/** 一步处理完的去向：out 终止运行；skipTo 跳到该下标；o 是成功时的结果；都没有表示失败后按 skip 继续。 */
+type Next = { out?: Outcome; o?: Out; skipTo?: number };
 
 /** 步骤自己的字段，不属于动作（DESIGN 约定 1）。 */
 const STEP_ONLY = [
@@ -98,6 +101,33 @@ const STEP_ONLY = [
   'opens',
 ];
 const MAX_CALL_DEPTH = 8;
+
+/** 动作已发出、结果未确认的错误码 → 待核实原因（DESIGN 约定 7）。 */
+const UNVERIFIED_REASON: Record<string, UnverifiedRecord['reason']> = {
+  assertion_failed: 'post_failed',
+  timeout: 'post_timeout',
+  navigation_failed: 'navigation_lost',
+  browser_disconnected: 'browser_lost',
+};
+/** 动作确定没有发出的错误码：按普通失败处理。 */
+const NOT_SENT = new Set([
+  'not_found',
+  'not_unique',
+  'not_actionable',
+  'obscured',
+  'stale_ref',
+  'invalid_params',
+  'landing_mismatch',
+  'page_not_found',
+  'path_outside_workspace',
+]);
+
+/** 单次提交步骤的动作报错时：状态未明的原因；动作确定没发出返回 null。其他错误码无法确认，保守按状态未明。 */
+function unverifiedReason(f: Failure): UnverifiedRecord['reason'] | null {
+  if (f.code === 'dialog_blocking') return f.details?.dispatched === true ? 'stuck' : null;
+  if (NOT_SENT.has(f.code)) return null;
+  return UNVERIFIED_REASON[f.code] ?? 'post_failed';
+}
 
 /** 控制流配对（加载时已校验过嵌套）。 */
 function pairs(steps: Step[]): Map<number, number> {
@@ -158,6 +188,14 @@ export async function run(
     root: true,
     depth: 0,
   };
+
+  /** 前置路径是 steps 的开头一段（校验保证），其后是主流程。 */
+  const firstMain = (() => {
+    const i = workflow.steps.findIndex((x) => x.section !== 'preamble');
+    return i < 0 ? workflow.steps.length : i;
+  })();
+  /** 连续几条单次提交状态未明（成功一条清零）。 */
+  let consecutive = 0;
 
   // ---------- 留痕与检查点 ----------
 
@@ -253,8 +291,9 @@ export async function run(
     }
   };
 
-  /** 执行一步的一次尝试：前置检查 → 渲染 → 执行。 */
-  const doStep = async (c: Ctx, s: Step): Promise<Out> => {
+  /** 执行一步的一次尝试：前置检查 → 渲染 → 执行。beforeAct 在动作交给 executor 之前调用。 */
+  const doStep = async (c: Ctx, s: Step, beforeAct?: () => void): Promise<Out> => {
+    let sent = false;
     try {
       if (s.pre?.length) {
         const r = await executor.check(page(s.pageId ?? 'main'), s.pre);
@@ -284,6 +323,9 @@ export async function run(
             throw new Failure('invalid_params', `call 嵌套超过 ${MAX_CALL_DEPTH} 层`);
           }
           const w = loadWorkflow(join(workspace, 'workflows', s.workflow));
+          if (w.steps.some((x) => x.once_only)) {
+            throw new Failure('invalid_params', `子工作流 ${w.name} 含 once_only 步骤：M2 不支持`);
+          }
           const args = render(c, s.args ?? {}).value as Record<string, unknown>;
           const child: Ctx = {
             wf: w,
@@ -304,6 +346,8 @@ export async function run(
         }
         default: {
           const { a, redacted } = prepare(c, s);
+          beforeAct?.();
+          sent = true;
           const res = await executor.act(a as unknown as Action);
           trace(c, s, redacted, res);
           if (res.status === 'error') {
@@ -314,7 +358,7 @@ export async function run(
         }
       }
     } catch (e) {
-      return { fail: toFail(e) };
+      return { fail: toFail(e), sent };
     }
   };
 
@@ -362,6 +406,93 @@ export async function run(
     if (o.out) return { out: { ...o.out, stepId: s.step_id } };
     note(c, s, 'ok', since, o.shown);
     return { o };
+  };
+
+  // ---------- 单次提交 ----------
+
+  /** 跳过模式下重置页面：重放前置路径，再确认循环锚点。 */
+  const reset = async (loop: Frame, s: Step): Promise<Outcome | null> => {
+    const out = await exec(root, 0, firstMain, true);
+    if (out.state !== 'DONE') return out;
+    if (!loop.anchor?.length) return null;
+    let why: string | null = null;
+    try {
+      const r = await executor.check(page('main'), loop.anchor);
+      if (!r.pass) why = r.detail ?? '检查未通过';
+    } catch (e) {
+      why = toFail(e).message;
+    }
+    if (why === null) return null;
+    const message = `重置页面后循环锚点未满足：${why}`;
+    return {
+      state: 'FAILED',
+      stepId: s.step_id,
+      error: { code: 'assertion_failed', message, step_id: s.step_id },
+    };
+  };
+
+  /** 状态未明：记入待核实清单，绝不重试；按 on_unverified 停止，或重置页面后处理下一条。 */
+  const unverified = async (
+    c: Ctx,
+    s: Step,
+    key: string,
+    reason: UnverifiedRecord['reason'],
+    since: number,
+  ): Promise<Next> => {
+    store.recordUnverified({
+      step_id: s.step_id,
+      idempotency_key: key,
+      reason,
+      screenshot: await takeShot(s),
+    });
+    stats.unverified++;
+    note(c, s, 'error', since, `状态未明（${reason}）：${key}`);
+    const rec = store.getUnverified(key);
+    if (rec) events?.unverified?.(rec);
+    // 缺省取最内层设了 on_unverified 的循环，再取工作流的，再缺省 stop；不在循环里没有“下一条”，也只能停
+    const mode =
+      options.onUnverified ?? c.frames.findLast((f) => f.on)?.on ?? workflow.meta.on_unverified;
+    const loop = c.frames.at(-1);
+    if (++consecutive >= 2 || mode !== 'skip' || !loop) {
+      const message = `单次提交状态未明（${reason}），已停止：${key}`;
+      const error = { code: 'unverified', message, step_id: s.step_id };
+      return { out: { state: 'STOPPED', stepId: s.step_id, error } };
+    }
+    const failed = await reset(loop, s);
+    return failed ? { out: failed } : { skipTo: loop.end };
+  };
+
+  /** 单次提交步骤（FR-18，DESIGN 约定 7、16）：永不自动重试，结果分成功、状态未明、未发出三类。 */
+  const onceOnly = async (c: Ctx, s: Step, pc: number): Promise<Next> => {
+    const since = Date.now();
+    let key: string;
+    try {
+      key = String(render(c, s.idempotency_key).value);
+    } catch (e) {
+      return onFail(c, s, toFail(e), since, false);
+    }
+    if (store.hasSideEffect(key)) {
+      stats.skipped++;
+      note(c, s, 'skipped', since, `幂等键已提交：${key}`);
+      return {};
+    }
+    const old = store.getUnverified(key);
+    if (old && !old.resolution) return unverified(c, s, key, old.reason, since);
+    const o = await doStep(c, s, () => save(c, s.step_id));
+    if (o.fail) {
+      const reason = o.sent ? unverifiedReason(o.fail) : null;
+      return reason ? unverified(c, s, key, reason, since) : onFail(c, s, o.fail, since, false);
+    }
+    const evidence = o.res?.assertions;
+    store.recordSideEffect({
+      step_id: s.step_id,
+      idempotency_key: key,
+      ...(evidence ? { evidence } : {}),
+    });
+    consecutive = 0;
+    save(c, c.wf.steps[pc + 1]?.step_id ?? s.step_id);
+    note(c, s, 'ok', since, o.shown);
+    return {};
   };
 
   // ---------- 解释执行 ----------
@@ -417,10 +548,11 @@ export async function run(
         case 'checkpoint':
           break;
         default: {
-          const r = await ordinary(c, s, strict);
+          const r = s.once_only ? await onceOnly(c, s, pc) : await ordinary(c, s, strict);
           if (r.out) return r.out;
           const end = (c.lay.get(pc) ?? pc) + 1;
-          if (s.op === 'if') next = r.o?.cond ? pc + 1 : end;
+          if (r.skipTo !== undefined) next = r.skipTo;
+          else if (s.op === 'if') next = r.o?.cond ? pc + 1 : end;
           else if (s.op === 'loop_begin') {
             const items = r.o?.items ?? [];
             if (items.length > 0) {

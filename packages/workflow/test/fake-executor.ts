@@ -21,6 +21,8 @@ export class FakeExecutor implements Executor {
   checkPass: (pageId: string, checks: unknown) => boolean = () => true;
   /** 抽取的结果，默认没有行。 */
   extractRows: (step: Step, nth: number) => Record<string, unknown>[] = () => [];
+  /** 每个动作到达时先调用（测试用来观察那一刻磁盘上的状态）。 */
+  onAct: (action: Action) => void = () => {};
   readonly #plans = new Map<string, Reply[]>();
   readonly #seen = new Map<string, number>();
   #extractN = 0;
@@ -42,6 +44,7 @@ export class FakeExecutor implements Executor {
   }
 
   async act(action: Action): Promise<ActResult> {
+    this.onAct(action);
     this.acts.push(action);
     const key = keyOf(action);
     const n = this.#seen.get(key) ?? 0;
