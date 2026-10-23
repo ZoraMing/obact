@@ -416,6 +416,17 @@ describe('续跑', () => {
     });
   }
 
+  test('崩在 side effect 写入之后、检查点推进之前：该条按已完成跳过，下一条照常执行，不被误判为崩溃', async () => {
+    const ws = tmp();
+    const steps = orders(['a', 'b', 'c'], { on_unverified: 'skip' });
+    await crashes(steps, { ws, fake: new FakeExecutor().plan('#pay-b', 'crash') });
+    new RunStore(ws, 'r1').recordSideEffect({ step_id: 'pay', idempotency_key: 'pay-b' });
+    const r = await resume(steps, ws);
+    assert.equal(r.result.state, 'DONE');
+    assert.deepEqual(r.fake.keys(), ['#login', '#log-b', '#pay-c', '#log-c']);
+    assert.equal(r.store.listUnverified().length, 0);
+  });
+
   test('转人工后续跑：重做该步，不记状态未明', async () => {
     const ws = tmp();
     const steps = orders(['a', 'b']);

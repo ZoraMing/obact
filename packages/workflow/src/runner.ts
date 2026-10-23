@@ -501,6 +501,10 @@ export async function run(
   /** 单次提交步骤（FR-18，DESIGN 约定 7、16）：永不自动重试，结果分成功、状态未明、未发出三类。 */
   const onceOnly = async (c: Ctx, s: Step, pc: number): Promise<Next> => {
     const since = Date.now();
+    // 续跑时检查点停在这一步：只有被打断的那一次到达算数，无论接下来是跳过、转状态未明还是执行；
+    // 不在这里清掉的话，已有成功记录而被跳过的那一条会让下一条条目被误判为崩溃
+    const crashed = pc === crashAt;
+    if (crashed) crashAt = -1;
     let key: string;
     try {
       key = String(render(c, s.idempotency_key).value);
@@ -514,11 +518,8 @@ export async function run(
     }
     const old = store.getUnverified(key);
     if (old && !old.resolution) return unverified(c, s, key, old.reason, since);
-    // 续跑时检查点停在这一步、却没有成功记录：上次可能已经发出，按崩溃处理
-    if (pc === crashAt) {
-      crashAt = -1;
-      return unverified(c, s, key, 'crash', since);
-    }
+    // 检查点停在这一步、却没有成功记录：上次可能已经发出，按崩溃处理
+    if (crashed) return unverified(c, s, key, 'crash', since);
     const o = await doStep(c, s, () => save(c, s.step_id));
     if (o.fail) {
       const reason = o.sent ? unverifiedReason(o.fail) : null;
