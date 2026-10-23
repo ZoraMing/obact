@@ -92,7 +92,9 @@ export type RunEvents = {
   need_human?(e: {
     run_id: string;
     step_id: string;
+    /** 失败原因代码（契约 ErrorCode）。 */
     reason: string;
+    message?: string;
     screenshot: string | null;
   }): void;
   unverified?(e: UnverifiedRecord): void;
