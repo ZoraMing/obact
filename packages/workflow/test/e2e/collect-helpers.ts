@@ -1,6 +1,6 @@
 // 数据采集类 E2E（collect、scroll-api）共用的辅助：写工作区、进程内跑工作流（可挂钩子）、读采集输出、
 // 取 Lab 的全量数据。不 import node:test 与 Lab 的测试助手，所以子进程入口 collect-child.ts 也能用。
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openSession } from '../../src/executor.ts';
@@ -89,22 +89,4 @@ export async function labRows(base: string, cookie: string): Promise<LabRow[]> {
     total = d.total;
   }
   return all;
-}
-
-/**
- * 清掉用这个工作区的浏览器配置目录启动、却成了孤儿的 Chrome（进程组整体 SIGKILL）。
- * 运行子进程被 SIGKILL 后，puppeteer 起的 Chrome 自成进程组，监督进程清扫子进程组时清不到它，会一直留着。
- * 只在有 /proc 的系统上生效（其余系统什么也不做）。
- */
-export function killStrayBrowsers(workspace: string): void {
-  let pids: string[] = [];
-  try {
-    pids = readdirSync('/proc').filter((p) => /^\d+$/.test(p));
-  } catch {}
-  for (const pid of pids) {
-    try {
-      const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
-      if (cmd.includes(`--user-data-dir=${workspace}`)) process.kill(-Number(pid), 'SIGKILL');
-    } catch {}
-  }
 }

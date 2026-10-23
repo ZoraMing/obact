@@ -2,7 +2,6 @@
 // 判据一律以 Lab 服务端（_lab/state）为准：Lab 的幂等键是页面每次提交随机生成的（重做会换新键），
 // 所以按提交载荷里的对象（订单号、服务器编号）汇总，同一对象收到几次请求就是几次提交。
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { Lab } from '../../../../lab/src/app.ts';
 import type { Order } from '../../../../lab/src/modules/orders/data.ts';
 import { CHROME, control, loginCookie } from '../../../../lab/test/helpers.ts';
+import { sweepBrowser } from '../../src/executor.ts';
 import { RunStore } from '../../src/store.ts';
 import { type SupervisorEvent, superviseRun } from '../../src/supervisor.ts';
 
@@ -68,8 +68,7 @@ export async function supervised(ws: string, workflow: string, kills: Kill[], sk
     heartbeatTimeoutMs: 20_000,
     onEvent: (e) => {
       events.push(e);
-      // 浏览器由 puppeteer 放在独立进程组，监督进程清扫不到：子进程被杀后它成了孤儿，重启前按配置目录清掉
-      if (e.type === 'exit') spawnSync('pkill', ['-9', '-f', '--', `--user-data-dir=${ws}/`]);
+      if (e.type === 'exit') sweepBrowser(ws, 'r'); // 与命令行一致：子进程被杀后清扫它的浏览器
     },
   });
   const signals = events.flatMap((e) => (e.type === 'exit' ? [e.signal] : []));

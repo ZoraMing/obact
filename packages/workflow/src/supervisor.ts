@@ -5,7 +5,8 @@
 //  - 心跳：子进程每 5 秒更新 heartbeatFile（writeHeartbeat / startHeartbeat）。监督进程只看“内容或修改时间有没有变”，
 //    起点是子进程启动的时刻，所以上一轮留下的旧心跳文件不会让新进程立刻被判超时，也不会被误当作新心跳。
 //  - 子进程放在独立的进程组里（detached）；心跳超时、stop() 和子进程退出后的清扫都针对整个进程组，
-//    浏览器等孙进程不会成为孤儿。
+//    同组的孙进程不会成为孤儿。注意 puppeteer 把 Chrome 放在它自己的进程组里，不在此列：运行子进程被杀后，
+//    由命令行按运行目录里记录的浏览器进程号清扫（executor.ts 的 sweepBrowser）。
 //  - 只依赖 node 内置模块：监督进程要常驻、要小、要快起来，不该为了一个错误类型加载整个浏览器内核。
 //  - 重启次数按滑动窗口计：windowMs 内已重启 maxRestarts 次后再崩溃就熔断（TRIPPED），不再拉起。
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';

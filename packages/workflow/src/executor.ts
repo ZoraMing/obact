@@ -1,6 +1,8 @@
 // Executor 的真实实现：基于 @obact/core 的 act、断言、接口缓存与标签页登记（DESIGN 约定 12、15、16）。
 // 约定与 test/fake-executor.ts 一致：act 不抛异常，失败以 status:'error' 返回；extract、check 失败抛 ObactError。
-import { join, relative } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import {
   act,
   assertAccountName,
@@ -123,6 +125,44 @@ export class CoreExecutor implements Executor {
   async close(): Promise<void> {
     this.#o.cache?.dispose();
     await this.session.close({ closeBrowser: this.#o.closeBrowser ?? false }).catch(() => {});
+    rmSync(browserPidFile(this.#o.workspace, this.#o.runId), { force: true });
+  }
+}
+
+/** 运行目录里记录浏览器进程号的文件：运行子进程被 SIGKILL 后，浏览器（自成进程组）会成孤儿，靠它清扫。 */
+const browserPidFile = (workspace: string, runId: string) =>
+  join(workspace, 'runs', runId, 'browser.pid');
+
+/**
+ * 子进程退出后清扫它留下的浏览器（Chrome 由 puppeteer 放在自己的进程组里，监督进程清扫子进程组碰不到它）。
+ * 为防 pid 被别的进程复用，只清命令行里带该运行配置目录的进程；读不到命令行就不动手。
+ */
+export function sweepBrowser(workspace: string, runId: string): void {
+  const file = browserPidFile(workspace, runId);
+  let rec: { pid: number; profile: string };
+  try {
+    rec = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return;
+  }
+  rmSync(file, { force: true });
+  let cmd = '';
+  try {
+    cmd =
+      process.platform === 'linux'
+        ? readFileSync(`/proc/${rec.pid}/cmdline`, 'utf8').replaceAll('\0', ' ')
+        : (spawnSync('ps', ['-p', String(rec.pid), '-o', 'command='], { encoding: 'utf8' })
+            .stdout ?? '');
+  } catch {
+    return;
+  }
+  if (!cmd.includes(`--user-data-dir=${rec.profile}`)) return;
+  try {
+    process.kill(-rec.pid, 'SIGKILL'); // 浏览器自己的进程组
+  } catch {
+    try {
+      process.kill(rec.pid, 'SIGKILL');
+    } catch {}
   }
 }
 
@@ -145,11 +185,20 @@ export type OpenSessionOptions = {
 export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> {
   const account = o.account ?? o.workflow.meta.account ?? 'default';
   assertAccountName(account);
+  const profileDir = join(o.workspace, 'profiles', account);
   const browser = await launchBrowser({
-    profileDir: join(o.workspace, 'profiles', account),
+    profileDir,
     mode: o.mode ?? 'headless',
     chromePath: o.chromePath,
   });
+  const pid = browser.process()?.pid;
+  if (pid) {
+    try {
+      const file = browserPidFile(o.workspace, o.runId);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ pid, profile: profileDir }));
+    } catch {} // 记不下来只是少一道清扫，不影响运行
+  }
   try {
     const session = await Session.attach(browser, { adopt: false });
     const rules = o.workflow.meta.intercept ?? [];
@@ -174,6 +223,7 @@ export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> 
     });
   } catch (e) {
     await browser.close().catch(() => {});
+    rmSync(browserPidFile(o.workspace, o.runId), { force: true });
     throw e;
   }
 }

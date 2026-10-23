@@ -11,17 +11,10 @@ import { createLab, type Lab } from '../../../../lab/src/app.ts';
 import auth from '../../../../lab/src/modules/auth.ts';
 import bigtable from '../../../../lab/src/modules/bigtable.ts';
 import { CHROME, control, loginCookie, SKIP } from '../../../../lab/test/helpers.ts';
+import { sweepBrowser } from '../../src/executor.ts';
 import { RunStore } from '../../src/store.ts';
 import { type SupervisorEvent, superviseRun } from '../../src/supervisor.ts';
-import {
-  killStrayBrowsers,
-  LOGIN,
-  labRows,
-  lines,
-  makeWorkspace,
-  outputFile,
-  runFlow,
-} from './collect-helpers.ts';
+import { LOGIN, labRows, lines, makeWorkspace, outputFile, runFlow } from './collect-helpers.ts';
 
 const CHILD = fileURLToPath(new URL('./collect-child.ts', import.meta.url));
 const NAME = 'collect-books';
@@ -72,10 +65,7 @@ describe('BW-1、C-3 分页全量采集与中途被杀续采', { skip: SKIP }, (
   });
   after(async () => {
     await lab?.close();
-    for (const d of dirs) {
-      killStrayBrowsers(d);
-      rmSync(d, { recursive: true, force: true });
-    }
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
   });
 
   const workspace = () => {
@@ -142,9 +132,8 @@ describe('BW-1、C-3 分页全量采集与中途被杀续采', { skip: SKIP }, (
       heartbeatTimeoutMs: 20_000,
       onEvent: (e) => {
         events.push(e);
-        // 被杀的子进程留下的 Chrome 是孤儿，续跑前先清掉，免得两个浏览器共用一个配置目录
         if (e.type === 'exit') {
-          killStrayBrowsers(wsB);
+          sweepBrowser(wsB, 'b'); // 与命令行一致：子进程被杀后清扫它的浏览器
           writtenAtKill ??= lines(outputFile(wsB, 'b', NAME, 'items')).length; // 只记第一次退出（被杀）时
         }
       },

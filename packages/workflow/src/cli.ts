@@ -9,11 +9,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ObactError, resolveChromePath } from '@obact/core';
-import { openSession } from './executor.ts';
+import { openSession, sweepBrowser } from './executor.ts';
 import { run } from './runner.ts';
 import { RunStore } from './store.ts';
 import { startHeartbeat, superviseRun } from './supervisor.ts';
-import type { RunEvents, RunResult } from './types.ts';
+import type { RunEvents, RunOptions, RunResult } from './types.ts';
 import { loadWorkflow } from './workflow.ts';
 
 const USAGE = `用法：
@@ -57,6 +57,8 @@ export type RunWorkflowOptions = {
   onUnverified?: 'stop' | 'skip';
   vars?: Record<string, unknown>;
   events?: RunEvents;
+  /** 测试用：每步前后调用，可抛异常模拟崩溃（透传给 run）。 */
+  hooks?: RunOptions['hooks'];
 };
 
 /** 子进程的主体：加载工作流 → 启动浏览器 → 运行 → 关闭浏览器。 */
@@ -151,6 +153,7 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
     ],
     heartbeatFile: heartbeatFile(workspace, runId),
     onEvent: (e) => {
+      if (e.type === 'exit') sweepBrowser(workspace, runId); // 子进程被杀时浏览器会成孤儿
       if (e.type === 'restart')
         console.error(`子进程崩溃（${e.reason}），第 ${e.restarts} 次重启并续跑`);
     },
