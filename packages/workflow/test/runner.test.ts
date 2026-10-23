@@ -223,7 +223,7 @@ describe('控制流与失败处理', () => {
 const submit = [pay('s1', '#pay', 'k1', { retry: { max: 3 } }), click('s2', '#after')];
 
 /** 订单循环：前置路径登录；每条先提交再记账；跳过模式重置页面时重放登录并检查锚点。 */
-const orders = (items: string[], extra: object = {}, login: object = {}) => [
+const orders = (items: string[] | string, extra: object = {}, login: object = {}) => [
   click('login', '#login', { section: 'preamble', ...login }),
   loop('l', items, 'row', { anchor: [{ url_matches: '/list' }], ...extra }),
   pay('pay', '#pay-{{var:row}}', 'pay-{{var:row}}'),
@@ -473,8 +473,8 @@ describe('续跑', () => {
 
   // 检查点停在 once_only 上、没有成功记录：按崩溃记状态未明；转人工后的续跑是重做，不算崩溃
   const midCrash: [string, string, string[], string[]][] = [
-    ['stop', 'STOPPED', ['#login'], ['pay-a']],
-    ['skip', 'DONE', ['#login', '#login', '#pay-c', '#log-c'], ['pay-a', 'pay-c']],
+    ['stop', 'STOPPED', [], ['pay-a']], // 续跑一开始就记账并停止，不必重放前置路径
+    ['skip', 'DONE', ['#login', '#pay-c', '#log-c'], ['pay-a', 'pay-c']], // 重置页面时重放前置路径
   ];
   for (const [mode, state, keys, done] of midCrash) {
     test(`once_only 中间崩溃：记 crash，按 on_unverified=${mode} 处理`, async () => {
@@ -504,6 +504,124 @@ describe('续跑', () => {
     assert.equal(r.result.state, 'DONE');
     assert.deepEqual(r.fake.keys(), ['#login', '#log-b', '#pay-c', '#log-c']);
     assert.equal(r.store.listUnverified().length, 0);
+  });
+
+  // 续跑自己失败（前置路径重放失败、over 渲染失败）把检查点改成 FAILED 时，崩溃标记已经记在待核实清单里，
+  // 修好之后再续跑不会把被打断的那条重做
+  const resumeBroken: [string, (ws: string) => Setup][] = [
+    ['前置路径重放失败', () => ({ fake: new FakeExecutor().plan('#login', 'not_found') })],
+    [
+      'over 渲染失败',
+      (ws) => {
+        rmSync(join(ws, 'files', 'o.json'));
+        return {};
+      },
+    ],
+  ];
+  for (const [name, broken] of resumeBroken) {
+    test(`续跑失败不丢崩溃标记：${name}`, async () => {
+      const ws = tmp();
+      mkdirSync(join(ws, 'files'));
+      writeFileSync(join(ws, 'files', 'o.json'), JSON.stringify(['a', 'b', 'c']));
+      const steps = orders('{{file:o.json}}', { on_unverified: 'skip' });
+      await crashes(steps, { ws, fake: new FakeExecutor().plan('#pay-b', 'crash') });
+      const bad = await resume(steps, ws, broken(ws));
+      assert.equal(bad.result.state, 'FAILED');
+      assert.deepEqual(
+        bad.store.listUnverified().map((x) => [x.idempotency_key, x.reason]),
+        [['pay-b', 'crash']],
+        '失败之前就已记账',
+      );
+      writeFileSync(join(ws, 'files', 'o.json'), JSON.stringify(['a', 'b', 'c']));
+      const fixed = await resume(steps, ws);
+      assert.equal(fixed.fake.count('#pay-b'), 0, '被打断的那条不会重做');
+      assert.deepEqual(
+        fixed.store.listUnverified().map((x) => x.idempotency_key),
+        ['pay-b'],
+      );
+    });
+  }
+
+  test('over 的数据源在停机期间变了：按在途键判定崩溃，不会错位去重做别的条目', async () => {
+    const ws = tmp();
+    mkdirSync(join(ws, 'files'));
+    const write = (rows: string[]) =>
+      writeFileSync(join(ws, 'files', 'o.json'), JSON.stringify(rows));
+    write(['a', 'b', 'c', 'd']);
+    const steps = orders('{{file:o.json}}');
+    await crashes(steps, { ws, fake: new FakeExecutor().plan('#pay-c', 'crash') });
+    write(['x', 'a', 'b', 'c', 'd']); // 头部插入新单，按下标 2 恢复会落在 b 上
+    const r = await resume(steps, ws);
+    assert.equal(r.result.state, 'STOPPED');
+    assert.deepEqual(r.fake.keys(), [], '被打断的是 c：不重做它，也不往下做');
+    assert.deepEqual(
+      r.store.listUnverified().map((x) => [x.idempotency_key, x.reason]),
+      [['pay-c', 'crash']],
+    );
+  });
+
+  test('循环声明了 key：检查点存当前条目的 key，续跑时数据源错位则 FAILED，位置不动、什么都不执行', async () => {
+    const ws = tmp();
+    mkdirSync(join(ws, 'files'));
+    const write = (rows: string[]) =>
+      writeFileSync(join(ws, 'files', 'o.json'), JSON.stringify(rows));
+    write(['r1', 'r2', 'r3']);
+    const steps = [
+      loop('l', '{{file:o.json}}', 'row', { key: 'id-{{var:row}}' }),
+      click('a', '#a-{{var:row}}'),
+      click('b', '#b-{{var:row}}'),
+      END,
+    ];
+    await crashes(steps, { ws, fake: new FakeExecutor().plan('#b-r2', 'crash') });
+    assert.deepEqual(new RunStore(ws, 'r1').readCheckpoint()?.cursor?.loop_keys, { l: 'id-r2' });
+    write(['r0', 'r1', 'r2', 'r3']); // 头部插入：下标 1 现在是 r1
+    const bad = await resume(steps, ws);
+    assert.deepEqual([bad.result.state, bad.result.error?.code], ['FAILED', 'invalid_params']);
+    assert.match(bad.result.error?.message ?? '', /id-r2.*id-r1|主键/);
+    assert.equal(bad.fake.acts.length, 0);
+    assert.partialDeepStrictEqual(bad.cp, { state: 'FAILED', step_id: 'l', loop_index: { l: 1 } });
+    assert.deepEqual(bad.cp?.cursor?.loop_keys, { l: 'id-r2' }, '检查点里的 key 不被冲掉');
+    write(['r1', 'r2', 'r3']); // 数据恢复后可以续跑
+    const ok = await resume(steps, ws);
+    assert.equal(ok.result.state, 'DONE');
+    assert.deepEqual(ok.fake.keys(), ['#a-r2', '#b-r2', '#a-r3', '#b-r3']);
+  });
+
+  // 动作发出之前才写在途键：检查点已指向下一步 / 前一个 once_only 刚成功时崩溃，续跑不能误报 crash
+  const early: [string, object[], string][] = [
+    [
+      'checkpoint 步骤之后紧跟 once_only',
+      [click('a', '#a'), step('k', 'checkpoint'), pay('p', '#p', 'k1')],
+      'p',
+    ],
+    ['连续两个 once_only 之间', [pay('p1', '#p1', 'k0'), pay('p', '#p', 'k1')], 'p'],
+  ];
+  for (const [name, steps, at] of early) {
+    test(`动作发出之前崩溃不算状态未明：${name}`, async () => {
+      const ws = tmp();
+      const hooks = {
+        beforeStep: (x: Step) => {
+          if (x.step_id === at) throw new Error('crash');
+        },
+      };
+      await crashes(steps, { ws, opts: { hooks } });
+      const r = await resume(steps, ws);
+      assert.equal(r.result.state, 'DONE');
+      assert.equal(r.fake.count('#p'), 1);
+      assert.equal(r.store.listUnverified().length, 0);
+    });
+  }
+
+  test('核实为未完成后重做又崩溃：键上虽有旧记录，这次的崩溃照样重新记为未核实，不会再执行', async () => {
+    const ws = tmp();
+    await go(submit, { ws, fake: new FakeExecutor().plan('#pay', 'timeout') });
+    new RunStore(ws, 'r1').resolveUnverified('k1', { outcome: 'not_done' });
+    await crashes(submit, { ws, fake: new FakeExecutor().plan('#pay', 'crash') }); // 重做时崩溃
+    const r = await resume(submit, ws);
+    assert.equal(r.fake.count('#pay'), 0);
+    assert.equal(r.result.state, 'STOPPED');
+    const rec = r.store.getUnverified('k1');
+    assert.deepEqual([rec?.reason, rec?.resolution], ['crash', undefined]);
   });
 
   test('转人工后续跑：重做该步，不记状态未明', async () => {

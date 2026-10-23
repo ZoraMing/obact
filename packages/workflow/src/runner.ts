@@ -9,7 +9,7 @@ import { createFiles } from './files.ts';
 import { formatDate, Output } from './output.ts';
 import { loadParams } from './params.ts';
 import { RunStore } from './store.ts';
-import { parsePath, redact, renderWithTrace } from './template.ts';
+import { MASK, parsePath, redact, renderWithTrace } from './template.ts';
 import type {
   Action,
   ActResult,
@@ -49,8 +49,11 @@ function toFail(e: unknown): Failure {
   throw e;
 }
 
-/** 循环的一层：s 是 loop_begin 步骤；begin / end 是 loop_begin / loop_end 的下标，i 是当前条目。 */
-type Frame = { s: LoopStep; begin: number; end: number; items: unknown[]; i: number };
+/**
+ * 循环的一层：s 是 loop_begin 步骤；begin / end 是 loop_begin / loop_end 的下标，i 是当前条目；
+ * key 是当前条目的主键渲染值（循环声明了 key 才有），随检查点保存，续跑时校验 over 没有错位。
+ */
+type Frame = { s: LoopStep; begin: number; end: number; items: unknown[]; i: number; key?: string };
 
 /** 一个工作流的执行环境；call 的子工作流有自己的变量与循环栈。 */
 type Ctx = {
@@ -119,6 +122,15 @@ function unverifiedReason(f: Failure): UnverifiedRecord['reason'] | null {
   return UNVERIFIED_REASON[f.code] ?? 'post_failed';
 }
 
+/** 检查点 cursor 里的在途单次提交：动作发出前预写，动作有了结论（成功、状态未明、确认没发出）后清掉。 */
+type Inflight = { step_id: string; key: string };
+function inflightOf(cursor: Record<string, unknown>): Inflight | undefined {
+  const x = cursor.inflight as Partial<Inflight> | null | undefined;
+  return typeof x?.step_id === 'string' && typeof x.key === 'string'
+    ? { step_id: x.step_id, key: x.key }
+    : undefined;
+}
+
 /** 终止运行的结果：error.step_id 是出错的步骤。 */
 const halt = (
   state: Checkpoint['state'],
@@ -183,8 +195,6 @@ export async function run(
   let output: Output | undefined;
   const outputs = () =>
     (output ??= new Output(workspace, workflow.name, String(cursor.output_date)));
-  /** 续跑时检查点停在 RUNNING 的 once_only 步骤的下标：它可能已经执行了一半。 */
-  let crashAt = -1;
   const scopeFor = (w: Workflow, vars: Record<string, unknown>): Scope => {
     const params = loadParams(workspace, w.name, w.meta.site);
     return { param: (n) => params.get(n), vars, file: (p) => files.read(p) };
@@ -233,6 +243,9 @@ export async function run(
   const save = (c: Ctx, stepId: string, state: Checkpoint['state'] = 'RUNNING'): void => {
     if (!c.root) return;
     const masked = redact(c.vars) as Record<string, unknown>;
+    const keys = c.frames.flatMap((f) => (f.key === undefined ? [] : [[f.s.step_id, f.key]]));
+    if (keys.length > 0) cursor.loop_keys = Object.fromEntries(keys);
+    else delete cursor.loop_keys;
     store.writeCheckpoint({
       run_id: runId,
       workflow: workflow.name,
@@ -486,6 +499,42 @@ export async function run(
     return halt('FAILED', s.step_id, 'assertion_failed', `重置页面后循环锚点未满足：${why}`);
   };
 
+  /** 状态未明：记入待核实清单、留痕、发事件（shot 缺省现拍一张）。 */
+  const markUnverified = async (
+    c: Ctx,
+    s: Step,
+    key: string,
+    reason: UnverifiedRecord['reason'],
+    since: number,
+    shot?: string | null,
+  ): Promise<void> => {
+    store.recordUnverified({
+      step_id: s.step_id,
+      idempotency_key: key,
+      reason,
+      screenshot: shot === undefined ? await takeShot(s) : shot,
+    });
+    stats.unverified++;
+    note(c, s, 'error', since, `状态未明（${reason}）：${key}`);
+    const rec = store.getUnverified(key);
+    if (rec) events?.unverified?.(rec);
+  };
+
+  /**
+   * 状态未明之后是否停止（同时把这一条计入连续计数）：缺省取最内层设了 on_unverified 的循环，再取工作流的，
+   * 再缺省 stop；不在循环里没有“下一条”，也只能停；连续 2 条状态未明则停。loops 是所在的循环，由外到内。
+   */
+  const stopsAfterUnverified = (loops: LoopStep[]): boolean => {
+    const mode =
+      options.onUnverified ??
+      loops.findLast((l) => l.on_unverified)?.on_unverified ??
+      workflow.meta.on_unverified;
+    return ++consecutive >= 2 || mode !== 'skip' || loops.length === 0;
+  };
+
+  const stoppedUnverified = (s: Step, key: string, reason: UnverifiedRecord['reason']): Outcome =>
+    halt('STOPPED', s.step_id, 'unverified', `单次提交状态未明（${reason}），已停止：${key}`);
+
   /** 状态未明：记入待核实清单，绝不重试；按 on_unverified 停止，或重置页面后处理下一条。 */
   const unverified = async (
     c: Ctx,
@@ -494,26 +543,11 @@ export async function run(
     reason: UnverifiedRecord['reason'],
     since: number,
   ): Promise<Next> => {
-    store.recordUnverified({
-      step_id: s.step_id,
-      idempotency_key: key,
-      reason,
-      screenshot: await takeShot(s),
-    });
-    stats.unverified++;
-    note(c, s, 'error', since, `状态未明（${reason}）：${key}`);
-    const rec = store.getUnverified(key);
-    if (rec) events?.unverified?.(rec);
-    // 缺省取最内层设了 on_unverified 的循环，再取工作流的，再缺省 stop；不在循环里没有“下一条”，也只能停
-    const mode =
-      options.onUnverified ??
-      c.frames.findLast((f) => f.s.on_unverified)?.s.on_unverified ??
-      workflow.meta.on_unverified;
-    const loop = c.frames.at(-1);
-    if (++consecutive >= 2 || mode !== 'skip' || !loop) {
-      const message = `单次提交状态未明（${reason}），已停止：${key}`;
-      return { out: halt('STOPPED', s.step_id, 'unverified', message) };
+    await markUnverified(c, s, key, reason, since);
+    if (stopsAfterUnverified(c.frames.map((f) => f.s))) {
+      return { out: stoppedUnverified(s, key, reason) };
     }
+    const loop = c.frames.at(-1) as Frame;
     const failed = await reset(loop, s);
     return failed ? { out: failed } : { skipTo: loop.end };
   };
@@ -521,10 +555,6 @@ export async function run(
   /** 单次提交步骤（FR-18，DESIGN 约定 7、16）：永不自动重试，结果分成功、状态未明、未发出三类。 */
   const onceOnly = async (c: Ctx, s: Step, pc: number): Promise<Next> => {
     const since = Date.now();
-    // 续跑时检查点停在这一步：只有被打断的那一次到达算数，无论接下来是跳过、转状态未明还是执行；
-    // 不在这里清掉的话，已有成功记录而被跳过的那一条会让下一条条目被误判为崩溃
-    const crashed = pc === crashAt;
-    if (crashed) crashAt = -1;
     let key: string;
     try {
       const v = render(c, s.idempotency_key).value;
@@ -544,9 +574,12 @@ export async function run(
     }
     const old = store.getUnverified(key);
     if (old && !old.resolution) return unverified(c, s, key, old.reason, since);
-    // 检查点停在这一步、却没有成功记录：上次可能已经发出，按崩溃处理
-    if (crashed) return unverified(c, s, key, 'crash', since);
-    const o = await doStep(c, s, () => save(c, s.step_id));
+    // 动作发出前把在途键预写进检查点：这之后崩溃，续跑据此认定该键状态未明（见续跑开头）
+    const o = await doStep(c, s, () => {
+      cursor.inflight = { step_id: s.step_id, key } satisfies Inflight;
+      save(c, s.step_id);
+    });
+    delete cursor.inflight; // 动作有了结论（成功、状态未明或确认没发出），不再在途
     if (o.fail) {
       const reason = o.sent ? unverifiedReason(o.fail) : null;
       return reason ? unverified(c, s, key, reason, since) : onFail(c, s, o.fail, since, false);
@@ -577,9 +610,16 @@ export async function run(
     i,
   });
 
-  /** 切到循环的当前条目：设置循环变量。 */
+  /** 切到循环的当前条目：设置循环变量，并算出该条目的主键（只认非空字符串或数字；渲染不出、含敏感内容的不记）。 */
   const setItem = (c: Ctx, f: Frame): void => {
     c.vars[f.s.as] = f.items[f.i];
+    f.key = undefined;
+    if (f.s.key === undefined) return;
+    try {
+      const r = render(c, f.s.key);
+      const ok = (typeof r.value === 'string' && r.value !== '') || typeof r.value === 'number';
+      if (ok && !r.sensitive) f.key = String(r.value);
+    } catch {}
   };
 
   /** 执行 [from, to) 的步骤。 */
@@ -639,8 +679,10 @@ export async function run(
     return { state: 'DONE', stepId: steps[to - 1]?.step_id ?? '' };
   };
 
-  const finish = (out: Outcome): RunResult => {
-    save(root, out.stepId, out.state);
+  /** keep：检查点的位置原样保留，只改状态（续跑一开始就结束，循环栈还没建好）。 */
+  const finish = (out: Outcome, keep = false): RunResult => {
+    if (keep && cp) store.writeCheckpoint({ ...cp, state: out.state, cursor });
+    else save(root, out.stepId, out.state);
     // 导出是收尾：DONE 的检查点先落盘，导出出错只报告，不让已跑完的运行停在 RUNNING
     let error = out.error;
     if (out.state === 'DONE') {
@@ -670,31 +712,64 @@ export async function run(
   const at = steps.findIndex((x) => x.step_id === cp.step_id);
   if (at < 0) return early(`检查点的步骤不存在：${cp.step_id}`);
   const target = Math.max(at, firstMain);
+  /** 目标步骤外层的循环（loop_begin 的下标，由外到内）。 */
+  const open: number[] = [];
+  steps.slice(0, target).forEach((x, i) => {
+    if (x.op === 'loop_begin') open.push(i);
+    else if (x.op === 'loop_end') open.pop();
+  });
   let from = target;
-  try {
-    const open: number[] = [];
-    steps.slice(0, target).forEach((x, i) => {
-      if (x.op === 'loop_begin') open.push(i);
-      else if (x.op === 'loop_end') open.pop();
-    });
-    if (steps[target]?.op === 'loop_begin') {
-      open.push(target);
-      from = target + 1;
+  if (steps[target]?.op === 'loop_begin') {
+    open.push(target);
+    from = target + 1;
+  }
+
+  // 崩溃：检查点里有在途键、该键却没有成功记录 → 上次的动作可能已经发出，立刻记入待核实清单。
+  // 先于重放前置路径、渲染 over 这些可能失败的步骤：它们失败、检查点被改成 FAILED 也丢不了这个标记
+  const flying = inflightOf(cursor);
+  delete cursor.inflight;
+  /** 崩溃的那一条，按 skip 跳过它继续下一条。 */
+  let toSkip: Step | undefined;
+  if (flying && !store.hasSideEffect(flying.key)) {
+    const crashed = steps.find((x) => x.step_id === flying.step_id) ?? (steps[at] as Step);
+    await markUnverified(root, crashed, flying.key, 'crash', Date.now(), null);
+    if (stopsAfterUnverified(open.map((b) => steps[b] as LoopStep))) {
+      return finish(stoppedUnverified(crashed, flying.key, 'crash'), true);
     }
+    toSkip = crashed;
+  }
+
+  try {
+    const savedKeys = (cp.cursor?.loop_keys ?? {}) as Record<string, unknown>;
     for (const b of open) {
       const st = steps[b] as LoopStep;
       const fr = frameAt(root, b, itemsOf(root, st), cp.loop_index?.[st.step_id] ?? 0);
       root.frames.push(fr);
       setItem(root, fr);
+      // over 渲染出来的数据与上次不是同一批（按下标恢复会错位）：循环声明了 key 才能发现
+      const saved = savedKeys[st.step_id];
+      if (typeof saved === 'string' && saved !== MASK && saved !== fr.key) {
+        const now = fr.key === undefined ? '无法得到' : fr.key;
+        throw new Failure(
+          'invalid_params',
+          `循环 ${st.step_id} 第 ${fr.i + 1} 条的主键与检查点不一致（检查点 ${saved}，现在 ${now}）：over 的数据在两次运行之间变了，续跑会错位`,
+        );
+      }
     }
   } catch (e) {
     const f = toFail(e);
-    return finish(halt('FAILED', cp.step_id, f.code, f.message));
+    return finish(halt('FAILED', cp.step_id, f.code, f.message), true);
+  }
+  // 崩溃的那一条按 skip 处理：重置页面（重放前置路径并确认循环锚点），从循环尾接着处理下一条
+  if (toSkip) {
+    const loop = root.frames.at(-1) as Frame;
+    const failed = await reset(loop, toSkip);
+    if (failed) return finish({ ...failed, stepId: cp.step_id });
+    return finish(await exec(root, loop.end, steps.length, false));
   }
   // 前置路径重放失败：检查点仍停在原来的位置，修好之后可以再续跑
   const replay = await exec(root, 0, firstMain, true);
   if (replay.state !== 'DONE') return finish({ ...replay, stepId: cp.step_id });
-  crashAt = cp.state === 'RUNNING' && steps[target]?.once_only ? target : -1;
   save(root, steps[target]?.step_id ?? cp.step_id);
   return finish(await exec(root, from, steps.length, false));
 }
