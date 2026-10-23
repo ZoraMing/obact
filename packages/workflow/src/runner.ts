@@ -226,8 +226,12 @@ export async function run(
   /** 前置路径是 steps 的开头一段（校验保证），其后是主流程。 */
   const mainAt = workflow.steps.findIndex((x) => x.section !== 'preamble');
   const firstMain = mainAt < 0 ? workflow.steps.length : mainAt;
-  /** 连续几条单次提交状态未明（成功一条清零）。 */
-  let consecutive = 0;
+  /** 连续几条单次提交状态未明（成功一条清零）；随检查点的 cursor.unverified_streak 保存，续跑时恢复。 */
+  let consecutive = typeof cursor.unverified_streak === 'number' ? cursor.unverified_streak : 0;
+  const setStreak = (n: number): void => {
+    consecutive = n;
+    cursor.unverified_streak = n;
+  };
 
   // ---------- 留痕与检查点 ----------
 
@@ -529,7 +533,8 @@ export async function run(
       options.onUnverified ??
       loops.findLast((l) => l.on_unverified)?.on_unverified ??
       workflow.meta.on_unverified;
-    return ++consecutive >= 2 || mode !== 'skip' || loops.length === 0;
+    setStreak(consecutive + 1);
+    return consecutive >= 2 || mode !== 'skip' || loops.length === 0;
   };
 
   const stoppedUnverified = (s: Step, key: string, reason: UnverifiedRecord['reason']): Outcome =>
@@ -592,7 +597,7 @@ export async function run(
       idempotency_key: key,
       ...(evidence ? { evidence } : {}),
     });
-    consecutive = 0;
+    setStreak(0);
     save(c, c.wf.steps[pc + 1]?.step_id ?? s.step_id);
     const f = s.opens ? bind(s.opens, o.res) : null;
     if (f) return onFail(c, s, f, since, false);

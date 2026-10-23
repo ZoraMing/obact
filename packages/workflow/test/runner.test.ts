@@ -408,6 +408,46 @@ describe('单次提交', () => {
       assert.equal(fake.count('#pay-b'), 0);
     });
 
+    test('连续计数写进检查点：停止后不核实直接续跑，不会清零继续往下做', async () => {
+      const ws = tmp();
+      const steps = orders(['a', 'b', 'c', 'd'], { on_unverified: 'skip' });
+      const fake = new FakeExecutor().plan('#pay-a', 'timeout').plan('#pay-b', 'timeout');
+      const first = await go(steps, { ws, fake });
+      assert.equal(first.result.state, 'STOPPED');
+      assert.equal(first.cp?.cursor?.unverified_streak, 2);
+      const again = await resume(steps, ws);
+      assert.equal(again.result.state, 'STOPPED');
+      assert.deepEqual(
+        again.fake.keys().filter((k) => k.startsWith('#pay-')),
+        [],
+        '没有核实，后面的订单不能动',
+      );
+    });
+
+    test('连续计数跨崩溃续跑恢复：前一条状态未明、下一条崩溃，续跑后合计 2 条即停止', async () => {
+      const ws = tmp();
+      const steps = orders(['a', 'b', 'c', 'd'], { on_unverified: 'skip' });
+      const fake = new FakeExecutor().plan('#pay-a', 'timeout').plan('#pay-b', 'crash');
+      await crashes(steps, { ws, fake });
+      const r = await resume(steps, ws);
+      assert.equal(r.result.state, 'STOPPED');
+      assert.deepEqual(
+        r.store.listUnverified().map((x) => [x.idempotency_key, x.reason]),
+        [
+          ['pay-a', 'post_timeout'],
+          ['pay-b', 'crash'],
+        ],
+      );
+      assert.equal(r.fake.count('#pay-c'), 0);
+    });
+
+    test('成功一条后计数清零，并写进检查点', async () => {
+      const fake = new FakeExecutor().plan('#pay-a', 'timeout');
+      const r = await go(orders(['a', 'b'], { on_unverified: 'skip' }), { fake });
+      assert.equal(r.result.state, 'DONE');
+      assert.equal(r.cp?.cursor?.unverified_streak, 0);
+    });
+
     // 优先级：命令行选项 > 循环 > 工作流 > stop
     const skip = { on_unverified: 'skip' };
     const stop = { on_unverified: 'stop' };
