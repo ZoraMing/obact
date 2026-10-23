@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, test } from 'node:test';
+import { formatDate } from '../src/output.ts';
 import { run } from '../src/runner.ts';
 import { RunStore } from '../src/store.ts';
 import type { RunEvents, RunOptions, Step, Workflow } from '../src/types.ts';
@@ -563,6 +564,28 @@ describe('续跑', () => {
     assert.deepEqual(r.result.stats.rows, { items: 1 }, '续跑只新增 id=4');
     const dir = join(ws, 'outputs', 't', String(r.cp?.cursor?.output_date));
     assert.equal(readFileSync(join(dir, 'items.csv'), 'utf8'), '﻿id\r\n1\r\n2\r\n3\r\n4\r\n');
+  });
+});
+
+describe('收尾', () => {
+  test('DONE 之后导出出错：检查点已是 DONE，run() 不 reject，导出错误放进 RunResult.error', async () => {
+    const ws = tmp();
+    // 导出的目标路径被一个目录占着，rename 会失败
+    mkdirSync(join(ws, 'outputs', 't', formatDate(), 'items.csv'), { recursive: true });
+    const meta = { outputs: { items: { key: 'id', export: ['csv'] } } };
+    const source = { type: 'dom', kind: 'table', root: { css: '#t' } };
+    const fake = new FakeExecutor();
+    fake.extractRows = () => [{ id: 1 }];
+    const { result, cp, ev } = await go(
+      [step('e', 'extract', { pageId: 'p1', source, into: 'items' })],
+      { ws, meta, fake },
+    );
+    assert.equal(result.state, 'DONE');
+    assert.equal(cp?.state, 'DONE', '检查点不能停在 RUNNING');
+    assert.deepEqual([result.error?.code, result.error?.step_id], ['internal', 'e']);
+    assert.match(result.error?.message ?? '', /导出/);
+    assert.deepEqual(result.stats.rows, { items: 1 }, '数据已采集完');
+    assert.equal(ev.step.length, 1);
   });
 });
 

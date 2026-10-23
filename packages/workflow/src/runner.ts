@@ -640,16 +640,23 @@ export async function run(
   };
 
   const finish = (out: Outcome): RunResult => {
+    save(root, out.stepId, out.state);
+    // 导出是收尾：DONE 的检查点先落盘，导出出错只报告，不让已跑完的运行停在 RUNNING
+    let error = out.error;
     if (out.state === 'DONE') {
       for (const [name, o] of Object.entries(workflow.meta.outputs ?? {})) {
-        if (o?.export?.length && outputs().count(name) > 0) outputs().export(name, o.export);
+        try {
+          if (o?.export?.length && outputs().count(name) > 0) outputs().export(name, o.export);
+        } catch (e) {
+          const message = `导出 ${name} 失败：${(e as Error).message}`;
+          error ??= { code: 'internal', message, step_id: out.stepId };
+        }
       }
     }
-    save(root, out.stepId, out.state);
     store.pruneShots();
     stats.duration_ms = Date.now() - started;
     if (out.state !== 'NEED_HUMAN') events?.run_done?.({ run_id: runId, state: out.state, stats });
-    const { state, stepId: step_id, error } = out;
+    const { state, stepId: step_id } = out;
     return { state, stats, step_id, ...(error && { error }) };
   };
 
