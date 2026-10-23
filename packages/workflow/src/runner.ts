@@ -60,6 +60,8 @@ type Ctx = {
   scope: Scope;
   /** 控制流配对：loop_begin → loop_end；if → else 或 end_if；else → end_if。 */
   lay: Map<number, number>;
+  /** 敏感变量名（由敏感内容赋值而来，或 call 的敏感实参）；各工作流环境各自一份，子工作流改不到根的。 */
+  sensitive: Set<string>;
   root: boolean;
   depth: number;
 };
@@ -172,7 +174,6 @@ export async function run(
   if (cp?.state === 'DONE') return { state: 'DONE', stats, step_id: cp.step_id };
 
   const files = createFiles(workspace);
-  const sensitiveVars = new Set<string>();
   /** 页面别名 → 标签页编号；不进检查点，续跑后辅助页不恢复。 */
   const aliases = new Map<string, string>();
   const mode = options.mode ?? cp?.mode ?? workflow.meta.mode ?? 'headless';
@@ -190,12 +191,18 @@ export async function run(
   };
   // 检查点里没有敏感变量，调用方传入的参数补上
   const vars: Record<string, unknown> = { ...options.vars, ...cp?.vars };
-  const mkCtx = (wf: Workflow, vars: Record<string, unknown>, depth: number): Ctx => ({
+  const mkCtx = (
+    wf: Workflow,
+    vars: Record<string, unknown>,
+    depth: number,
+    sensitive = new Set<string>(),
+  ): Ctx => ({
     wf,
     vars,
     frames: [],
     scope: scopeFor(wf, vars),
     lay: pairs(wf.steps),
+    sensitive,
     root: depth === 0,
     depth,
   });
@@ -237,7 +244,7 @@ export async function run(
         Object.entries(c.vars).filter(
           ([k, v]) =>
             !loopVars.has(k) &&
-            !sensitiveVars.has(k) &&
+            !c.sensitive.has(k) &&
             JSON.stringify(masked[k]) === JSON.stringify(v),
         ),
       ),
@@ -266,8 +273,7 @@ export async function run(
 
   const render = (c: Ctx, v: unknown) =>
     renderWithTrace(v, c.scope, {
-      isSensitive: (kind, name) =>
-        kind === 'var' && sensitiveVars.has(String(parsePath(name)?.[0])),
+      isSensitive: (kind, name) => kind === 'var' && c.sensitive.has(String(parsePath(name)?.[0])),
     });
 
   /** pageId 先按别名解析再当标签页编号（DESIGN 约定 15）。 */
@@ -363,8 +369,8 @@ export async function run(
         case 'set_var': {
           const r = render(c, s.value);
           c.vars[s.name] = r.value;
-          if (r.sensitive) sensitiveVars.add(s.name);
-          else sensitiveVars.delete(s.name);
+          if (r.sensitive) c.sensitive.add(s.name);
+          else c.sensitive.delete(s.name);
           return {};
         }
         case 'call': {
@@ -375,8 +381,15 @@ export async function run(
           if (w.steps.some((x) => x.once_only)) {
             throw new Failure('invalid_params', `子工作流 ${w.name} 含 once_only 步骤：M2 不支持`);
           }
-          const args = render(c, s.args ?? {}).value as Record<string, unknown>;
-          const out = await exec(mkCtx(w, args, c.depth + 1), 0, w.steps.length, false);
+          // 逐个渲染实参：敏感的实参在子工作流里同样按敏感变量打码
+          const args: Record<string, unknown> = {};
+          const secret = new Set<string>();
+          for (const [k, v] of Object.entries(s.args ?? {})) {
+            const r = render(c, v);
+            args[k] = r.value;
+            if (r.sensitive) secret.add(k);
+          }
+          const out = await exec(mkCtx(w, args, c.depth + 1, secret), 0, w.steps.length, false);
           return out.state === 'DONE' ? {} : { out };
         }
         case 'extract': {

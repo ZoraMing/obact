@@ -158,6 +158,29 @@ describe('控制流与失败处理', () => {
     assert.equal(gone.result.error?.code, 'invalid_params');
   });
 
+  test('敏感变量的标记按工作流环境隔离：子工作流里同名的非敏感 set_var 不会清掉根工作流的标记；敏感实参传给子工作流仍打码', async () => {
+    const ws = tmp();
+    const params = 'global:\n  api_token: tok-999\n  password: hunter2\n';
+    child(ws, 'plain', [step('s1', 'set_var', { name: 'tok', value: 'plain' })]);
+    child(ws, 'use', [fill('u1', '#h', 'Bearer {{var:t}}'), fill('u2', '#p', '{{var:pw}}')]);
+    const steps = [
+      step('v', 'set_var', { name: 'tok', value: '{{param:api_token}}' }),
+      step('k1', 'call', { workflow: 'plain' }),
+      fill('f', '#h', 'Bearer {{var:tok}}'),
+      step('k2', 'call', {
+        workflow: 'use',
+        args: { t: '{{var:tok}}', pw: '{{param:password}}' },
+      }),
+    ];
+    const { result, fake, store } = await go(steps, { ws, params });
+    assert.equal(result.state, 'DONE');
+    const values = fake.acts.map((a) => (a as { value?: unknown }).value);
+    assert.deepEqual(values, ['Bearer tok-999', 'Bearer tok-999', 'hunter2'], '执行器收到真实值');
+    for (const f of ['steps.log', 'trajectory.jsonl', 'checkpoint.json']) {
+      assert.doesNotMatch(readFileSync(join(store.dir, f), 'utf8'), /tok-999|hunter2/, f);
+    }
+  });
+
   test('留痕：敏感值不进 steps.log、trajectory 与检查点', async () => {
     const params = 'global:\n  password: hunter2\n  api_token: tok-999\n';
     const { result, fake, store, cp } = await go(
