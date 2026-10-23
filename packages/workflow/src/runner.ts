@@ -6,9 +6,10 @@
 // ordinary 管重试与 on_fail；检查点只由根工作流写，call 的子工作流整体算根工作流的一步。
 import { join } from 'node:path';
 import { createFiles } from './files.ts';
+import { formatDate, Output } from './output.ts';
 import { loadParams } from './params.ts';
 import { RunStore } from './store.ts';
-import { parsePath, renderWithTrace } from './template.ts';
+import { parsePath, redact, renderWithTrace } from './template.ts';
 import type {
   Action,
   ActResult,
@@ -48,17 +49,8 @@ function toFail(e: unknown): Failure {
   throw e;
 }
 
-/** 循环的一层：id 是 loop_begin 的 step_id；begin / end 是 loop_begin / loop_end 的下标。 */
-type Frame = {
-  id: string;
-  as: string;
-  begin: number;
-  end: number;
-  items: unknown[];
-  i: number;
-  on: LoopStep['on_unverified'];
-  anchor: LoopStep['anchor'];
-};
+/** 循环的一层：s 是 loop_begin 步骤；begin / end 是 loop_begin / loop_end 的下标，i 是当前条目。 */
+type Frame = { s: LoopStep; begin: number; end: number; items: unknown[]; i: number };
 
 /** 一个工作流的执行环境；call 的子工作流有自己的变量与循环栈。 */
 type Ctx = {
@@ -72,6 +64,7 @@ type Ctx = {
   depth: number;
 };
 
+type Status = 'ok' | 'error' | 'skipped';
 type Outcome = { state: Checkpoint['state']; stepId: string; error?: RunResult['error'] };
 /** 一次尝试的结果：fail 为空即成功；cond / items 分别是 if 与 loop_begin 的求值结果。 */
 type Out = {
@@ -86,21 +79,15 @@ type Out = {
 };
 /** 一步处理完的去向：out 终止运行；skipTo 跳到该下标；o 是成功时的结果；都没有表示失败后按 skip 继续。 */
 type Next = { out?: Outcome; o?: Out; skipTo?: number };
+type NextP = Promise<Next>;
 
 /** 步骤自己的字段，不属于动作（DESIGN 约定 1）。 */
-const STEP_ONLY = [
-  'step_id',
-  'section',
-  'pre',
-  'retry',
-  'on_fail',
-  'once_only',
-  'idempotency_key',
-  'volatile',
-  'note',
-  'opens',
-];
+const STEP_ONLY =
+  'step_id section pre retry on_fail once_only idempotency_key volatile note opens'.split(' ');
 const MAX_CALL_DEPTH = 8;
+/** 页面别名的写法，与标签页编号（p 加数字）同形的不算别名。 */
+const ALIAS = /^[A-Za-z][A-Za-z0-9_]*$/;
+const TAB_ID = /^p\d+$/;
 
 /** 动作已发出、结果未确认的错误码 → 待核实原因（DESIGN 约定 7）。 */
 const UNVERIFIED_REASON: Record<string, UnverifiedRecord['reason']> = {
@@ -110,17 +97,11 @@ const UNVERIFIED_REASON: Record<string, UnverifiedRecord['reason']> = {
   browser_disconnected: 'browser_lost',
 };
 /** 动作确定没有发出的错误码：按普通失败处理。 */
-const NOT_SENT = new Set([
-  'not_found',
-  'not_unique',
-  'not_actionable',
-  'obscured',
-  'stale_ref',
-  'invalid_params',
-  'landing_mismatch',
-  'page_not_found',
-  'path_outside_workspace',
-]);
+const NOT_SENT = new Set(
+  'not_found not_unique not_actionable obscured stale_ref invalid_params landing_mismatch page_not_found path_outside_workspace'.split(
+    ' ',
+  ),
+);
 
 /** 单次提交步骤的动作报错时：状态未明的原因；动作确定没发出返回 null。其他错误码无法确认，保守按状态未明。 */
 function unverifiedReason(f: Failure): UnverifiedRecord['reason'] | null {
@@ -128,6 +109,18 @@ function unverifiedReason(f: Failure): UnverifiedRecord['reason'] | null {
   if (NOT_SENT.has(f.code)) return null;
   return UNVERIFIED_REASON[f.code] ?? 'post_failed';
 }
+
+/** 终止运行的结果：error.step_id 是出错的步骤。 */
+const halt = (
+  state: Checkpoint['state'],
+  stepId: string,
+  code: string,
+  message: string,
+): Outcome => ({
+  state,
+  stepId,
+  error: { code, message, step_id: stepId },
+});
 
 /** 控制流配对（加载时已校验过嵌套）。 */
 function pairs(steps: Step[]): Map<number, number> {
@@ -165,47 +158,67 @@ export async function run(
   const problems = validateWorkflow(workflow);
   if (problems.length > 0) return early(formatProblems(problems));
 
+  const cp = options.resume ? store.readCheckpoint() : null;
+  if (options.resume && (!cp || cp.workflow !== workflow.name)) {
+    return early(`没有可续跑的检查点：${runId}`);
+  }
+  if (cp?.state === 'DONE') return { state: 'DONE', stats, step_id: cp.step_id };
+
   const files = createFiles(workspace);
   const sensitiveVars = new Set<string>();
-  const mode = options.mode ?? workflow.meta.mode ?? 'headless';
+  /** 页面别名 → 标签页编号；不进检查点，续跑后辅助页不恢复。 */
+  const aliases = new Map<string, string>();
+  const mode = options.mode ?? cp?.mode ?? workflow.meta.mode ?? 'headless';
+  /** 采集输出的日期目录在运行开始时定下，写进检查点，跨午夜续跑也沿用。 */
+  const cursor: Record<string, unknown> = { ...cp?.cursor };
+  cursor.output_date ??= formatDate();
+  let output: Output | undefined;
+  const outputs = () =>
+    (output ??= new Output(workspace, workflow.name, String(cursor.output_date)));
+  /** 续跑时检查点停在 RUNNING 的 once_only 步骤的下标：它可能已经执行了一半。 */
+  let crashAt = -1;
   const scopeFor = (w: Workflow, vars: Record<string, unknown>): Scope => {
     const params = loadParams(workspace, w.name, w.meta.site);
     return { param: (n) => params.get(n), vars, file: (p) => files.read(p) };
   };
-  const vars: Record<string, unknown> = { ...options.vars };
-  let scope: Scope;
-  try {
-    scope = scopeFor(workflow, vars);
-  } catch (e) {
-    return early((e as Error).message);
-  }
-  const root: Ctx = {
-    wf: workflow,
+  // 检查点里没有敏感变量，调用方传入的参数补上
+  const vars: Record<string, unknown> = { ...options.vars, ...cp?.vars };
+  const mkCtx = (wf: Workflow, vars: Record<string, unknown>, depth: number): Ctx => ({
+    wf,
     vars,
     frames: [],
-    scope,
-    lay: pairs(workflow.steps),
-    root: true,
-    depth: 0,
-  };
+    scope: scopeFor(wf, vars),
+    lay: pairs(wf.steps),
+    root: depth === 0,
+    depth,
+  });
+  let root: Ctx;
+  try {
+    root = mkCtx(workflow, vars, 0);
+  } catch (e) {
+    return early((e as Error).message); // 参数库损坏等
+  }
 
   /** 前置路径是 steps 的开头一段（校验保证），其后是主流程。 */
-  const firstMain = (() => {
-    const i = workflow.steps.findIndex((x) => x.section !== 'preamble');
-    return i < 0 ? workflow.steps.length : i;
-  })();
+  const mainAt = workflow.steps.findIndex((x) => x.section !== 'preamble');
+  const firstMain = mainAt < 0 ? workflow.steps.length : mainAt;
   /** 连续几条单次提交状态未明（成功一条清零）。 */
   let consecutive = 0;
 
   // ---------- 留痕与检查点 ----------
 
   const loopIndex = (c: Ctx): Record<string, number> =>
-    Object.fromEntries(c.frames.map((f) => [f.id, f.i]));
+    Object.fromEntries(c.frames.map((f) => [f.s.step_id, f.i]));
 
-  /** 写检查点（只有根工作流写）。循环变量与敏感变量不写：前者由 over 与 loop_index 重建。 */
+  const loopVars = new Set(workflow.steps.flatMap((x) => (x.op === 'loop_begin' ? [x.as] : [])));
+
+  /**
+   * 写检查点（只有根工作流写）。不写的变量：循环变量（续跑时由 over 与 loop_index 重建）、
+   * 敏感变量、以及脱敏会改变内容的变量（恢复出来的会是 ***）。
+   */
   const save = (c: Ctx, stepId: string, state: Checkpoint['state'] = 'RUNNING'): void => {
     if (!c.root) return;
-    const loopVars = new Set(c.frames.map((f) => f.as));
+    const masked = redact(c.vars) as Record<string, unknown>;
     store.writeCheckpoint({
       run_id: runId,
       workflow: workflow.name,
@@ -214,19 +227,19 @@ export async function run(
       step_id: stepId,
       loop_index: loopIndex(c),
       vars: Object.fromEntries(
-        Object.entries(c.vars).filter(([k]) => !loopVars.has(k) && !sensitiveVars.has(k)),
+        Object.entries(c.vars).filter(
+          ([k, v]) =>
+            !loopVars.has(k) &&
+            !sensitiveVars.has(k) &&
+            JSON.stringify(masked[k]) === JSON.stringify(v),
+        ),
       ),
+      cursor,
     });
   };
 
   /** 记一步：steps.log 一行 + step 事件 + 统计。detail 必须是已脱敏的。 */
-  const note = (
-    c: Ctx,
-    s: Step,
-    status: 'ok' | 'error' | 'skipped',
-    since: number,
-    detail = '',
-  ): void => {
+  const note = (c: Ctx, s: Step, status: Status, since: number, detail = ''): void => {
     const ms = Date.now() - since;
     stats.steps++;
     store.appendStepLog(
@@ -250,7 +263,37 @@ export async function run(
         kind === 'var' && sensitiveVars.has(String(parsePath(name)?.[0])),
     });
 
-  const page = (id: string): string => id;
+  /** pageId 先按别名解析再当标签页编号（DESIGN 约定 15）。 */
+  const page = (id: string): string => {
+    const real = id === 'main' ? executor.mainPage() : aliases.get(id);
+    if (real === undefined) {
+      if (!ALIAS.test(id) || TAB_ID.test(id)) return id;
+      throw new Failure('page_not_found', `页面别名 ${id} 没有绑定到任何页面`);
+    }
+    if (!executor.pageOpen(real)) throw new Failure('page_not_found', `页面 ${id} 已关闭`);
+    return real;
+  };
+
+  /** 检查项（pre、if、锚点）：渲染模板后交给 executor。 */
+  const check = (c: Ctx, pageId: string, checks: NonNullable<Action['post']>) =>
+    executor.check(page(pageId), render(c, checks).value as typeof checks);
+
+  /** opens：把动作打开的那一个新标签页绑定到别名。 */
+  const bind = (name: string, res: ActResult | undefined): Failure | null => {
+    const pages = res?.effects.new_pages ?? [];
+    const old = aliases.get(name);
+    const bad = (code: string, why: string) =>
+      new Failure(code, `opens:${name}：${why}`, { pages });
+    if (name === 'main' || TAB_ID.test(name))
+      return bad('invalid_params', '别名不可用（main 保留）');
+    if (pages.length === 0) return bad('not_found', '动作没有打开新页面');
+    if (pages.length > 1) return bad('not_unique', `动作打开了 ${pages.length} 个新页面`);
+    if (old !== undefined && executor.pageOpen(old)) {
+      return bad('invalid_params', `别名已绑定到仍打开的页面 ${old}`);
+    }
+    aliases.set(name, pages[0] as string);
+    return null;
+  };
 
   /** 渲染动作部分（去掉步骤字段），pageId 解析成真实编号。redacted 是可以写进日志与留痕的版本。 */
   const prepare = (c: Ctx, s: Step) => {
@@ -296,7 +339,7 @@ export async function run(
     let sent = false;
     try {
       if (s.pre?.length) {
-        const r = await executor.check(page(s.pageId ?? 'main'), s.pre);
+        const r = await check(c, s.pageId ?? 'main', s.pre);
         if (!r.pass) {
           throw new Failure('assertion_failed', `前置检查未通过${r.detail ? `：${r.detail}` : ''}`);
         }
@@ -305,8 +348,7 @@ export async function run(
         case 'loop_begin':
           return { items: itemsOf(c, s) };
         case 'if': {
-          if (s.checks)
-            return { cond: (await executor.check(page(s.pageId ?? 'main'), s.checks)).pass };
+          if (s.checks) return { cond: (await check(c, s.pageId ?? 'main', s.checks)).pass };
           const v = render(c, s.value).value;
           const eq = s.equals;
           return { cond: v === eq || (v != null && eq != null && String(v) === String(eq)) };
@@ -327,21 +369,21 @@ export async function run(
             throw new Failure('invalid_params', `子工作流 ${w.name} 含 once_only 步骤：M2 不支持`);
           }
           const args = render(c, s.args ?? {}).value as Record<string, unknown>;
-          const child: Ctx = {
-            wf: w,
-            vars: args,
-            frames: [],
-            scope: scopeFor(w, args),
-            lay: pairs(w.steps),
-            root: false,
-            depth: c.depth + 1,
-          };
-          const out = await exec(child, 0, w.steps.length, false);
+          const out = await exec(mkCtx(w, args, c.depth + 1), 0, w.steps.length, false);
           return out.state === 'DONE' ? {} : { out };
         }
         case 'extract': {
           const { a, redacted } = prepare(c, s);
-          await executor.extract({ ...a, step_id: s.step_id } as ExtractStep);
+          const r = await executor.extract({ ...a, step_id: s.step_id } as ExtractStep);
+          if (s.into) {
+            const key = s.key ?? c.wf.meta.outputs?.[s.into]?.key;
+            const n = outputs().append(s.into, r.rows, key ? { key } : {}).written;
+            stats.rows = { ...stats.rows, [s.into]: (stats.rows?.[s.into] ?? 0) + n };
+          }
+          if (s.as) {
+            c.vars[s.as] =
+              s.source.type === 'dom' && s.source.kind === 'kv' ? (r.rows[0] ?? {}) : r.rows;
+          }
           return { shown: JSON.stringify(redacted).slice(0, 300) };
         }
         default: {
@@ -354,6 +396,7 @@ export async function run(
             const e = res.error;
             throw new Failure(e?.code ?? 'internal', e?.message ?? 'act 失败', e?.details);
           }
+          if (s.op === 'evaluate_script' && s.as) c.vars[s.as] = res.data;
           return { res, shown: JSON.stringify(redacted).slice(0, 300) };
         }
       }
@@ -365,31 +408,25 @@ export async function run(
   // ---------- 失败处理 ----------
 
   /** 重试用尽后按 on_fail 处理（DESIGN 约定 6）。strict：前置路径重放，失败一律终止。 */
-  const onFail = async (
-    c: Ctx,
-    s: Step,
-    f: Failure,
-    since: number,
-    strict: boolean,
-  ): Promise<Next> => {
+  const onFail = async (c: Ctx, s: Step, f: Failure, since: number, strict: boolean): NextP => {
     const policy = strict ? 'stop' : (s.on_fail ?? 'human');
-    const error = { code: f.code, message: f.message, step_id: s.step_id };
     stats.failed++;
+    note(c, s, policy === 'skip' ? 'skipped' : 'error', since, `${f.code}：${f.message}`);
     if (policy === 'skip') {
       stats.skipped++;
-      note(c, s, 'skipped', since, `${f.code}：${f.message}`);
       return {};
     }
-    note(c, s, 'error', since, `${f.code}：${f.message}`);
-    if (policy === 'stop') return { out: { state: 'FAILED', stepId: s.step_id, error } };
-    events?.need_human?.({
-      run_id: runId,
-      step_id: s.step_id,
-      reason: f.code,
-      message: f.message,
-      screenshot: await takeShot(s),
-    });
-    return { out: { state: 'NEED_HUMAN', stepId: s.step_id, error } };
+    if (policy === 'human') {
+      const shot = await takeShot(s);
+      events?.need_human?.({
+        run_id: runId,
+        step_id: s.step_id,
+        reason: f.code,
+        message: f.message,
+        screenshot: shot,
+      });
+    }
+    return { out: halt(policy === 'stop' ? 'FAILED' : 'NEED_HUMAN', s.step_id, f.code, f.message) };
   };
 
   /** 普通步骤：按 retry 重试，仍失败交给 onFail。 */
@@ -398,6 +435,7 @@ export async function run(
     let o: Out;
     for (let n = 0; ; n++) {
       o = await doStep(c, s);
+      if (!o.fail && s.opens) o.fail = bind(s.opens, o.res) ?? undefined;
       if (!o.fail || n >= (s.retry?.max ?? 0)) break;
       const delay = s.retry?.delay_ms ?? 0;
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
@@ -412,23 +450,20 @@ export async function run(
 
   /** 跳过模式下重置页面：重放前置路径，再确认循环锚点。 */
   const reset = async (loop: Frame, s: Step): Promise<Outcome | null> => {
+    aliases.clear();
     const out = await exec(root, 0, firstMain, true);
     if (out.state !== 'DONE') return out;
-    if (!loop.anchor?.length) return null;
+    const anchor = loop.s.anchor;
+    if (!anchor?.length) return null;
     let why: string | null = null;
     try {
-      const r = await executor.check(page('main'), loop.anchor);
+      const r = await check(root, 'main', anchor);
       if (!r.pass) why = r.detail ?? '检查未通过';
     } catch (e) {
       why = toFail(e).message;
     }
     if (why === null) return null;
-    const message = `重置页面后循环锚点未满足：${why}`;
-    return {
-      state: 'FAILED',
-      stepId: s.step_id,
-      error: { code: 'assertion_failed', message, step_id: s.step_id },
-    };
+    return halt('FAILED', s.step_id, 'assertion_failed', `重置页面后循环锚点未满足：${why}`);
   };
 
   /** 状态未明：记入待核实清单，绝不重试；按 on_unverified 停止，或重置页面后处理下一条。 */
@@ -451,12 +486,13 @@ export async function run(
     if (rec) events?.unverified?.(rec);
     // 缺省取最内层设了 on_unverified 的循环，再取工作流的，再缺省 stop；不在循环里没有“下一条”，也只能停
     const mode =
-      options.onUnverified ?? c.frames.findLast((f) => f.on)?.on ?? workflow.meta.on_unverified;
+      options.onUnverified ??
+      c.frames.findLast((f) => f.s.on_unverified)?.s.on_unverified ??
+      workflow.meta.on_unverified;
     const loop = c.frames.at(-1);
     if (++consecutive >= 2 || mode !== 'skip' || !loop) {
       const message = `单次提交状态未明（${reason}），已停止：${key}`;
-      const error = { code: 'unverified', message, step_id: s.step_id };
-      return { out: { state: 'STOPPED', stepId: s.step_id, error } };
+      return { out: halt('STOPPED', s.step_id, 'unverified', message) };
     }
     const failed = await reset(loop, s);
     return failed ? { out: failed } : { skipTo: loop.end };
@@ -478,6 +514,11 @@ export async function run(
     }
     const old = store.getUnverified(key);
     if (old && !old.resolution) return unverified(c, s, key, old.reason, since);
+    // 续跑时检查点停在这一步、却没有成功记录：上次可能已经发出，按崩溃处理
+    if (pc === crashAt) {
+      crashAt = -1;
+      return unverified(c, s, key, 'crash', since);
+    }
     const o = await doStep(c, s, () => save(c, s.step_id));
     if (o.fail) {
       const reason = o.sent ? unverifiedReason(o.fail) : null;
@@ -491,29 +532,25 @@ export async function run(
     });
     consecutive = 0;
     save(c, c.wf.steps[pc + 1]?.step_id ?? s.step_id);
+    const f = s.opens ? bind(s.opens, o.res) : null;
+    if (f) return onFail(c, s, f, since, false);
     note(c, s, 'ok', since, o.shown);
     return {};
   };
 
   // ---------- 解释执行 ----------
 
-  const frameAt = (c: Ctx, pc: number, items: unknown[], i: number): Frame => {
-    const s = c.wf.steps[pc] as LoopStep;
-    return {
-      id: s.step_id,
-      as: s.as,
-      begin: pc,
-      end: c.lay.get(pc) ?? pc,
-      items,
-      i,
-      on: s.on_unverified,
-      anchor: s.anchor,
-    };
-  };
+  const frameAt = (c: Ctx, pc: number, items: unknown[], i: number): Frame => ({
+    s: c.wf.steps[pc] as LoopStep,
+    begin: pc,
+    end: c.lay.get(pc) ?? pc,
+    items,
+    i,
+  });
 
-  /** 开始一个循环条目：设置循环变量。 */
-  const enter = (c: Ctx, f: Frame): void => {
-    c.vars[f.as] = f.items[f.i];
+  /** 切到循环的当前条目：设置循环变量。 */
+  const setItem = (c: Ctx, f: Frame): void => {
+    c.vars[f.s.as] = f.items[f.i];
   };
 
   /** 执行 [from, to) 的步骤。 */
@@ -530,7 +567,8 @@ export async function run(
           if (f) {
             f.i++;
             if (f.i < f.items.length) {
-              enter(c, f);
+              setItem(c, f);
+              save(c, f.s.step_id);
               next = f.begin + 1;
             } else c.frames.pop();
           }
@@ -545,7 +583,9 @@ export async function run(
           next = (c.lay.get(pc) ?? pc) + 1;
           break;
         case 'end_if':
+          break;
         case 'checkpoint':
+          save(c, steps[pc + 1]?.step_id ?? s.step_id);
           break;
         default: {
           const r = s.once_only ? await onceOnly(c, s, pc) : await ordinary(c, s, strict);
@@ -558,7 +598,8 @@ export async function run(
             if (items.length > 0) {
               const fr = frameAt(c, pc, items, 0);
               c.frames.push(fr);
-              enter(c, fr);
+              setItem(c, fr);
+              save(c, fr.s.step_id);
             } else next = end;
           }
         }
@@ -570,17 +611,54 @@ export async function run(
   };
 
   const finish = (out: Outcome): RunResult => {
+    if (out.state === 'DONE') {
+      for (const [name, o] of Object.entries(workflow.meta.outputs ?? {})) {
+        if (o?.export?.length && outputs().count(name) > 0) outputs().export(name, o.export);
+      }
+    }
     save(root, out.stepId, out.state);
+    store.pruneShots();
     stats.duration_ms = Date.now() - started;
     if (out.state !== 'NEED_HUMAN') events?.run_done?.({ run_id: runId, state: out.state, stats });
-    return {
-      state: out.state,
-      stats,
-      step_id: out.stepId,
-      ...(out.error ? { error: out.error } : {}),
-    };
+    const { state, stepId: step_id, error } = out;
+    return { state, stats, step_id, ...(error && { error }) };
   };
 
-  save(root, workflow.steps[0]?.step_id ?? '');
-  return finish(await exec(root, 0, workflow.steps.length, false));
+  const steps = workflow.steps;
+  if (!cp) {
+    save(root, steps[0]?.step_id ?? '');
+    return finish(await exec(root, 0, steps.length, false));
+  }
+
+  // 续跑（DESIGN 约定 9）：回到检查点所在的步骤（循环内回到对应条目），并无条件重放前置路径
+  const at = steps.findIndex((x) => x.step_id === cp.step_id);
+  if (at < 0) return early(`检查点的步骤不存在：${cp.step_id}`);
+  const target = Math.max(at, firstMain);
+  let from = target;
+  try {
+    const open: number[] = [];
+    steps.slice(0, target).forEach((x, i) => {
+      if (x.op === 'loop_begin') open.push(i);
+      else if (x.op === 'loop_end') open.pop();
+    });
+    if (steps[target]?.op === 'loop_begin') {
+      open.push(target);
+      from = target + 1;
+    }
+    for (const b of open) {
+      const st = steps[b] as LoopStep;
+      const fr = frameAt(root, b, itemsOf(root, st), cp.loop_index?.[st.step_id] ?? 0);
+      root.frames.push(fr);
+      setItem(root, fr);
+    }
+  } catch (e) {
+    const f = toFail(e);
+    return finish(halt('FAILED', cp.step_id, f.code, f.message));
+  }
+  // 前置路径重放失败：检查点仍停在原来的位置，修好之后可以再续跑
+  const replay = await exec(root, 0, firstMain, true);
+  if (replay.state !== 'DONE') return finish({ ...replay, stepId: cp.step_id });
+  crashAt = cp.state === 'RUNNING' && steps[target]?.once_only ? target : -1;
+  save(root, steps[target]?.step_id ?? cp.step_id);
+  return finish(await exec(root, from, steps.length, false));
 }

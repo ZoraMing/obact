@@ -15,7 +15,8 @@ export class FakeExecutor implements Executor {
   readonly checked: { pageId: string; checks: unknown }[] = [];
   /** 抽取的调用记录。 */
   readonly extracted: Step[] = [];
-  /** 打开着的页面；p1 是任务起点的标签页。 */
+  /** 任务起点的标签页，打开着的页面。 */
+  main = 'p1';
   readonly open = new Set(['p1']);
   /** check 的判定，默认全部通过。 */
   checkPass: (pageId: string, checks: unknown) => boolean = () => true;
@@ -87,7 +88,7 @@ export class FakeExecutor implements Executor {
   }
 
   mainPage(): string {
-    return 'p1';
+    return this.main;
   }
 
   pageOpen(pageId: string): boolean {

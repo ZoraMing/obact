@@ -24,7 +24,7 @@ packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PR
 
 ## 共享约定
 
-1. **步骤即动作**：普通步骤的 `op` 等于 `action.json` 的动作，`runner` 渲染模板后去掉步骤字段（step_id、section、pre、retry、on_fail、once_only、idempotency_key、volatile、note）交给 `Executor.act`。控制流步骤：`loop_begin / loop_end / break / if / else / end_if / call / set_var / checkpoint`；`extract` 交给 `Executor.extract`。
+1. **步骤即动作**：普通步骤的 `op` 等于 `action.json` 的动作，`runner` 渲染模板后去掉步骤字段（step_id、section、pre、retry、on_fail、once_only、idempotency_key、volatile、note、opens）交给 `Executor.act`。控制流步骤：`loop_begin / loop_end / break / if / else / end_if / call / set_var / checkpoint`；`extract` 交给 `Executor.extract`。
 2. **工作流里目标只能是定位器**，出现 `target.ref` 在加载时报错。
 3. **前置路径（`section: "preamble"`）**：必须在所有 main 步骤之前、不在循环内；续跑时无条件重放。
 4. **模板**：字符串整体是单个模板时返回原类型，混合文本则插值为字符串；找不到变量/参数报 `invalid_params`（带步骤号与名称）。`{{file:路径}}`：`.csv`（首行表头）→ 对象数组，`.jsonl` → 数组，`.json` → 值，其他 → 文本；路径限定在工作区内。名称含 `password|token|secret` 的参数在日志、留痕、返回结果、检查点里一律显示 `***`，检查点的 `vars` 不写入敏感值。
@@ -42,6 +42,7 @@ packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PR
 15. **多页面（FR-37）**：runner 维护一张别名表（别名 → 标签页编号），不进检查点。`pageId` 先按别名表解析，没有再当作标签页编号；别名 `^[A-Za-z][A-Za-z0-9_]*$`，不得与 `p` 加数字同形，`main` 保留给任务起点的标签页。步骤带 `opens: "名字"` 时，该步结果的 `effects.new_pages` 必须恰好一个新标签页，绑定到该别名；0 个报 `not_found`，多于 1 个报 `not_unique`，别名已绑定且页面仍开着报 `invalid_params`。别名未绑定或页面已关闭报 `page_not_found`。`extract` 的 `as` 把结果存进运行变量（已有字段），回原页面用 `{{var:..}}` 填写。续跑的重做单位是循环条目或 `checkpoint` 步骤：`main` 由前置路径重建，辅助页不恢复，需要时工作流自己 `opens`。重做单位内、提交之前的步骤必须幂等，这是工作流作者的责任。
 16. **`dialog_blocking` 与 `dispatched`**：后置检查或等待期间被对话框打断时，`error.details.dispatched` 为 true，表示动作已经执行。对 `once_only` 步骤：为 true 按“已发出、结果未确认”处理（记 unverified、不重试）；为 false 或缺省按“未发出”处理。
 17. **接口缓存的大整数**：超过 2^53 的整数在响应体里以十进制字符串保留，抽取结果里该字段是 string。
+18. **runner 的实现细节**（`runner.ts`，补充上面几条）：①检查点的 `step_id`：循环条目开始前指向 `loop_begin`（`loop_index` 里是即将开始的条目），`once_only` 前指向该步、成功后指向下一步，`checkpoint` 步骤指向下一步；检查点里的 `vars` 不含循环变量（续跑时由 `over` 与 `loop_index` 重新渲染）、敏感变量、以及脱敏会改变内容的变量，`cursor.output_date` 固定采集输出的日期目录。②续跑只在检查点状态为 `RUNNING` 时才把停在 `once_only` 上的步骤当作崩溃；转人工、停止后续跑是重做该步，已记为状态未明且未核实的幂等键不会再执行（核实为未完成后才重做）。③`on_unverified` 的优先级：`RunOptions.onUnverified` > 最内层设置了它的循环 > 工作流 meta > `stop`；不在循环里没有“下一条”，只能停止。④`once_only` 的错误码未列入第 7 条两类时（如 `internal`）无法确认动作是否发出，保守按状态未明（`post_failed`）；`path_outside_workspace` 发生在动作之前，按未发出。⑤`call` 的子工作流不写检查点（整体算根工作流的一步，续跑从 `call` 重做），其中不允许 `once_only`；`call` 嵌套最多 8 层。⑥`Executor` 增加 `mainPage()`（别名 `main` 指向的标签页）与 `pageOpen(pageId)`；不带 `code` 的异常（`act` 违约抛出、程序错误、测试模拟崩溃）不转成失败，直接向外抛，等同进程崩溃。⑦运行结束（DONE）时，按 `meta.outputs` 的 `export` 导出 CSV / xlsx。
 
 ## 测试原则
 

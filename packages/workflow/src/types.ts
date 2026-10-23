@@ -71,6 +71,10 @@ export interface Executor {
     pageId: string,
     checks: NonNullable<Action['post']>,
   ): Promise<{ pass: boolean; detail?: string }>;
+  /** 任务起点的标签页编号（保留别名 main，FR-37）。 */
+  mainPage(): string;
+  /** 标签页是否仍开着（别名解析与 opens 绑定用）。 */
+  pageOpen(pageId: string): boolean;
   /** 当前动作序号（接口缓存用）。 */
   actionSeq(): number;
   /** 保存当前页面截图，返回路径；不可用时返回 null。 */
