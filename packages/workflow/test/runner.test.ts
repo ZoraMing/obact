@@ -182,6 +182,31 @@ describe('控制流与失败处理', () => {
     }
   });
 
+  test('执行器的错误消息带出渲染后的敏感值（URL 里的 api_token）：steps.log、trajectory、事件、运行结果里都是 ***；太短的值不替换', async () => {
+    const params = 'global:\n  api_token: tok-999\n  secret_pin: ab1\n';
+    const url = 'http://x/o?api_token=tok-999&pin=ab1&u=bob';
+    for (const on_fail of ['human', 'stop']) {
+      const nav = step('nav', 'navigate_page', {
+        pageId: 'p1',
+        on_fail,
+        url: 'http://x/o?api_token={{param:api_token}}&pin={{param:secret_pin}}&u=bob',
+      });
+      const fake = new FakeExecutor().plan(url, 'navigation_failed');
+      const { result, ev, store } = await go([nav], { params, fake });
+      assert.equal(result.state, on_fail === 'human' ? 'NEED_HUMAN' : 'FAILED');
+      assert.equal(fake.count(url), 1, '消息里确实带着真实 URL（假执行器回显）');
+      const shown = [
+        result.error?.message,
+        JSON.stringify(ev.need_human),
+        ...['steps.log', 'trajectory.jsonl', 'checkpoint.json'].map((f) =>
+          readFileSync(join(store.dir, f), 'utf8'),
+        ),
+      ].join('\n');
+      assert.doesNotMatch(shown, /tok-999/, on_fail);
+      assert.match(shown, /navigation_failed @ http:\/\/x\/o\?api_token=\*\*\*&pin=ab1&u=bob/);
+    }
+  });
+
   test('留痕：敏感值不进 steps.log、trajectory 与检查点', async () => {
     const params = 'global:\n  password: hunter2\n  api_token: tok-999\n';
     const { result, fake, store, cp } = await go(

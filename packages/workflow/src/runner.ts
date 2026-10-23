@@ -90,6 +90,8 @@ type NextP = Promise<Next>;
 const STEP_ONLY =
   'step_id section pre retry on_fail once_only idempotency_key volatile note opens'.split(' ');
 const MAX_CALL_DEPTH = 8;
+/** 短于这个长度的敏感值不做值级替换（"1"、"ab" 这类会把无关的文字也打码）。 */
+const MIN_SECRET = 4;
 /** 页面别名的写法，与标签页编号（p 加数字）同形的不算别名。 */
 const ALIAS = /^[A-Za-z][A-Za-z0-9_]*$/;
 const TAB_ID = /^p\d+$/;
@@ -269,12 +271,27 @@ export async function run(
     });
   };
 
+  /**
+   * 值级脱敏：本次运行渲染时见过的敏感值原文（太短的不收，免得误伤）。执行器的错误消息可能把渲染后的值（如 URL 里的
+   * api_token）原样带出来，所以写任何字符串（steps.log、轨迹、事件、运行结果）之前先过一遍。
+   */
+  const secrets = new Set<string>();
+  const mask = (text: string): string => {
+    let out = text;
+    for (const v of [...secrets].sort((a, b) => b.length - a.length)) out = out.replaceAll(v, MASK);
+    return out;
+  };
+  const maskDeep = <T>(x: T): T =>
+    secrets.size === 0
+      ? x
+      : JSON.parse(JSON.stringify(x, (_k, v) => (typeof v === 'string' ? mask(v) : v)));
+
   /** 记一步：steps.log 一行 + step 事件 + 统计。detail 必须是已脱敏的。 */
   const note = (c: Ctx, s: Step, status: Status, since: number, detail = ''): void => {
     const ms = Date.now() - since;
     stats.steps++;
     store.appendStepLog(
-      [new Date().toISOString(), s.step_id, s.op, status, `${ms}ms`, detail].join('\t'),
+      [new Date().toISOString(), s.step_id, s.op, status, `${ms}ms`, mask(detail)].join('\t'),
     );
     events?.step?.({
       run_id: runId,
@@ -288,10 +305,17 @@ export async function run(
 
   // ---------- 渲染与动作 ----------
 
-  const render = (c: Ctx, v: unknown) =>
-    renderWithTrace(v, c.scope, {
+  const render = (c: Ctx, v: unknown) => {
+    const r = renderWithTrace(v, c.scope, {
       isSensitive: (kind, name) => kind === 'var' && c.sensitive.has(String(parsePath(name)?.[0])),
     });
+    for (const x of r.secrets) {
+      if (x.length < MIN_SECRET) continue;
+      secrets.add(x);
+      secrets.add(encodeURIComponent(x)); // 出现在 URL 里的写法
+    }
+    return r;
+  };
 
   /** pageId 先按别名解析再当标签页编号（DESIGN 约定 15）。 */
   const page = (id: string): string => {
@@ -349,8 +373,8 @@ export async function run(
       store.appendTrajectory({
         step_id: s.step_id,
         loop_index: loopIndex(c),
-        action: action as Action,
-        result,
+        action: maskDeep(action) as Action,
+        result: maskDeep(result),
         source: 'workflow',
       });
     } catch {}
@@ -459,7 +483,7 @@ export async function run(
         run_id: runId,
         step_id: s.step_id,
         reason: f.code,
-        message: f.message,
+        message: mask(f.message),
         screenshot: shot,
       });
     }
@@ -689,7 +713,7 @@ export async function run(
     if (keep && cp) store.writeCheckpoint({ ...cp, state: out.state, cursor });
     else save(root, out.stepId, out.state);
     // 导出是收尾：DONE 的检查点先落盘，导出出错只报告，不让已跑完的运行停在 RUNNING
-    let error = out.error;
+    let error = out.error && { ...out.error, message: mask(out.error.message) };
     if (out.state === 'DONE') {
       for (const [name, o] of Object.entries(workflow.meta.outputs ?? {})) {
         try {

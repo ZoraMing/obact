@@ -133,6 +133,27 @@ describe('模板', () => {
       { password: '***', nested: { apiToken: '***', list: [{ client_secret: '***', n: 1 }] } },
     );
   });
+
+  test('敏感：renderWithTrace 的 secrets 给出本次渲染引入的敏感值原文（敏感名称的模板、敏感键下的值），供值级脱敏', () => {
+    const s = scope();
+    assert.deepEqual(renderWithTrace('u={{param:user}}&p={{param:password}}', s).secrets, ['p@ss']);
+    assert.deepEqual(renderWithTrace('{{param:user}}', s).secrets, []);
+    // 整个对象被引入，只有敏感键下的值算敏感值
+    assert.deepEqual(renderWithTrace({ a: '{{param:account}}' }, s).secrets, ['zz']);
+    const rows = [
+      { user: 'a', password: 'p1' },
+      { user: 'b', password: 'p2' },
+    ];
+    assert.deepEqual(renderWithTrace('{{file:accounts.csv}}', { ...s, file: () => rows }).secrets, [
+      'p1',
+      'p2',
+    ]);
+    // 名称敏感的值本身是对象：所有叶子都算
+    const nested = { ...s, param: () => ({ k: 'v1', list: [7, 'v2'] }) };
+    assert.deepEqual(renderWithTrace('{{param:secret_conf}}', nested).secrets, ['v1', '7', 'v2']);
+    const viaHook = renderWithTrace('{{var:order.id}}', s, { isSensitive: () => true });
+    assert.deepEqual(viaHook.secrets, ['88231']);
+  });
 });
 
 // ---------- CSV 与工作区文件 ----------

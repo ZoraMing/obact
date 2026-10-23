@@ -101,6 +101,20 @@ export function redact(
   return walk(value);
 }
 
+/** 值里字符串、数字叶子的文本；onlySensitive：只取名称敏感的键下面的。 */
+function leaves(value: unknown, out: Set<string>, onlySensitive: boolean): void {
+  const seen = new WeakSet<object>();
+  const walk = (v: unknown, hot: boolean): void => {
+    if (Array.isArray(v) || isPlainObject(v)) {
+      if (seen.has(v)) return;
+      seen.add(v);
+      if (Array.isArray(v)) for (const x of v) walk(x, hot);
+      else for (const [k, x] of Object.entries(v)) walk(x, hot || isSensitiveName(k));
+    } else if (hot && (typeof v === 'string' || typeof v === 'number')) out.add(String(v));
+  };
+  walk(value, !onlySensitive);
+}
+
 function hasSensitiveKey(value: unknown): boolean {
   const seen = new WeakSet<object>();
   const walk = (v: unknown): boolean => {
@@ -122,6 +136,11 @@ export type RenderTrace = {
   sensitive: boolean;
   /** 可以安全写进日志与留痕的版本：渲染自敏感内容的字符串整个换成 '***'，敏感键的值也打码。 */
   redacted: unknown;
+  /**
+   * 本次渲染引入的敏感值原文（字符串、数字叶子的文本）：名称敏感的模板取整个值，引入的值里有敏感键的取敏感键下的值。
+   * 供调用方做值级脱敏——执行器的错误消息可能把渲染后的值（如 URL 里的 api_token）原样带出来。
+   */
+  secrets: string[];
 };
 
 export type TraceOptions = {
@@ -197,6 +216,7 @@ function toText(v: unknown): string {
 
 function render(value: unknown, scope: Scope, opts: TraceOptions, trace: boolean): RenderTrace {
   let sensitive = false;
+  const secrets = new Set<string>();
 
   /** mask：名称敏感，渲染结果整个打码；keyed：引入的值里有敏感键，对象整体保留、由 redact 按键打码。 */
   const one = (ref: TemplateRef): { value: unknown; mask: boolean; keyed: boolean } => {
@@ -206,7 +226,10 @@ function render(value: unknown, scope: Scope, opts: TraceOptions, trace: boolean
       isSensitiveName(ref.name) ||
       (opts.isSensitive?.(ref.kind as TemplateKind, ref.name) ?? false);
     const keyed = !mask && hasSensitiveKey(v);
-    if (mask || keyed) sensitive = true;
+    if (mask || keyed) {
+      sensitive = true;
+      leaves(v, secrets, keyed);
+    }
     return { value: v, mask, keyed };
   };
 
@@ -251,7 +274,12 @@ function render(value: unknown, scope: Scope, opts: TraceOptions, trace: boolean
   };
 
   const [rendered, shown] = walk(value);
-  return { value: rendered, sensitive, redacted: trace ? redact(shown) : undefined };
+  return {
+    value: rendered,
+    sensitive,
+    redacted: trace ? redact(shown) : undefined,
+    secrets: [...secrets],
+  };
 }
 
 /**
