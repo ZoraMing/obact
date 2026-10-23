@@ -192,7 +192,12 @@ export async function act(s: Session, action: Action, opts: ActOptions = {}): Pr
       effects,
       action_seq: seq,
     };
-    if (err) r.error = err.toJSON();
+    // 所有失败统一带 details.dispatched（输入是否已经派发）：工作流的单次提交据此区分“可能已发出”与“确定没发出”；
+    // 个别错误点自己写了的（如后置检查期间的 dialog_blocking）以它为准
+    if (err) {
+      const e = err.toJSON();
+      r.error = { ...e, details: { dispatched: ctx.dispatched, ...e.details } };
+    }
     if (ctx.assertions) r.assertions = ctx.assertions;
     if (diff !== undefined) r.diff = diff;
     if (ctx.data !== undefined) r.data = ctx.data;

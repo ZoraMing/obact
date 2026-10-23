@@ -93,20 +93,27 @@ const TAB_ID = /^p\d+$/;
 const UNVERIFIED_REASON: Record<string, UnverifiedRecord['reason']> = {
   assertion_failed: 'post_failed',
   timeout: 'post_timeout',
+  response_timeout: 'post_timeout',
   navigation_failed: 'navigation_lost',
   browser_disconnected: 'browser_lost',
 };
-/** 动作确定没有发出的错误码：按普通失败处理。 */
+/** 动作确定没有发出的错误码：按普通失败处理（执行器没给 dispatched 时才看这张表）。 */
 const NOT_SENT = new Set(
   'not_found not_unique not_actionable obscured stale_ref invalid_params landing_mismatch page_not_found path_outside_workspace'.split(
     ' ',
   ),
 );
 
-/** 单次提交步骤的动作报错时：状态未明的原因；动作确定没发出返回 null。其他错误码无法确认，保守按状态未明。 */
+/**
+ * 单次提交步骤的动作报错时：状态未明的原因；动作确定没发出返回 null（DESIGN 约定 16）。
+ * 执行器给了 details.dispatched 就以它为准（true 已发出、false 没发出）；没给（旧执行器、假执行器）才按错误码判断，
+ * 其他错误码无法确认，保守按状态未明。
+ */
 function unverifiedReason(f: Failure): UnverifiedRecord['reason'] | null {
-  if (f.code === 'dialog_blocking') return f.details?.dispatched === true ? 'stuck' : null;
-  if (NOT_SENT.has(f.code)) return null;
+  const sent = f.details?.dispatched;
+  if (sent === false) return null;
+  if (f.code === 'dialog_blocking') return sent === true ? 'stuck' : null;
+  if (sent !== true && NOT_SENT.has(f.code)) return null;
   return UNVERIFIED_REASON[f.code] ?? 'post_failed';
 }
 

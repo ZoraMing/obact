@@ -1042,6 +1042,35 @@ describe('act（FR-12~FR-15、FR-32）', { skip: SKIP }, () => {
     await err({ op: 'click', pageId: 'act-new', target: { css: '#back-btn' } }, 'page_not_found');
   });
 
+  test('失败结果统一带 error.details.dispatched：派发后才失败的为 true（含后置阶段的 page_not_found、invalid_params），派发前失败的为 false', async () => {
+    const pageId = await open();
+    // 输入已派发，后置检查阶段出错：调用方（工作流的单次提交）据此知道动作可能已生效，不能当作未发出重试
+    const sig = await err(
+      { op: 'press_key', pageId, key: 'Shift', post: [{ signature: '没有这个签名' }] },
+      'invalid_params',
+    );
+    assert.equal(sig.error?.details?.dispatched, true);
+    const gone = await err(
+      { op: 'close_page', pageId, post: [{ text_present: '页面已经没了' }] },
+      'page_not_found',
+    );
+    assert.equal(gone.error?.details?.dispatched, true);
+    // 派发之前：定位失败、页面不存在、参数不符合契约
+    const other = await open();
+    const before: [Action, string][] = [
+      [
+        { op: 'click', pageId: other, target: { css: '#没有这个元素' }, timeout_ms: 300 },
+        'not_found',
+      ],
+      [{ op: 'click', pageId: 'act-no-such', target: { css: '#btn' } }, 'page_not_found'],
+      [{ op: 'click', pageId: other, target: { ref: 1 } } as unknown as Action, 'invalid_params'],
+    ];
+    for (const [a, code] of before) {
+      const r = await err(a, code);
+      assert.equal(r.error?.details?.dispatched, false, `${code}：${r.error?.message}`);
+    }
+  });
+
   test('参数不符合契约报 invalid_params；extract 在 M2', async () => {
     await err({ op: 'click', target: { ref: 1 } } as unknown as Action, 'invalid_params');
     // 入口收到 null、undefined 也只返回错误，不抛异常

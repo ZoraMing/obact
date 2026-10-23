@@ -230,6 +230,16 @@ describe('单次提交', () => {
       c,
       'failed',
     ]),
+    ['response_timeout', 'post_timeout'],
+    // 执行器明确给出 dispatched 时以它为准，不再看错误码：派发后才出现的 page_not_found / invalid_params 是已发出
+    [{ code: 'page_not_found', details: { dispatched: true } }, 'post_failed'],
+    [{ code: 'invalid_params', details: { dispatched: true } }, 'post_failed'],
+    [{ code: 'not_found', details: { dispatched: true } }, 'post_failed'],
+    [{ code: 'timeout', details: { dispatched: true } }, 'post_timeout'],
+    // 派发前的失败（定位超时之类）确定没发出，哪怕错误码在“状态未明”那一类
+    [{ code: 'timeout', details: { dispatched: false } }, 'failed'],
+    [{ code: 'assertion_failed', details: { dispatched: false } }, 'failed'],
+    [{ code: 'internal', details: { dispatched: false } }, 'failed'],
   ];
   for (const [reply, kind] of table) {
     test(`错误码 × 结果：${JSON.stringify(reply)} → ${kind}`, async () => {
