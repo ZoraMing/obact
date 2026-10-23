@@ -93,9 +93,24 @@ function parseVars(list: string[] = []): Record<string, string> {
   );
 }
 
+/** 终止信号 → 退出码（128 + 信号编号）。 */
+const SIGNALS = [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+] as const;
+
 /** 运行子进程：事件打印到 stderr，退出码恒为 0（运行失败也是 0，见文件头）。 */
 async function child(o: RunWorkflowOptions): Promise<number> {
   startHeartbeat(heartbeatFile(o.workspace, o.runId));
+  // 收到终止信号：浏览器自成进程组，进程一走它就成孤儿，所以先同步清扫再立即退出。不写检查点：
+  // 这等价于崩溃，续跑时按检查点里的在途键判定，不会留下“浏览器没了却 NEED_HUMAN”的状态
+  for (const [sig, code] of SIGNALS) {
+    process.on(sig, () => {
+      sweepBrowser(o.workspace, o.runId, process.pid);
+      process.exit(code);
+    });
+  }
   const events: RunEvents = {
     need_human: (e) => console.error(`需要人工处理：${e.step_id}（${e.reason}）${e.message ?? ''}`),
     unverified: (e) => console.error(`状态未明：${e.idempotency_key}（${e.reason}）`),
@@ -160,6 +175,7 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
       ...(cmd === 'run' ? ['--run-id', runId] : []),
       '--child',
     ];
+    let childPid = 0;
     const sup = superviseRun({
       command: [
         process.execPath,
@@ -171,12 +187,26 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
       ],
       heartbeatFile: heartbeatFile(workspace, runId),
       onEvent: (e) => {
+        if (e.type === 'start') childPid = e.pid;
         if (e.type === 'exit') sweepBrowser(workspace, runId, e.pid); // 子进程被杀时浏览器会成孤儿
         if (e.type === 'restart')
           console.error(`子进程崩溃（${e.reason}），第 ${e.restarts} 次重启并续跑`);
       },
     });
-    for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void sup.stop());
+    // 第一次信号走优雅停止（SIGHUP 同 SIGTERM）；第二次直接强退：supervisor 的 exit 钩子 SIGKILL 子进程组，
+    // 这里再清扫它的浏览器、放运行锁，不留孤儿
+    let signalled = false;
+    process.once('exit', () => {
+      sweepBrowser(workspace, runId, childPid);
+      release();
+    });
+    for (const [sig] of SIGNALS) {
+      process.on(sig, () => {
+        if (signalled) process.exit(130);
+        signalled = true;
+        void sup.stop();
+      });
+    }
     const out = await sup;
     const end = store.readCheckpoint();
     if (end) status(workspace, runId);

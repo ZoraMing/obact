@@ -1,6 +1,7 @@
 // 最小监督进程（FR-19 最小部分、C-1）：用小的 node 子进程脚本模拟崩溃、卡住和正常运行。
 // 心跳超时参数调小到几百毫秒；不需要浏览器。
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -163,4 +164,19 @@ test('stop()：终止忽略 SIGTERM 的子进程及其孙进程，且不再重�
   const first = t.events.find((e) => e.type === 'start');
   assert.ok(first && first.type === 'start');
   await waitFor(() => ![first.pid, ...pids(t.dir)].some(alive), '子进程与孙进程全部退出');
+});
+
+test('监督进程自己退出（process.exit）时，同步清扫子进程组，不留孤儿', async () => {
+  const t = setup('stubborn');
+  const parent = join(dirname(CHILD), 'parent.ts');
+  const r = spawnSync(process.execPath, [parent, t.dir], { timeout: 15_000 });
+  assert.equal(r.status, 0, String(r.stderr));
+  const child = Number(readFileSync(join(t.dir, 'child.pid'), 'utf8'));
+  try {
+    await waitFor(() => ![child, ...pids(t.dir)].some(alive), '子进程与孙进程全部退出');
+  } finally {
+    try {
+      process.kill(child, 'SIGKILL'); // 断言失败时别留下它（它忽略 SIGTERM）
+    } catch {}
+  }
 });

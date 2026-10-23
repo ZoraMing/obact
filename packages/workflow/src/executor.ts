@@ -200,6 +200,7 @@ export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> 
       profileDir,
       mode: o.mode ?? 'headless',
       chromePath: o.chromePath,
+      handleSignals: false, // 信号由运行子进程自己处理（cli.ts）：清扫浏览器后立即退出
     });
   } catch (e) {
     unlock();

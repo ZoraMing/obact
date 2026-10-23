@@ -231,7 +231,12 @@ export function superviseRun(opts: SuperviseOptions): SupervisedRun {
     }
   };
 
-  const run = main() as SupervisedRun;
+  // 监督进程自己退出（process.exit、第二次信号强退）时同步清扫子进程组，不留孤儿；SIGKILL 例外，管不到
+  const onExit = () => {
+    if (current) killGroup(current, 'SIGKILL');
+  };
+  process.on('exit', onExit);
+  const run = main().finally(() => process.off('exit', onExit)) as SupervisedRun;
   run.stop = async () => {
     if (!stopping) {
       stopping = true;

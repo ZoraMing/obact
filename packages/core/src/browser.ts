@@ -17,6 +17,11 @@ export type LaunchOptions = {
   /** 追加到浏览器进程环境的变量（如池自起 Xvfb 时的 DISPLAY）；与本进程环境合并。 */
   env?: NodeJS.ProcessEnv;
   windowSize?: { width: number; height: number };
+  /**
+   * 是否让 puppeteer 接管 SIGINT / SIGTERM / SIGHUP，默认 true。它的处理只关浏览器（SIGINT 还会直接退出进程），
+   * SIGTERM / SIGHUP 不退出进程，进程会带着死掉的浏览器继续跑；需要自己处理信号的调用方传 false。
+   */
+  handleSignals?: boolean;
 };
 
 /** 容器内以 root 运行时 Chromium 必须关沙箱；正式部署不以 root 运行。 */
@@ -66,6 +71,9 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
     headless:
       opts.mode === 'headless' ? (/headless-shell/.test(chromePath) ? 'shell' : true) : false,
     userDataDir: opts.profileDir,
+    handleSIGINT: opts.handleSignals ?? true,
+    handleSIGTERM: opts.handleSignals ?? true,
+    handleSIGHUP: opts.handleSignals ?? true,
     env: browserEnv({ ...process.env, ...opts.env }) as Record<string, string | undefined>,
     defaultViewport: null,
     enableExtensions: extArgs.length > 0,
