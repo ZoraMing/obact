@@ -41,10 +41,25 @@ export function control(lab: Lab, space: string) {
     return r.json();
   };
   return {
-    reset: (seed?: number) => post('reset', seed === undefined ? {} : { seed }),
+    /** 重置空间；传整数是种子，传对象是重置参数（如 {rows: 30}）。 */
+    reset: (opts: number | Record<string, number> = {}) =>
+      post('reset', typeof opts === 'number' ? { seed: opts } : opts),
     faults: (f: Partial<Faults>) => post('faults', f) as Promise<Faults>,
     state: async () => (await (await fetch(u('state'))).json()) as LabState,
   };
+}
+
+/** 以 alice 登录并返回会话 cookie（"lab_session=…"）。 */
+export async function loginCookie(lab: Lab, space: string): Promise<string> {
+  const r = await fetch(`${lab.url(space)}/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'username=alice&password=alice123',
+    redirect: 'manual',
+  });
+  const cookie = (r.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+  assert.match(cookie, /^lab_session=/, `登录失败：HTTP ${r.status}`);
+  return cookie;
 }
 
 export type LabEnv = {
@@ -61,6 +76,8 @@ export type LabEnv = {
   ok(a: Action, opts?: ActOptions): Promise<ActResult>;
   /** observe 并校验返回值符合契约。 */
   look(pageId: string, opts?: Parameters<typeof observe>[2]): Promise<ObserveResult>;
+  /** 登录（HTTP）并把会话 cookie 交给浏览器，返回 cookie 供接口调用。 */
+  login(space: string): Promise<string>;
   close(): Promise<void>;
 };
 
@@ -104,6 +121,18 @@ export async function setup(opts: { modules?: LabModule[] } = {}): Promise<LabEn
       const r = await observe(session, { pageId }, o);
       contracts.assert('observe.Result', r);
       return r;
+    },
+    async login(space) {
+      const cookie = await loginCookie(lab, space);
+      const [name, value] = cookie.split('=') as [string, string];
+      await browser.setCookie({
+        name,
+        value,
+        domain: '127.0.0.1',
+        path: `/s/${space}/`,
+        httpOnly: true,
+      });
+      return cookie;
     },
     async close() {
       await session.close({ closeBrowser: true });

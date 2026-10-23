@@ -8,7 +8,7 @@ import { createLab, type Lab } from '../src/app.ts';
 import auth from '../src/modules/auth.ts';
 import type { Order } from '../src/modules/orders/data.ts';
 import orders from '../src/modules/orders.ts';
-import { control, type LabEnv, type LabState, SKIP, setup } from './helpers.ts';
+import { control, type LabEnv, type LabState, loginCookie, SKIP, setup } from './helpers.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -16,19 +16,6 @@ type OrdersState = { total: number; counts: Record<string, number>; changed_ids:
 const ordersOf = (s: LabState): OrdersState => s.modules.orders as OrdersState;
 const approveSubs = (s: LabState) => s.submissions.filter((x) => x.op === 'approve');
 const sorted = (a: readonly string[]) => [...a].sort();
-
-/** 登录并返回会话 cookie（"lab_session=…"）。 */
-async function loginCookie(lab: Lab, space: string): Promise<string> {
-  const r = await fetch(`${lab.url(space)}/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: 'username=alice&password=alice123',
-    redirect: 'manual',
-  });
-  const cookie = (r.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
-  assert.match(cookie, /^lab_session=/, `登录失败：HTTP ${r.status}`);
-  return cookie;
-}
 
 /** 带登录态的接口调用。 */
 function apiOf(lab: Lab, space: string, cookie: string) {
