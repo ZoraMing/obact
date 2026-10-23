@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "JSONL 工作流引擎（M2）：解析、执行、检查点续跑、单次提交、页面抽取与接口截获、采集输出、最小监督",
+  "bin": {
+    "obact": "./src/cli.ts"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
