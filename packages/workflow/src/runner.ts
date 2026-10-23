@@ -514,7 +514,13 @@ export async function run(
     if (crashed) crashAt = -1;
     let key: string;
     try {
-      key = String(render(c, s.idempotency_key).value);
+      const v = render(c, s.idempotency_key).value;
+      // 整体是单个模板时保持原类型：对象会变成 "[object Object]"，空串、null 会变成空键，都不能当幂等键
+      if (!(typeof v === 'string' && v !== '') && typeof v !== 'number') {
+        const what = v === null ? 'null' : Array.isArray(v) ? '数组' : v === '' ? '空串' : typeof v;
+        throw new Failure('invalid_params', `幂等键必须渲染成非空字符串或数字，实际是${what}`);
+      }
+      key = String(v);
     } catch (e) {
       return onFail(c, s, toFail(e), since, false);
     }

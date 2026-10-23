@@ -312,6 +312,34 @@ describe('单次提交', () => {
     assert.equal(store.listSideEffects().length, 0);
   });
 
+  // 幂等键渲染后只能是非空字符串或数字；整体是单个模板时保持原类型，对象会变成 "[object Object]"、空串会变成空键
+  const keyCases: [string, unknown, boolean][] = [
+    ['对象', { id: 1 }, false],
+    ['数组', ['a'], false],
+    ['null', null, false],
+    ['空串', '', false],
+    ['布尔', true, false],
+    ['数字', 7, true],
+    ['非空字符串', 'a1', true],
+  ];
+  for (const [name, value, ok] of keyCases) {
+    test(`幂等键渲染结果：${name}${ok ? ' 可用' : '，在动作发出前按未发出处理'}`, async () => {
+      const steps = [loop('l', [{ k: value }], 'row'), pay('p', '#pay', '{{var:row.k}}'), END];
+      const { result, fake, store } = await go(steps);
+      if (ok) {
+        assert.equal(result.state, 'DONE');
+        assert.deepEqual(
+          store.listSideEffects().map((r) => r.idempotency_key),
+          [String(value)],
+        );
+        return;
+      }
+      assert.deepEqual([result.state, result.error?.code], ['NEED_HUMAN', 'invalid_params']);
+      assert.equal(fake.acts.length, 0, '动作没有发出');
+      assert.equal(store.listSideEffects().length + store.listUnverified().length, 0);
+    });
+  }
+
   test('子工作流里不允许 once_only', async () => {
     const ws = tmp();
     child(ws, 'sub', [pay('s1', '#pay', 'k9')]);
