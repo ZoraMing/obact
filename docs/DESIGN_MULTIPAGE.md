@@ -70,7 +70,7 @@ type NavEntry = {
 
 ```json
 {"step_id":"s10","op":"click","pageId":"main","target":{"role":"link","name":"参数说明"},"opens":"docs"}
-{"step_id":"s11","op":"extract","pageId":"docs","source":{"type":"dom","kind":"kv","root":{"css":"#params"}},"into":"param"}
+{"step_id":"s11","op":"extract","pageId":"docs","source":{"type":"dom","kind":"kv","root":{"css":"#params"}},"as":"param"}
 {"step_id":"s12","op":"close_page","pageId":"docs"}
 {"step_id":"s13","op":"fill","pageId":"main","target":{"role":"textbox","name":"内存上限"},"value":"{{var:param.mem_limit}}"}
 ```
@@ -81,7 +81,7 @@ type NavEntry = {
 2. **`opens` 的语义**：这一步执行后，`effects.new_pages`（M1 已有）里**恰好出现一个**新标签页，绑定到该别名；0 个报 `not_found`（“预期会打开新页面但没有”），多于 1 个报 `not_unique`。同一别名已绑定且页面仍开着，报 `invalid_params`（避免悄悄覆盖）。
 3. **同标签跳转**不用 `opens`：用 `navigate_page`（`url / back / forward / reload`）或点击链接，页面别名不变，但导航链追加一项。
 4. **别名解析失败**（别名未绑定、页面已被用户关闭）：报 `page_not_found`，按失败策略处理，不会悄悄用别的页面。
-5. **取值带回**：`extract` 增加可选 `into`（变量名，结果写入 `vars`），避免再接一步 `set_var`；已有的 `set_var` 仍可用。取到的值进入检查点的 `vars`（敏感值除外）。
+5. **取值带回**：`extract` 已有 `as`（变量名，结果写入 `vars`）； `set_var` 仍可用。取到的值进入检查点的 `vars`（敏感值除外）。
 6. **回程校验**：回到原页面后的下一步，建议带 `pre`（步骤前置检查）：`url_matches`/页面签名/关键字段 `value_equals`。检查不过按 `on_fail`（默认 `human`）。引擎不自动补填，补填是工作流作者或决策者的事（见第 6 节）。
 
 录制器（M3）录到“点击后出现新标签页”时自动生成 `opens`，录到切换标签页时自动生成对应的 `pageId` 别名，别名默认取页面标题的拼音或序号（`tab2`），用户可改。
@@ -183,8 +183,8 @@ resolvePage(alias: string): string;       // 别名 → page_id，找不到抛 p
 | 内容 | 位置 | 估计 |
 |---|---|---|
 | 页面表与导航链收集（CDP 事件） | `packages/core/src/pages.ts` 扩展 | 中 |
-| 别名解析、`opens`、`into`、段与检查点扩展 | `packages/workflow`（runner、store、workflow.ts 静态校验） | 中 |
-| 契约变更：step（`opens`、`into`、别名）、checkpoint（`pages`、`segment`） | `packages/schemas`，走变更评审 | 小 |
+| 别名解析、`opens`、段与检查点扩展 | `packages/workflow`（runner、store、workflow.ts 静态校验） | 中 |
+| 契约变更：step（`opens`）、checkpoint（`pages`、`segment`） | `packages/schemas`，走变更评审 | 小 |
 | Lab“服务器管理”模块与 BW-15 | `lab/`、`bench` 或 E2E | 中 |
 
 总计约增加 M2 工作量的 20%。不影响 M2 出口之外的里程碑。

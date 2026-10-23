@@ -28,7 +28,7 @@ M1 已完成（[M1_REVIEW](M1_REVIEW.md)）。M2 已有 8 个支撑模块（约 
 
 - `opens: "docs"`：这一步执行后，`act` 结果的 `effects.new_pages`（M1 已有）里恰好一个新标签页，就把它绑定到别名 `docs`；0 个或多个报错；别名已占用报 `invalid_params`。
 - `pageId` 写别名时，runner 先解析成真实编号再交给 act；别名未绑定或页面已关闭报 `page_not_found`。
-- `extract` 加可选 `into`，把结果写进变量，回原页面 `fill` 时用 `{{var:..}}`。
+- `extract` 已有 `as` 字段把结果存进运行变量，回原页面 `fill` 时用 `{{var:..}}`；不新增字段。
 - 检查点不记别名：续跑时 `main` 由前置路径重建，辅助页不恢复；需要的步骤自己重新 `opens`。
 - 不做导航链、页面树、页面表对账：要回溯就用已有的 `navigate_page` 的 `back / forward`。
 
@@ -38,8 +38,8 @@ M1 已完成（[M1_REVIEW](M1_REVIEW.md)）。M2 已有 8 个支撑模块（约 
 
 | 包 | 内容 | 前置 | 验收 | 估计 |
 |---|---|---|---|---|
-| **W0 契约** | `step.json`：`pageId` 允许别名、`opens`、`extract.into`；样例与 TS / Python 契约测试；把 M1 评审的接口约定（第 7 节）写进 `DESIGN.md` | — | `npm run check`、pytest 通过 | 小 |
-| **W1 runner** | 三个垂直切片，每片都能端到端跑通再加下一片：**S1** 最小路径（步骤即动作、循环 / if / set_var、模板、`retry` 与 `on_fail`、`steps.log`）；**S2** 单次提交（`once_only`、`dispatched` 判定、待核实清单、跳过模式、连续 2 条停止）；**S3** 检查点与续跑（循环条目重做、别名与 `opens`、`into`、`extract` 接 `Output`） | W0 | 假执行器单测，表驱动（错误码 × `once_only` × 模式），约 15 项 | 大 |
+| **W0 契约** | `step.json` 只新增 `opens`（`pageId` 本就允许别名字符串，`extract` 已有 `as`）；样例与 TS / Python 契约测试；把 M1 评审的接口约定写进 `DESIGN.md`。**已完成** | — | `npm run check`、pytest 通过 | 小 |
+| **W1 runner** | 三个垂直切片，每片都能端到端跑通再加下一片：**S1** 最小路径（步骤即动作、循环 / if / set_var、模板、`retry` 与 `on_fail`、`steps.log`）；**S2** 单次提交（`once_only`、`dispatched` 判定、待核实清单、跳过模式、连续 2 条停止）；**S3** 检查点与续跑（循环条目重做、别名与 `opens`、`extract` 的 `as` 与 `Output`） | W0 | 假执行器单测，表驱动（错误码 × `once_only` × 模式），约 15 项 | 大 |
 | **W2 执行器与命令行** | `executor.ts`（act / extract / check / actionSeq / screenshot）、`cli.ts`（`run / resume / status / unverified`，经监督进程）、`index.ts`；新标签页接口缓存用 `cache.ready()` 变通 | W1 的 S1 | 命令行跑通一个小工作流 | 中 |
 | **W3 Lab** | 大表与数据（分页 + 虚拟滚动 + `/api/rows`，行数可配）；服务器管理（编辑表单，某参数要去文档页查，文档页新标签打开；提交带幂等键） | — | Lab 冒烟约 8 项 | 中 |
 | **W4 出口用例** | 5 个 E2E 文件，见第 5 节 | W1~W3 | 全部通过 | 中 |

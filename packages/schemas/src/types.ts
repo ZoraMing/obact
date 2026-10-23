@@ -1407,6 +1407,10 @@ export interface StepCommon {
    * 无法换算为定位器的坐标步骤，标记为易失效（FR-32）。
    */
   volatile?: boolean;
+  /**
+   * 这一步会打开一个新标签页，并把它绑定到该页面别名（FR-37）。后续步骤的 pageId 可以直接写别名；别名不得与标签页编号（p 加数字）同形，main 为保留别名（任务起点的标签页）。
+   */
+  opens?: string;
   note?: string;
   target?: Locator;
   from?: Locator | Point;

@@ -122,7 +122,7 @@ P0 为第一阶段必须交付，P1 为第一阶段应交付、可以延后。�
 |FR-17 检查点与续跑|每轮循环或关键节点后原子写入检查点；崩溃后重放前置可达路径，再跳到断点所在的循环继续。|P0|C-1、C-3|
 |FR-18 单次提交与状态未明|已确认成功的单次提交写入成功记录，续跑时跳过。动作已发出但结果未确认的标记为“状态未明”，绝不自动重试，记入待核实清单；默认停止流程并高优先级提示。可按工作流配置为跳过该条：先重置页面（重放前置路径或回到循环锚点）再处理下一条，连续 2 条状态未明则停止。|P0|BW-9、C-4、C-5|
 |FR-19 卡住检测与熔断|任务每 10 秒上报心跳，30 秒无心跳或 5 分钟步骤无推进视为卡住：留存现场截图后恢复；若卡在单次提交步骤，按状态未明处理。1 小时内异常重启超过 3 次则熔断。|P0|C-6|
-|FR-37 多页面流程|工作流用页面别名引用标签页：`opens` 把这一步新开的标签页绑定到别名，`extract` 的 `into` 把取得的值写进变量，用于“去文档页查值、回原页填写”；续跑以循环条目或 `checkpoint` 步骤为重做单位，辅助页不自动恢复；执行线始终只有一条。详见 [多页面设计](DESIGN_MULTIPAGE.md)|P0|BW-15|
+|FR-37 多页面流程|工作流用页面别名引用标签页：`opens` 把这一步新开的标签页绑定到别名，`extract` 已有的 `as` 把取得的值写进变量，用于“去文档页查值、回原页填写”；续跑以循环条目或 `checkpoint` 步骤为重做单位，辅助页不自动恢复；执行线始终只有一条。详见 [多页面设计](DESIGN_MULTIPAGE.md)|P0|BW-15|
 
 ### 4.6 人工接管、参数库与弹窗规则
 
@@ -300,16 +300,16 @@ P0 为第一阶段必须交付，P1 为第一阶段应交付、可以延后。�
  "source":{"type":"response","url":"/api/quotes\\\\?page=\\\\d+","path":"quotes"},"key":"text","wait\_ms":5000}
 ```
 
-多页面（FR-37）：`pageId` 可以写页面别名；`opens` 把这一步新开的标签页绑定到别名；`into` 把抽取结果写进变量：
+多页面（FR-37）：`pageId` 可以写页面别名；`opens` 把这一步新开的标签页绑定到别名；`extract` 已有的 `as` 把抽取结果写进变量：
 
 ```json
 {"step\_id":"s10","op":"click","pageId":"main","target":{"role":"link","name":"参数说明"},"opens":"docs"}
-{"step\_id":"s11","op":"extract","pageId":"docs","source":{"type":"dom","kind":"kv"},"into":"param"}
+{"step\_id":"s11","op":"extract","pageId":"docs","source":{"type":"dom","kind":"kv","root":{"css":"\#params"}},"as":"param"}
 {"step\_id":"s12","op":"close\_page","pageId":"docs"}
 {"step\_id":"s13","op":"fill","pageId":"main","target":{"role":"textbox","name":"内存上限"},"value":"{{var:param.mem\_limit}}"}
 ```
 
-续跑的重做单位是循环条目或 `checkpoint` 步骤，不新增“段”。别名由 runner 维护，不进检查点。契约变更（`pageId` 允许别名、`opens`、`into`）见 [M2 计划](M2_PLAN.md)。
+续跑的重做单位是循环条目或 `checkpoint` 步骤，不新增“段”。别名由 runner 维护，不进检查点。契约只有 `step.json` 新增 `opens` 一个字段。
 
 ### 7.5 检查点与待核实清单
 
@@ -642,7 +642,7 @@ workspace/
 
 |工作内容（FR）|验收|
 |-|-|
-|FR-16（JSONL 与控制流）、FR-17（检查点与续跑）、FR-18（单次提交与状态未明、跳过模式）、FR-19（最小监督：心跳与崩溃拉起）、FR-09（页面抽取）、FR-10（接口截获）、FR-25（采集输出：JSONL、主键索引、CSV / Excel）、FR-26（逐步留痕与轨迹）、FR-35（工作区文件）、FR-37（多页面流程：页面别名、`opens`、`into`）；命令行 `obact run / resume / status / unverified`；测试应用补大表与数据、服务器管理|见下表|
+|FR-16（JSONL 与控制流）、FR-17（检查点与续跑）、FR-18（单次提交与状态未明、跳过模式）、FR-19（最小监督：心跳与崩溃拉起）、FR-09（页面抽取）、FR-10（接口截获）、FR-25（采集输出：JSONL、主键索引、CSV / Excel）、FR-26（逐步留痕与轨迹）、FR-35（工作区文件）、FR-37（多页面流程：页面别名、`opens`）；命令行 `obact run / resume / status / unverified`；测试应用补大表与数据、服务器管理|见下表|
 
 |验收项|通过标准|
 |-|-|

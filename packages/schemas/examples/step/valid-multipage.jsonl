@@ -1,0 +1,4 @@
+{"step_id":"m1","op":"click","pageId":"main","target":{"role":"link","name":"参数说明"},"opens":"docs"}
+{"step_id":"m2","op":"extract","pageId":"docs","source":{"type":"dom","kind":"kv","root":{"css":"#params"}},"as":"param"}
+{"step_id":"m3","op":"close_page","pageId":"docs"}
+{"step_id":"m4","op":"fill","pageId":"main","target":{"role":"textbox","name":"内存上限"},"value":"{{var:param.mem_limit}}"}

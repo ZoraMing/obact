@@ -22,8 +22,6 @@ packages/workflow/src/
 packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PRD 5.6），core 导出
 ```
 
-> 2026-10-22：多页面流程（页面别名 `opens`、导航链、可重放段）的设计见 [`docs/DESIGN_MULTIPAGE.md`](../../docs/DESIGN_MULTIPAGE.md)，评审通过后并入下面的共享约定与目录。
-
 ## 共享约定
 
 1. **步骤即动作**：普通步骤的 `op` 等于 `action.json` 的动作，`runner` 渲染模板后去掉步骤字段（step_id、section、pre、retry、on_fail、once_only、idempotency_key、volatile、note）交给 `Executor.act`。控制流步骤：`loop_begin / loop_end / break / if / else / end_if / call / set_var / checkpoint`；`extract` 交给 `Executor.extract`。
@@ -32,7 +30,7 @@ packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PR
 4. **模板**：字符串整体是单个模板时返回原类型，混合文本则插值为字符串；找不到变量/参数报 `invalid_params`（带步骤号与名称）。`{{file:路径}}`：`.csv`（首行表头）→ 对象数组，`.jsonl` → 数组，`.json` → 值，其他 → 文本；路径限定在工作区内。名称含 `password|token|secret` 的参数在日志、留痕、返回结果、检查点里一律显示 `***`，检查点的 `vars` 不写入敏感值。
 5. **循环**：`loop_begin.over` 渲染后必须是数组；`as` 是循环变量；`key` 模板给条目主键（游标与去重）；检查点 `loop_index[loop_begin 的 step_id]` 记录当前条目下标；`anchor` 是跳过模式重置页面后要满足的检查。循环可嵌套，`break` 跳出最近的循环。
 6. **失败处理**（`on_fail`，默认 `human`）：步骤先按 `retry`（默认 0）重试；仍失败按 `on_fail`：`stop` 结束运行（状态 FAILED）、`skip` 记录并继续下一步、`human` 发 `need_human` 事件并进入 NEED_HUMAN（M3 才有真正的接管，M2 里等同于暂停等待 `resume()`）。**`once_only` 步骤永不自动重试，忽略 `retry`。**
-7. **单次提交（FR-18）**：执行 `once_only` 步骤前，若 `side_effects.jsonl` 已有该 `idempotency_key` → 跳过并记 `skipped`；否则先写检查点（step_id 指向它）再执行。执行结果：成功（后置检查全部通过）→ 写 side effect；**已发出但结果未确认**（`assertion_failed`、`timeout`、`navigation_failed`、`browser_disconnected`、或进程崩溃后续跑时发现检查点停在该步且无 side effect）→ 写 unverified（`reason` 取 post_timeout / post_failed / navigation_lost / browser_lost / crash / stuck），发 `unverified` 事件，**绝不重试**；**未发出**（`not_found`、`not_unique`、`not_actionable`、`obscured`、`stale_ref`、`invalid_params`、`landing_mismatch`、`dialog_blocking`）→ 按普通失败处理。`on_unverified`（步骤所在循环的设置，缺省取工作流的，再缺省 `stop`）：`stop` → 停止运行（状态 STOPPED）；`skip` → 记入待核实 → 重置页面（重放前置路径，并满足循环 `anchor`）→ 处理下一条；**连续 2 条状态未明则停止**。
+7. **单次提交（FR-18）**：执行 `once_only` 步骤前，若 `side_effects.jsonl` 已有该 `idempotency_key` → 跳过并记 `skipped`；否则先写检查点（step_id 指向它）再执行。执行结果：成功（后置检查全部通过）→ 写 side effect；**已发出但结果未确认**（`assertion_failed`、`timeout`、`navigation_failed`、`browser_disconnected`、或进程崩溃后续跑时发现检查点停在该步且无 side effect）→ 写 unverified（`reason` 取 post_timeout / post_failed / navigation_lost / browser_lost / crash / stuck），发 `unverified` 事件，**绝不重试**；**未发出**（`not_found`、`not_unique`、`not_actionable`、`obscured`、`stale_ref`、`invalid_params`、`landing_mismatch`；`dialog_blocking` 例外，见第 16 条）→ 按普通失败处理。`on_unverified`（步骤所在循环的设置，缺省取工作流的，再缺省 `stop`）：`stop` → 停止运行（状态 STOPPED）；`skip` → 记入待核实 → 重置页面（重放前置路径，并满足循环 `anchor`）→ 处理下一条；**连续 2 条状态未明则停止**。
 8. **检查点（FR-17）**：每个循环条目开始前、每个 `once_only` 步骤前后、`checkpoint` 步骤、状态变化时写；`seq` 单调递增；原子写（同目录临时文件 → fsync → rename）。检查点里没有的东西（页面、浏览器）靠重放前置路径恢复。
 9. **续跑**：读检查点 → 恢复 `vars`、`loop_index`、`cursor` → 重放全部 preamble 步骤（失败则 FAILED）→ 跳到 `step_id` 所在位置继续（循环内则回到对应条目）。检查点停在 once_only 步骤中间（无 side effect）→ 按“崩溃”记 unverified，按 on_unverified 处理。
 10. **事件**（`events.json`）：`step`（进度）、`need_human`、`ask_save`（M3）、`unverified`、`run_done`（含统计）。通过 `RunEvents`（`types.ts`）回调发出，同时写 `steps.log`。
@@ -40,6 +38,10 @@ packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PR
 12. **接口截获（FR-10）**：`core/network.ts` 为每个标签页缓存最近 30 条 JSON 响应（只缓存与工作流 `intercept` 正则匹配的；`capture_all` 时全部），单条上限 1 MiB，超出淘汰最早的；每条记录到达时的动作序号（`currentActionSeq`）。抽取读取“上一个动作开始之后到达、URL 匹配”的最近一条，没到就等到 `wait_ms`，超时报 `timeout`。
 13. **采集输出（FR-25）**：`outputs/<任务>/<日期>/data.jsonl` 实时追加，主键索引（`data.index`）持久化，重复主键跳过（续跑后不会重复写）；导出 CSV 带 UTF-8 BOM，xlsx 用最小实现（不引入重依赖）。
 14. **监督（FR-19 的最小部分）**：监督进程拉起运行子进程，心跳每 5 秒；子进程退出码非 0 或 30 秒无心跳视为崩溃，自动以续跑模式重启，1 小时内超过 3 次则停止并报 TRIPPED；完整熔断、卡住截图留到 M4。
+
+15. **多页面（FR-37）**：runner 维护一张别名表（别名 → 标签页编号），不进检查点。`pageId` 先按别名表解析，没有再当作标签页编号；别名 `^[A-Za-z][A-Za-z0-9_]*$`，不得与 `p` 加数字同形，`main` 保留给任务起点的标签页。步骤带 `opens: "名字"` 时，该步结果的 `effects.new_pages` 必须恰好一个新标签页，绑定到该别名；0 个报 `not_found`，多于 1 个报 `not_unique`，别名已绑定且页面仍开着报 `invalid_params`。别名未绑定或页面已关闭报 `page_not_found`。`extract` 的 `as` 把结果存进运行变量（已有字段），回原页面用 `{{var:..}}` 填写。续跑的重做单位是循环条目或 `checkpoint` 步骤：`main` 由前置路径重建，辅助页不恢复，需要时工作流自己 `opens`。重做单位内、提交之前的步骤必须幂等，这是工作流作者的责任。
+16. **`dialog_blocking` 与 `dispatched`**：后置检查或等待期间被对话框打断时，`error.details.dispatched` 为 true，表示动作已经执行。对 `once_only` 步骤：为 true 按“已发出、结果未确认”处理（记 unverified、不重试）；为 false 或缺省按“未发出”处理。
+17. **接口缓存的大整数**：超过 2^53 的整数在响应体里以十进制字符串保留，抽取结果里该字段是 string。
 
 ## 测试原则
 
