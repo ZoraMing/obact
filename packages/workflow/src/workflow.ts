@@ -21,6 +21,7 @@ export type ProblemCode =
   | 'bad_template'
   | 'once_only_not_action'
   | 'once_only_in_preamble'
+  | 'extract_no_key'
   | 'missing_idempotency_key'
   | 'duplicate_idempotency_key'
   | 'key_not_per_item'
@@ -307,7 +308,7 @@ function hasRef(x: unknown): boolean {
 /**
  * 结构校验，返回全部问题（不抛）：step_id 唯一；loop / if 配对与嵌套；break 在循环内；
  * 前置路径在所有主流程之前且不在循环或分支内；目标不能用 ref；模板写法；call 的工作流存在；
- * 单次提交只能用在动作步骤上、不在前置路径里，其幂等键要引用每一层外层循环的变量，且各步骤的键模板互不相同。
+ * extract 写采集输出必须有主键；单次提交只能用在动作步骤上、不在前置路径里，其幂等键要引用每一层外层循环的变量，且各步骤的键模板互不相同。
  */
 export function validateWorkflow(
   w: Workflow,
@@ -402,6 +403,15 @@ export function validateWorkflow(
         break;
       case 'break':
         if (!innermostLoop()) add(step, 'break_outside_loop', 'break 不在任何循环内');
+        break;
+      case 'extract':
+        if (step.into && !(step.key ?? w.meta.outputs?.[step.into]?.key)) {
+          add(
+            step,
+            'extract_no_key',
+            `extract 写入采集输出 ${step.into}，但步骤的 key 与 meta.outputs 都没有主键：续跑重做时会重复写入`,
+          );
+        }
         break;
       case 'call':
         if (resolveWorkflow && !resolveWorkflow(step.workflow)) {

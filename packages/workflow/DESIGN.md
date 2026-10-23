@@ -36,7 +36,7 @@ packages/core/src/network.ts   每个标签页的接口响应缓存（FR-10，PR
 10. **事件**（`events.json`）：`step`（进度）、`need_human`、`ask_save`（M3）、`unverified`、`run_done`（含统计）。通过 `RunEvents`（`types.ts`）回调发出，同时写 `steps.log`。
 11. **留痕（FR-26）**：`steps.log` 一行一步（时间、step_id、op、结果、耗时，敏感值已脱敏）；`trajectory.jsonl` 按 `trajectory.json` 契约；截图保存数量有上限（默认保留最近 200 张），研究采集模式（`research_capture`）每步存截图与文本快照。
 12. **接口截获（FR-10）**：`core/network.ts` 为每个标签页缓存最近 30 条 JSON 响应（只缓存与工作流 `intercept` 正则匹配的；`capture_all` 时全部），单条上限 1 MiB，超出淘汰最早的；每条记录到达时的动作序号（`currentActionSeq`）。抽取读取“上一个动作开始之后到达、URL 匹配”的最近一条，没到就等到 `wait_ms`，超时报 `timeout`。
-13. **采集输出（FR-25）**：`outputs/<任务>/<日期>/data.jsonl` 实时追加，主键索引（`data.index`）持久化，重复主键跳过（续跑后不会重复写）；导出 CSV 带 UTF-8 BOM，xlsx 用最小实现（不引入重依赖）。
+13. **采集输出（FR-25）**：`outputs/<任务>/<日期>/data.jsonl` 实时追加，主键索引（`data.index`）持久化，重复主键跳过（续跑后不会重复写），所以 `extract` 带 `into` 时必须有主键（步骤的 `key` 或 `meta.outputs[into].key`），否则加载报错；导出 CSV 带 UTF-8 BOM，xlsx 用最小实现（不引入重依赖）。
 14. **监督（FR-19 的最小部分）**：监督进程拉起运行子进程，心跳每 5 秒；子进程退出码非 0 或 30 秒无心跳视为崩溃，自动以续跑模式重启，1 小时内超过 3 次则停止并报 TRIPPED；完整熔断、卡住截图留到 M4。
 
 15. **多页面（FR-37）**：runner 维护一张别名表（别名 → 标签页编号），不进检查点。`pageId` 先按别名表解析，没有再当作标签页编号；别名 `^[A-Za-z][A-Za-z0-9_]*$`，不得与 `p` 加数字同形，`main` 保留给任务起点的标签页。步骤带 `opens: "名字"` 时，该步结果的 `effects.new_pages` 必须恰好一个新标签页，绑定到该别名；0 个报 `not_found`，多于 1 个报 `not_unique`，别名已绑定且页面仍开着报 `invalid_params`。别名未绑定或页面已关闭报 `page_not_found`。`extract` 的 `as` 把结果存进运行变量（已有字段），回原页面用 `{{var:..}}` 填写。续跑的重做单位是循环条目或 `checkpoint` 步骤：`main` 由前置路径重建，辅助页不恢复，需要时工作流自己 `opens`。重做单位内、提交之前的步骤必须幂等，这是工作流作者的责任。

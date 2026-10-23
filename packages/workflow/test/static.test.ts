@@ -511,7 +511,7 @@ describe('validateWorkflow', () => {
       steps: [
         S('a', 'call', { workflow: 'sub', once_only: true, idempotency_key: 'k1' }),
         S('b', 'set_var', { name: 'v', value: 1, once_only: true, idempotency_key: 'k2' }),
-        S('c', 'extract', { into: 'o', once_only: true, idempotency_key: 'k3' }),
+        S('c', 'extract', { as: 'o', once_only: true, idempotency_key: 'k3' }),
         S('d', 'loop_begin', { as: 'x', once_only: true, idempotency_key: 'k4-{{var:x}}' }),
         S('e', 'if', { value: '1', equals: 1, once_only: true, idempotency_key: 'k5' }),
         S('f', 'end_if'),
@@ -602,4 +602,22 @@ describe('validateWorkflow', () => {
       );
     });
   }
+
+  test('extract 带 into 却解析不出主键：步骤的 key 与 meta.outputs 都没有时报错（续跑重做会重复写入）', () => {
+    const check = (extra: Record<string, unknown>, meta: Record<string, unknown> = {}) =>
+      validateWorkflow({
+        ...wf([S('e', 'extract', extra)]),
+        meta: { name: 'demo', ...meta } as Workflow['meta'],
+      }).map((p) => p.code);
+    assert.deepEqual(check({ into: 'items' }), ['extract_no_key']);
+    assert.deepEqual(check({ into: 'items' }, { outputs: { other: { key: 'id' } } }), [
+      'extract_no_key',
+    ]);
+    assert.deepEqual(check({ into: 'items' }, { outputs: { items: { export: ['csv'] } } }), [
+      'extract_no_key',
+    ]);
+    assert.deepEqual(check({ into: 'items', key: 'id' }), []);
+    assert.deepEqual(check({ into: 'items' }, { outputs: { items: { key: 'id' } } }), []);
+    assert.deepEqual(check({ as: 'rows' }), [], '只存变量、不写采集输出，不需要主键');
+  });
 });
