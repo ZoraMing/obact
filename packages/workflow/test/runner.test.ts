@@ -295,6 +295,23 @@ describe('单次提交', () => {
     assert.deepEqual([redo.result.state, redo.fake.count('#pay')], ['DONE', 1]);
   });
 
+  test('once_only 挂在 call 等非动作步骤上：加载校验拒绝，什么都不执行（子流程里提交成功却被记成整步成功的漏洞）', async () => {
+    const ws = tmp();
+    child(ws, 'sub', [click('c1', '#submit'), click('c2', '#verify', { on_fail: 'stop' })]);
+    const steps = [
+      step('k', 'call', { workflow: 'sub', once_only: true, idempotency_key: 'sub-1' }),
+      click('after', '#after'),
+    ];
+    const { result, fake, store } = await go(steps, {
+      ws,
+      fake: new FakeExecutor().plan('#verify', 'not_found'),
+    });
+    assert.deepEqual([result.state, result.error?.code], ['FAILED', 'invalid_params']);
+    assert.match(result.error?.message ?? '', /once_only/);
+    assert.equal(fake.acts.length, 0);
+    assert.equal(store.listSideEffects().length, 0);
+  });
+
   test('子工作流里不允许 once_only', async () => {
     const ws = tmp();
     child(ws, 'sub', [pay('s1', '#pay', 'k9')]);

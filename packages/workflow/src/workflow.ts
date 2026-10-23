@@ -19,6 +19,7 @@ export type ProblemCode =
   | 'ref_target'
   | 'call_not_found'
   | 'bad_template'
+  | 'once_only_not_action'
   | 'missing_idempotency_key'
   | 'key_not_per_item'
   | 'key_var_out_of_scope';
@@ -294,6 +295,9 @@ type Frame =
 /** 控制流的开头、结尾与分支：不能放在前置路径里（前置路径无条件重放，不含循环与分支）。 */
 const BLOCK_OPS = new Set(['loop_begin', 'loop_end', 'if', 'else', 'end_if', 'break']);
 
+/** 不是动作的步骤：控制流、call、set_var、checkpoint 与 extract。单次提交只能是一次页面动作（DESIGN 约定 7）。 */
+const NOT_ACTION = new Set([...BLOCK_OPS, 'call', 'set_var', 'checkpoint', 'extract']);
+
 function hasRef(x: unknown): boolean {
   return typeof x === 'object' && x !== null && !Array.isArray(x) && Object.hasOwn(x, 'ref');
 }
@@ -301,7 +305,7 @@ function hasRef(x: unknown): boolean {
 /**
  * 结构校验，返回全部问题（不抛）：step_id 唯一；loop / if 配对与嵌套；break 在循环内；
  * 前置路径在所有主流程之前且不在循环或分支内；目标不能用 ref；模板写法；call 的工作流存在；
- * 单次提交的幂等键要随循环条目变化。
+ * 单次提交只能用在动作步骤上，其幂等键要随循环条目变化。
  */
 export function validateWorkflow(
   w: Workflow,
@@ -409,6 +413,14 @@ export function validateWorkflow(
     }
 
     if (step.once_only) {
+      if (NOT_ACTION.has(step.op)) {
+        add(
+          step,
+          'once_only_not_action',
+          `${step.op} 不是动作步骤，不能 once_only：单次提交只能是一次页面动作，子流程、抽取、赋值失败后无法判断是否已提交`,
+        );
+        continue;
+      }
       const key = step.idempotency_key;
       if (!key) {
         add(step, 'missing_idempotency_key', 'once_only 步骤必须有 idempotency_key');

@@ -532,6 +532,8 @@ export async function run(
       const reason = o.sent ? unverifiedReason(o.fail) : null;
       return reason ? unverified(c, s, key, reason, since) : onFail(c, s, o.fail, since, false);
     }
+    // 防御：非成功的结局（如子工作流失败）绝不能当作提交成功（校验已禁止 once_only 用在 call 上）
+    if (o.out) return { out: { ...o.out, stepId: s.step_id } };
     const evidence = o.res?.assertions;
     store.recordSideEffect({
       step_id: s.step_id,

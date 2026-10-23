@@ -507,6 +507,20 @@ describe('validateWorkflow', () => {
       expect: ['missing_idempotency_key'],
     },
     {
+      name: 'once_only 只能用在动作步骤上：call、set_var、extract、loop_begin、if、checkpoint 都不行',
+      steps: [
+        S('a', 'call', { workflow: 'sub', once_only: true, idempotency_key: 'k1' }),
+        S('b', 'set_var', { name: 'v', value: 1, once_only: true, idempotency_key: 'k2' }),
+        S('c', 'extract', { into: 'o', once_only: true, idempotency_key: 'k3' }),
+        S('d', 'loop_begin', { as: 'x', once_only: true, idempotency_key: 'k4-{{var:x}}' }),
+        S('e', 'if', { value: '1', equals: 1, once_only: true, idempotency_key: 'k5' }),
+        S('f', 'end_if'),
+        S('g', 'loop_end'),
+        S('h', 'checkpoint', { once_only: true, idempotency_key: 'k6' }),
+      ],
+      expect: Array(6).fill('once_only_not_action'),
+    },
+    {
       name: '循环内的幂等键不含循环变量：每条都会得到同一个键',
       steps: [
         S('a', 'loop_begin', { as: 'order' }),
