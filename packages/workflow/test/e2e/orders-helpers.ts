@@ -68,7 +68,7 @@ export async function supervised(ws: string, workflow: string, kills: Kill[], sk
     heartbeatTimeoutMs: 20_000,
     onEvent: (e) => {
       events.push(e);
-      if (e.type === 'exit') sweepBrowser(ws, 'r'); // 与命令行一致：子进程被杀后清扫它的浏览器
+      if (e.type === 'exit') sweepBrowser(ws, 'r', e.pid); // 与命令行一致：子进程被杀后清扫它的浏览器
     },
   });
   const signals = events.flatMap((e) => (e.type === 'exit' ? [e.signal] : []));

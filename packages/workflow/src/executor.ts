@@ -15,6 +15,7 @@ import {
   Session,
 } from '@obact/core';
 import { extractFromPage, extractFromResponse } from './extract.ts';
+import { acquireLock } from './lock.ts';
 import { RunStore } from './store.ts';
 import type { Action, ActResult, Executor, ExtractResult, Step, Workflow } from './types.ts';
 
@@ -33,6 +34,8 @@ export type CoreExecutorOptions = {
   cache?: NetworkCache;
   /** close() 时同时关闭浏览器（浏览器由 openSession 启动时为 true；调用方自己管理时不关）。 */
   closeBrowser?: boolean;
+  /** close() 时调用：释放 openSession 拿的账号锁。 */
+  unlock?: () => void;
 };
 
 export class CoreExecutor implements Executor {
@@ -126,6 +129,7 @@ export class CoreExecutor implements Executor {
     this.#o.cache?.dispose();
     await this.session.close({ closeBrowser: this.#o.closeBrowser ?? false }).catch(() => {});
     rmSync(browserPidFile(this.#o.workspace, this.#o.runId), { force: true });
+    this.#o.unlock?.();
   }
 }
 
@@ -134,17 +138,19 @@ const browserPidFile = (workspace: string, runId: string) =>
   join(workspace, 'runs', runId, 'browser.pid');
 
 /**
- * 子进程退出后清扫它留下的浏览器（Chrome 由 puppeteer 放在自己的进程组里，监督进程清扫子进程组碰不到它）。
- * 为防 pid 被别的进程复用，只清命令行里带该运行配置目录的进程；读不到命令行就不动手。
+ * 运行子进程（pid 为 owner）退出后清扫它留下的浏览器（Chrome 由 puppeteer 放在自己的进程组里，监督进程清扫子进程组碰不到它）。
+ * 只清所有者正是这个子进程的记录：同一运行目录里别的进程（并发的第二个运行）记下的浏览器不动；
+ * 为防 pid 被别的进程复用，还要求命令行里带该运行配置目录；读不到命令行就不动手。
  */
-export function sweepBrowser(workspace: string, runId: string): void {
+export function sweepBrowser(workspace: string, runId: string, owner: number): void {
   const file = browserPidFile(workspace, runId);
-  let rec: { pid: number; profile: string };
+  let rec: { pid: number; profile: string; owner?: number };
   try {
     rec = JSON.parse(readFileSync(file, 'utf8'));
   } catch {
     return;
   }
+  if (rec.owner !== owner) return;
   rmSync(file, { force: true });
   let cmd = '';
   try {
@@ -186,17 +192,25 @@ export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> 
   const account = o.account ?? o.workflow.meta.account ?? 'default';
   assertAccountName(account);
   const profileDir = join(o.workspace, 'profiles', account);
-  const browser = await launchBrowser({
-    profileDir,
-    mode: o.mode ?? 'headless',
-    chromePath: o.chromePath,
-  });
+  // 一个账号的配置目录同一时刻只能有一个运行在用（拿不到就报错，不进重启循环）
+  const unlock = acquireLock(`${profileDir}.lock`, `账号 ${account}`);
+  let browser: Awaited<ReturnType<typeof launchBrowser>>;
+  try {
+    browser = await launchBrowser({
+      profileDir,
+      mode: o.mode ?? 'headless',
+      chromePath: o.chromePath,
+    });
+  } catch (e) {
+    unlock();
+    throw e;
+  }
   const pid = browser.process()?.pid;
   if (pid) {
     try {
       const file = browserPidFile(o.workspace, o.runId);
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ pid, profile: profileDir }));
+      writeFileSync(file, JSON.stringify({ pid, profile: profileDir, owner: process.pid }));
     } catch {} // 记不下来只是少一道清扫，不影响运行
   }
   try {
@@ -220,10 +234,12 @@ export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> 
       meta: o.workflow.meta,
       ...(cache ? { cache } : {}),
       closeBrowser: true,
+      unlock,
     });
   } catch (e) {
     await browser.close().catch(() => {});
     rmSync(browserPidFile(o.workspace, o.runId), { force: true });
+    unlock();
     throw e;
   }
 }

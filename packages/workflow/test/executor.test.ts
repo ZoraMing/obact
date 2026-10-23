@@ -1,7 +1,7 @@
 // 真执行器冒烟（Lab 订单后台 + 登录，真浏览器）：CoreExecutor 上跑完一个小工作流（登录 → 页面与接口抽取 →
 // 单次审核），再经命令行（监督进程 + 子进程）跑一遍；服务端状态与运行产物互相对账。
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,8 @@ import type { Order } from '../../../lab/src/modules/orders/data.ts';
 import orders from '../../../lab/src/modules/orders.ts';
 import { CHROME, control, loginCookie, SKIP } from '../../../lab/test/helpers.ts';
 import { runWorkflow } from '../src/cli.ts';
-import { openSession } from '../src/executor.ts';
+import { openSession, sweepBrowser } from '../src/executor.ts';
+import { LockedError } from '../src/lock.ts';
 import { Output } from '../src/output.ts';
 import { RunStore } from '../src/store.ts';
 import { loadWorkflow } from '../src/workflow.ts';
@@ -165,6 +166,24 @@ describe('真执行器与命令行', { skip: SKIP }, () => {
     }
   });
 
+  test('账号锁：同一账号的第二个会话被拒绝且不影响第一个；关闭后锁释放，可再开', async () => {
+    const ws = workspace();
+    const workflow = loadWorkflow(join(ws, 'workflows', NAME));
+    const open = (runId: string) =>
+      openSession({ workspace: ws, runId, workflow, chromePath: CHROME });
+    const first = await open('a');
+    try {
+      await assert.rejects(
+        open('b'),
+        (e) => e instanceof LockedError && /账号 default 已被进程 \d+ 占用/.test(e.message),
+      );
+      assert.ok(first.pageOpen(first.mainPage()), '第一个会话没受影响');
+    } finally {
+      await first.close();
+    }
+    await (await open('c')).close();
+  });
+
   test('命令行：obact run 经监督进程跑到 DONE，status、unverified 可查；参数与工作流错误有退出码', async () => {
     const ws = workspace();
     const s = await labSpace('exec-cli');
@@ -184,5 +203,49 @@ describe('真执行器与命令行', { skip: SKIP }, () => {
     assert.equal((await at('run', 'nope')).code, 1, '工作流不存在');
     assert.equal((await cli(['run'])).code, 2, '缺参数');
     assert.equal((await cli(['status', 'viacli', '--bogus'])).code, 2, '未知选项');
+  });
+});
+
+describe('sweepBrowser', () => {
+  /** 一个伪装成浏览器的进程：自成进程组，命令行带 --user-data-dir=<profile>。 */
+  const fakeBrowser = (profile: string) => {
+    const p = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)', '--', `--user-data-dir=${profile}`],
+      {
+        detached: true,
+        stdio: 'ignore',
+      },
+    );
+    return { pid: p.pid as number, gone: new Promise((r) => p.once('exit', r)) };
+  };
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test('只清所有者正是退出的那个子进程的记录；别的进程记下的浏览器不动', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'obact-sweep-'));
+    const profile = join(ws, 'profiles', 'a');
+    const b = fakeBrowser(profile);
+    try {
+      mkdirSync(join(ws, 'runs', 'r'), { recursive: true });
+      const file = join(ws, 'runs', 'r', 'browser.pid');
+      writeFileSync(file, JSON.stringify({ pid: b.pid, profile, owner: 1001 }));
+      sweepBrowser(ws, 'r', 1002); // 另一个子进程退出：不是所有者
+      assert.ok(existsSync(file) && alive(b.pid), '所有者不符，记录和浏览器都不动');
+      sweepBrowser(ws, 'r', 1001);
+      await b.gone;
+      assert.equal(existsSync(file), false);
+    } finally {
+      try {
+        process.kill(b.pid, 'SIGKILL'); // 断言失败时别留下进程
+      } catch {}
+      rmSync(ws, { recursive: true, force: true });
+    }
   });
 });

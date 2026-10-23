@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ObactError, resolveChromePath } from '@obact/core';
 import { openSession, sweepBrowser } from './executor.ts';
+import { acquireLock, LockedError } from './lock.ts';
 import { run } from './runner.ts';
 import { RunStore } from './store.ts';
 import { startHeartbeat, superviseRun } from './supervisor.ts';
@@ -41,8 +42,9 @@ type Flags = ReturnType<typeof parse>['values'];
 /** 命令行写法不对：打印用法，退出码 2。 */
 class UsageError extends Error {}
 
-/** 检查点状态 → 退出码（其余按 1）；熔断 5，被 Ctrl-C 中断 130。 */
+/** 检查点状态 → 退出码（其余按 1）；熔断 5，运行被另一个进程占用 6，被 Ctrl-C 中断 130。 */
 const EXIT: Record<string, number> = { DONE: 0, FAILED: 1, STOPPED: 3, NEED_HUMAN: 4 };
+const LOCKED = 6;
 
 export type RunWorkflowOptions = {
   workspace: string;
@@ -98,7 +100,15 @@ async function child(o: RunWorkflowOptions): Promise<number> {
     need_human: (e) => console.error(`需要人工处理：${e.step_id}（${e.reason}）${e.message ?? ''}`),
     unverified: (e) => console.error(`状态未明：${e.idempotency_key}（${e.reason}）`),
   };
-  const r = await runWorkflow({ ...o, events });
+  let r: RunResult;
+  try {
+    r = await runWorkflow({ ...o, events });
+  } catch (e) {
+    // 有分类的错误（账号被占用、账号名不合法等）重启也不会好：报错后正常退出，退出码由父进程按检查点换算
+    if (!(e instanceof ObactError)) throw e;
+    console.error(`错误：${e.message}`);
+    return 0;
+  }
   if (r.error) console.error(`${r.state}：${r.error.step_id} ${r.error.code}：${r.error.message}`);
   return 0;
 }
@@ -141,35 +151,46 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
   loadWorkflow(join(workspace, 'workflows', cp?.workflow ?? target));
   resolveChromePath(v.chrome);
 
-  const tail = ['--workspace', workspace, ...(cmd === 'run' ? ['--run-id', runId] : []), '--child'];
-  const sup = superviseRun({
-    command: [
-      process.execPath,
-      ...process.execArgv,
-      fileURLToPath(import.meta.url),
-      cmd,
-      ...rest,
-      ...tail,
-    ],
-    heartbeatFile: heartbeatFile(workspace, runId),
-    onEvent: (e) => {
-      if (e.type === 'exit') sweepBrowser(workspace, runId); // 子进程被杀时浏览器会成孤儿
-      if (e.type === 'restart')
-        console.error(`子进程崩溃（${e.reason}），第 ${e.restarts} 次重启并续跑`);
-    },
-  });
-  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void sup.stop());
-  const out = await sup;
-  const end = store.readCheckpoint();
-  if (end) status(workspace, runId);
-  if (out.state === 'TRIPPED')
-    console.error(`1 小时内崩溃超过 3 次，不再拉起；修好后可 obact resume ${runId}`);
-  if (out.state === 'STOPPED') console.error(`已中断，可用 obact resume ${runId} 续跑`);
-  return out.state === 'TRIPPED'
-    ? 5
-    : out.state === 'STOPPED'
-      ? 130
-      : (EXIT[end?.state ?? ''] ?? 1);
+  // 运行锁：同一个运行同一时刻只能有一个监督进程，否则两个子进程会写同一个运行目录、互相清扫对方的浏览器
+  const release = acquireLock(join(store.dir, 'run.lock'), `运行 ${runId}`);
+  try {
+    const tail = [
+      '--workspace',
+      workspace,
+      ...(cmd === 'run' ? ['--run-id', runId] : []),
+      '--child',
+    ];
+    const sup = superviseRun({
+      command: [
+        process.execPath,
+        ...process.execArgv,
+        fileURLToPath(import.meta.url),
+        cmd,
+        ...rest,
+        ...tail,
+      ],
+      heartbeatFile: heartbeatFile(workspace, runId),
+      onEvent: (e) => {
+        if (e.type === 'exit') sweepBrowser(workspace, runId, e.pid); // 子进程被杀时浏览器会成孤儿
+        if (e.type === 'restart')
+          console.error(`子进程崩溃（${e.reason}），第 ${e.restarts} 次重启并续跑`);
+      },
+    });
+    for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void sup.stop());
+    const out = await sup;
+    const end = store.readCheckpoint();
+    if (end) status(workspace, runId);
+    if (out.state === 'TRIPPED')
+      console.error(`1 小时内崩溃超过 3 次，不再拉起；修好后可 obact resume ${runId}`);
+    if (out.state === 'STOPPED') console.error(`已中断，可用 obact resume ${runId} 续跑`);
+    return out.state === 'TRIPPED'
+      ? 5
+      : out.state === 'STOPPED'
+        ? 130
+        : (EXIT[end?.state ?? ''] ?? 1);
+  } finally {
+    release();
+  }
 }
 
 /** 已有运行的存储与检查点；没有就报错。 */
@@ -235,7 +256,7 @@ export async function main(argv: string[]): Promise<number> {
     const usage =
       e instanceof UsageError || (e as { code?: string }).code?.startsWith('ERR_PARSE_ARGS');
     if (usage) console.error(USAGE);
-    return usage ? 2 : 1;
+    return usage ? 2 : e instanceof LockedError ? LOCKED : 1;
   }
 }
 

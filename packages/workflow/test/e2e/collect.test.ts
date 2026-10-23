@@ -133,7 +133,7 @@ describe('BW-1、C-3 分页全量采集与中途被杀续采', { skip: SKIP }, (
       onEvent: (e) => {
         events.push(e);
         if (e.type === 'exit') {
-          sweepBrowser(wsB, 'b'); // 与命令行一致：子进程被杀后清扫它的浏览器
+          sweepBrowser(wsB, 'b', e.pid); // 与命令行一致：子进程被杀后清扫它的浏览器
           writtenAtKill ??= lines(outputFile(wsB, 'b', NAME, 'items')).length; // 只记第一次退出（被杀）时
         }
       },
