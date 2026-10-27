@@ -11,6 +11,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import './env.ts';
 
 /** 基准版本：CI 与开发环境都用它跑全套测试。 */
 export const BASELINE_VERSION = '141.0.7390.122';
@@ -44,7 +45,7 @@ export const BASELINE_SHA256: Record<string, { chrome: string; shell: string }> 
   },
 };
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
-export const CACHE_DIR = join(REPO, '.cache', 'chrome');
+export const CACHE_DIR = process.env.CHROME_CACHE_DIR || join(REPO, '.cache', 'chrome');
 
 async function installedPath(
   kind: 'chrome' | 'shell' = 'chrome',

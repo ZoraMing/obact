@@ -61,11 +61,16 @@ function watchStall(ctx: Ctx, page: Page): { stalled: Promise<typeof STALLED>; s
   const stalled = new Promise<typeof STALLED>((resolve) => {
     const check = async () => {
       if (stopped || page.isClosed()) return;
-      const up = await within(
-        page.mainFrame().evaluate(() => true),
-        STALL_PROBE_MS,
-        false,
-      ).catch(() => true);
+      let up = false;
+      try {
+        up = await within(
+          page.mainFrame().evaluate(() => true),
+          STALL_PROBE_MS,
+          false,
+        ).catch(() => true);
+      } catch {
+        up = true;
+      }
       if (stopped) return;
       if (!up) return resolve(STALLED);
       timer = setTimeout(check, STALL_RECHECK_MS);

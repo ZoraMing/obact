@@ -1,9 +1,9 @@
 /**
  * 交互试用 observe / act（服务与统一接口在 M4 提供，这里直接调用库）。
  *
- *   CHROME_PATH=$(node tools/browser.ts path) node packages/core/examples/try.ts https://example.com
+ *   node packages/core/examples/try.ts https://example.com
  *
- * 先运行 npm run browser:install；本脚本只认 CHROME_PATH，不会自己找 tools/browser.ts 装的浏览器。
+ * 先运行 npm run browser:install，并在仓库根目录 .env 里设置 CHROME_PATH（见 .env.example）；也可在命令行临时设置 CHROME_PATH 覆盖。
  *
  * 启动后打印页面的可操作功能（snapshot_text）和纯网页信息（text_md），然后逐行读入命令：
  *
@@ -14,6 +14,7 @@
  *
  * 动作执行后打印结果并自动重新观察。HEADED=1 时有头运行。
  */
+import '../../../tools/env.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

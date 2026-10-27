@@ -63,6 +63,7 @@ const raw = await compile(entryPoint(), 'ObactContracts', {
 const ts = execFileSync('npx', ['biome', 'format', `--stdin-file-path=${OUT}`], {
   input: raw,
   encoding: 'utf8',
+  shell: process.platform === 'win32',
 });
 
 if (process.argv.includes('--check')) {

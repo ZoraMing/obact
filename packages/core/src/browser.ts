@@ -77,8 +77,14 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
     env: browserEnv({ ...process.env, ...opts.env }) as Record<string, string | undefined>,
     defaultViewport: null,
     enableExtensions: extArgs.length > 0,
+    ignoreDefaultArgs: ['--enable-automation'],
     args: [
       ...sandboxArgs(),
+      ...(opts.mode === 'headless' ? ['--disable-gpu'] : []),
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
       `--window-size=${size.width},${size.height}`,
       ...extArgs,
       ...(opts.args ?? []),
@@ -86,7 +92,10 @@ export async function launchBrowser(opts: LaunchOptions): Promise<Browser> {
   });
 }
 
-/** 任务子进程连接服务管理的浏览器（PRD 8.1）。 */
-export async function connectBrowser(wsEndpoint: string): Promise<Browser> {
-  return puppeteer.connect({ browserWSEndpoint: wsEndpoint, defaultViewport: null });
+/** 任务子进程连接服务管理的浏览器或已在运行的 Chrome（PRD 8.1）。支持 ws:// 或 http:// 调试地址。 */
+export async function connectBrowser(urlOrWs: string): Promise<Browser> {
+  if (urlOrWs.startsWith('http://') || urlOrWs.startsWith('https://')) {
+    return puppeteer.connect({ browserURL: urlOrWs, defaultViewport: null });
+  }
+  return puppeteer.connect({ browserWSEndpoint: urlOrWs, defaultViewport: null });
 }

@@ -508,7 +508,7 @@ export function obActions(el: Element): string[] {
   else if (tag === 'select') add('fill');
   else if (
     ['textbox', 'searchbox', 'spinbutton'].includes(role) ||
-    (role === 'combobox' && tag === 'input')
+    (role === 'combobox' && (tag === 'input' || tag === 'textarea'))
   ) {
     if (readonly) add('click');
     // fill 只给 act 填得了的：原生输入框、textarea、可编辑区域；只有 ARIA 角色的自绘输入区（div role=textbox）点击后键入

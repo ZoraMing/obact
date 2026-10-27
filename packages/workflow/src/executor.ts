@@ -7,6 +7,7 @@ import {
   act,
   assertAccountName,
   checkAssertions,
+  connectBrowser,
   currentActionSeq,
   type LaunchOptions,
   launchBrowser,
@@ -183,6 +184,8 @@ export type OpenSessionOptions = {
   chromePath?: string;
   /** 账号（决定浏览器配置目录）；省略时取工作流的 account，再缺省 default。 */
   account?: string;
+  /** 已有浏览器的调试地址（如 http://127.0.0.1:9222）；传入或读环境变量 CHROME_DEBUG_URL 时直连已有浏览器。 */
+  debugUrl?: string;
 };
 
 /**
@@ -190,6 +193,33 @@ export type OpenSessionOptions = {
  * 工作流声明了 intercept 时先挂接口缓存，再开标签页，main 页的请求不会漏。
  */
 export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> {
+  const debugUrl = o.debugUrl ?? process.env.CHROME_DEBUG_URL;
+  if (debugUrl) {
+    const browser = await connectBrowser(debugUrl);
+    const session = await Session.attach(browser, { adopt: false });
+    const rules = o.workflow.meta.intercept ?? [];
+    let cache: NetworkCache | undefined;
+    if (rules.length > 0) {
+      cache = new NetworkCache(session);
+      await cache.attach({ rules });
+    }
+    const main = await session.pages.newPage();
+    await session.pages
+      .get(main)
+      .bringToFront()
+      .catch(() => {});
+    await cache?.ready();
+    return new CoreExecutor({
+      session,
+      main,
+      workspace: o.workspace,
+      runId: o.runId,
+      meta: o.workflow.meta,
+      ...(cache ? { cache } : {}),
+      closeBrowser: false,
+      unlock: () => {},
+    });
+  }
   const account = o.account ?? o.workflow.meta.account ?? 'default';
   assertAccountName(account);
   // 绝对路径：puppeteer 给 Chrome 的 --user-data-dir 是绝对路径，sweepBrowser 要按它认进程
@@ -224,11 +254,18 @@ export async function openSession(o: OpenSessionOptions): Promise<CoreExecutor> 
       cache = new NetworkCache(session);
       await cache.attach({ rules });
     }
-    const main = await session.pages.newPage();
+    let main: string;
+    const existing = await browser.pages().catch(() => []);
+    const first = existing[0];
+    if (first) {
+      main = session.pages.register(first);
+      for (let i = 1; i < existing.length; i++) {
+        await existing[i]?.close().catch(() => {});
+      }
+    } else {
+      main = await session.pages.newPage();
+    }
     await cache?.ready();
-    // 浏览器启动时自带的空白页（或上次遗留的页面）不登记，关掉免得干扰
-    for (const p of await browser.pages())
-      if (!session.pages.idOf(p)) await p.close().catch(() => {});
     return new CoreExecutor({
       session,
       main,

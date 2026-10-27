@@ -15,3 +15,4 @@ bench/.cache/
 bench/out/
 # 测试用浏览器（npm run browser:install）
 .cache/
+.env

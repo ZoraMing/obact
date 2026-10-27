@@ -877,7 +877,16 @@ const navigatePage: Handler = async (ctx) => {
     }
     const href = checkNavUrl(ctx, url);
     ctx.dispatch();
-    resp = await p.goto(href, opt).catch((e) => navError(e, '打开页面'));
+    try {
+      resp = await p.goto(href, opt);
+    } catch (e) {
+      if (/detached Frame/i.test(String((e as Error)?.message ?? e))) {
+        await sleep(100);
+        resp = await p.goto(href, opt).catch((err) => navError(err, '打开页面'));
+      } else {
+        await navError(e, '打开页面');
+      }
+    }
   } else if (type === 'reload') {
     ctx.dispatch();
     resp = await p.reload(opt).catch((e) => navError(e, '刷新'));

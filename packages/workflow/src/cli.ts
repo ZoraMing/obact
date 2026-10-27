@@ -4,6 +4,7 @@
 // run、resume：本进程当监督进程，用同一个入口加 --child 拉起运行子进程，崩溃（退出码非 0、被杀、心跳超时）后
 // 监督进程以 OBACT_RESUME=1 重启，子进程从检查点续跑。子进程只要跑到了结局（DONE、FAILED、STOPPED、
 // NEED_HUMAN）退出码就是 0，否则会被当作崩溃重启；命令行本身的退出码由父进程按检查点状态换算。
+import '../../../tools/env.ts';
 import { accessSync, constants, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,7 +151,7 @@ async function start(cmd: 'run' | 'resume', target: string, v: Flags, rest: stri
     workspace,
     runId,
     workflow: cmd === 'run' ? target : undefined,
-    mode: v.headed ? 'headed' : undefined,
+    mode: v.headed ? 'headed' : process.env.HEADED === '1' ? 'headed' : undefined,
     chromePath: v.chrome,
     onUnverified: mode,
     vars: parseVars(v.var),

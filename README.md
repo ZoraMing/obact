@@ -27,10 +27,10 @@ Obact（暂定名）：本地运行、跨平台的浏览器识别与操作工具
 
 ## 试用 observe / act
 
-服务与统一接口在 M4 提供，目前可以直接调用 `packages/core` 的库，或用交互脚本试。先运行 `npm run browser:install` 装好浏览器（见下面“开发”一节）；脚本本身只认环境变量 `CHROME_PATH`，用 `node tools/browser.ts path` 把装好的浏览器路径传给它：
+服务与统一接口在 M4 提供，目前可以直接调用 `packages/core` 的库，或用交互脚本试。先运行 `npm run browser:install` 装好浏览器（见下面“开发”一节），再复制 `.env.example` 为 `.env`，把 `CHROME_PATH` 设成浏览器可执行文件（不是目录）。命令行 `obact`、示例脚本、测试都会读取仓库根目录的 `.env`；命令行里已设置的环境变量优先于 `.env`：
 
 ```bash
-CHROME_PATH=$(node tools/browser.ts path) node packages/core/examples/try.ts https://example.com
+node packages/core/examples/try.ts https://example.com
 ```
 
 脚本先打印页面的两部分：
