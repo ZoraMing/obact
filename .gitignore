@@ -1,0 +1,7 @@
+node_modules
+.venv
+.env
+workspace
+images
+*.egg-info/
+__pycache__/
