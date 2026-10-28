@@ -31,7 +31,7 @@ core 是唯一的编排者：snapshot、cache、llm 互不引用，可以单独�
 ```python
 from obact import Obact
 
-async with Obact(task="flight", config="obact.yaml") as ob:
+async with Obact(task="flight") as ob:
     await ob.page.goto("https://flights.example.com")
     await ob.act("在出发地输入 {city}", params={"city": "上海"})
     await ob.act("在出发日期输入 {date}", params={"date": "2026-11-15"})
@@ -51,17 +51,18 @@ async with Obact(task="flight", config="obact.yaml") as ob:
 - `expect`：可选的执行后校验，填一个选择器（元素应可见）或 URL 模式。
 - 每步打印一行日志：走了 S1、fast 还是 smart，命中、未命中还是自愈。
 
-配置文件 `obact.yaml`：
+配置全部来自环境变量，写在 `.env` 中，启动时自动加载，已存在的环境变量优先：
 
-```yaml
-viewport: {width: 1280, height: 800}   # 固定视口，保证 canvas 坐标可以复用
-cache_dir: .obact
-models:                                # 两个槽位都必须支持图像输入
-  fast:  {base_url: http://localhost:8000/v1, model: <视觉小模型>,   api_key_env: OBACT_FAST_KEY}
-  smart: {base_url: <本地或云端地址>,         model: <高级视觉模型>, api_key_env: OBACT_SMART_KEY}
+```
+OPENAI_URL = http://localhost:8000/v1     # 两个槽位都必须支持图像输入
+OPENAI_MODEL = <视觉小模型>               # fast 槽位
+OPENAI_KEY = <密钥>
+OBACT_SMART_MODEL = <高级视觉模型>        # smart 槽位；没写的项沿用 fast
+OBACT_VIEWPORT = 1280x800                # 固定视口，保证 canvas 坐标可以复用
+OBACT_CACHE_DIR = .obact
 ```
 
-启动时向两个模型各发一张很小的测试图，不支持视觉就直接报错。密钥从环境变量读取，不写进配置文件。
+启动时向两个模型各发一张很小的测试图，不支持视觉就直接报错。`.env` 不提交到仓库。
 
 ## act() 总流程
 

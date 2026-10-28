@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import json
-import os
 import re
 import struct
 import zlib
@@ -35,13 +34,27 @@ ACT_PROMPT = """你是精准的浏览器自动化执行引擎。你会收到一�
 5. 只做指令要求的这一个动作，不要做别的。"""
 
 EXTRACT_PROMPT = """你从网页中提取数据。你会收到提取要求、页面的文本内容和一张视口截图。
-只输出一个 JSON 对象 {"data": ...}，data 必须符合下面的 JSON Schema：
+只输出一个 JSON 对象，它只有一个键 "data"，"data" 的值必须符合下面的 JSON Schema：
 {schema}
+
+例如 Schema 是字符串数组时，输出 {"data": ["第一项", "第二项"]}；不要把 "data" 换成 "items" 等其他键名。
 
 规则：
 1. 要求提取“所有”或一个列表时，页面文本中符合要求的每一条都要提取，不要遗漏。
 2. 文字照抄页面原文；数字类型的字段只填数字。
 3. 页面上没有的信息不要编造。"""
+
+READ_PROMPT = """你是网页内容定位器。你会收到一条读取要求、当前页面的文本块清单和一张视口截图。
+清单每行是一个文本块：[编号] 标签 "开头的文字"（总字数）@(x,y,宽x高)，坐标相对视口；标注“屏幕外”的块不在截图里。块之间可以嵌套，外层块包含内层块的全部文字。
+
+只输出一个 JSON 对象，格式：
+{"found": true, "id": 编号}
+
+规则：
+1. 选出完整包含所需内容、同时尽量少包含无关内容的那个块。
+2. 所需内容分散在几个相邻的块里时，选包含它们的最小外层块。
+3. id 只能从清单里已有的编号中选，不要编造。
+4. 页面上找不到时，只输出 {"found": false}。"""
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -70,12 +83,28 @@ class Decision(BaseModel):
     def _check(self):
         if not self.found:
             return self
+        if self.method == "click":
+            # click 不用 args；模型多给的 args 里带着参数值时，会被当成已经模板化，绕过锚点
+            self.args = []
         if self.id is None and self.point is None:
             raise ValueError("found 为 true 时必须给出 id 或 point")
         if self.method != "click" and not self.args:
             raise ValueError(f"{self.method} 需要 args")
         if self.id is None and self.method == "select_option":
             raise ValueError("坐标目标不支持 select_option")
+        return self
+
+
+class _Pick(BaseModel):
+    """模型为 read 选出的文本块。"""
+
+    found: bool
+    id: int | None = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.found and self.id is None:
+            raise ValueError("found 为 true 时必须给出 id")
         return self
 
 
@@ -89,12 +118,14 @@ class _Slot:
 
 class LLM:
     def __init__(self, models: dict):
+        """models 形如 {"fast": {"base_url", "model", "api_key", "coords"}, "smart": {...}}。"""
         self.slots: dict[str, _Slot] = {}
         for name in SLOTS:
             cfg = models[name]
-            api_key = os.environ.get(cfg.get("api_key_env", ""), "") or "EMPTY"
-            client = AsyncOpenAI(base_url=cfg["base_url"], api_key=api_key, timeout=TIMEOUT_S, max_retries=0)
-            self.slots[name] = _Slot(name, cfg["model"], cfg.get("coords", "pixel"), client)
+            client = AsyncOpenAI(
+                base_url=cfg["base_url"], api_key=cfg["api_key"] or "EMPTY", timeout=TIMEOUT_S, max_retries=0
+            )
+            self.slots[name] = _Slot(name, cfg["model"], cfg["coords"], client)
 
     async def check_vision(self) -> None:
         """向每个槽位发一张红色测试图，接口报错或认不出颜色就直接报错。"""
@@ -120,6 +151,19 @@ class LLM:
             d.point = (min(max(d.point[0] / sx, 0.0), 1.0), min(max(d.point[1] / sy, 0.0), 1.0))
         return d
 
+    async def locate(self, slot_name: str, instruction: str, blocks: str, image: bytes) -> int | None:
+        """为 read 选出文本块编号，找不到返回 None。"""
+        slot = self.slots[slot_name]
+        messages = [
+            {"role": "system", "content": READ_PROMPT},
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": f"读取要求：{instruction}\n\n文本块清单：\n{blocks}"}, _image(image)],
+            },
+        ]
+        pick = await self._ask(slot, messages, lambda text: _Pick.model_validate(_load_json(text)))
+        return pick.id if pick.found else None
+
     async def extract(self, slot_name: str, instruction: str, text: str, image: bytes, adapter: TypeAdapter) -> Any:
         slot = self.slots[slot_name]
         schema = json.dumps(adapter.json_schema(), ensure_ascii=False)
@@ -133,6 +177,9 @@ class LLM:
 
         def parse(reply: str) -> Any:
             obj = _load_json(reply)
+            # 模型偶尔换用 items 等键名；只有一个键时直接取它的值
+            if isinstance(obj, dict) and "data" not in obj and len(obj) == 1:
+                obj = {"data": next(iter(obj.values()))}
             if not isinstance(obj, dict) or "data" not in obj:
                 raise ValueError("输出缺少 data 字段")
             return adapter.validate_python(obj["data"])
@@ -143,7 +190,8 @@ class LLM:
         resp = await slot.client.chat.completions.create(
             model=slot.model, messages=messages, temperature=0, response_format={"type": "json_object"}
         )
-        return resp.choices[0].message.content or ""
+        # 有的接口出错时返回空的 choices，按空回复处理，交给解析报错和重试
+        return (resp.choices[0].message.content if resp.choices else None) or ""
 
     async def _ask(self, slot: _Slot, messages: list, parse):
         """调用并解析；接口出错或 JSON 不合法时同一模型重试 1 次，仍失败抛 ModelError。"""

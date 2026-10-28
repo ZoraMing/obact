@@ -1,9 +1,0 @@
-viewport: {width: 1280, height: 800}   # 固定视口，保证 canvas 坐标可以复用
-cache_dir: .obact
-headless: false                        # wait_for_human 需要有头浏览器
-# user_data_dir: .obact_profile        # 可选：浏览器用户目录，保留登录状态和 cookie；不填则每次用临时目录
-# executable_path: C:/Program Files/Google/Chrome/Application/chrome.exe   # 可选：改用本机安装的 Chrome
-models:                                # 两个槽位都必须支持图像输入；密钥从 api_key_env 指定的环境变量读取
-  fast:  {base_url: http://localhost:8000/v1, model: <视觉小模型>,   api_key_env: OBACT_FAST_KEY}
-  smart: {base_url: <本地或云端地址>,         model: <高级视觉模型>, api_key_env: OBACT_SMART_KEY}
-  # 模型按 0-1000 归一化输出坐标时（如 Qwen3-VL），在对应槽位加 coords: norm1000；默认按截图像素

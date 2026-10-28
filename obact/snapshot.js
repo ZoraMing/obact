@@ -17,6 +17,11 @@
     'listbox', 'slider', 'spinbutton',
   ]);
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME']);
+  const BLOCK_TAGS = new Set([
+    'ARTICLE', 'MAIN', 'SECTION', 'ASIDE', 'HEADER', 'FOOTER', 'NAV', 'DIV', 'P', 'UL', 'OL', 'LI', 'DL',
+    'TABLE', 'TR', 'PRE', 'BLOCKQUOTE', 'FORM', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  ]);
+  const MIN_BLOCK_TEXT = 10;
   // 生成选择器时依次尝试的属性；文本谓词排在 alt 之后、type 之前
   const ATTRS_BEFORE_TEXT = ['data-testid', 'data-test', 'data-qa', 'id', 'name', 'aria-label', 'placeholder', 'title', 'alt'];
   const ATTRS_AFTER_TEXT = ['type', 'role'];
@@ -106,19 +111,27 @@
   function anchor(id, values) {
     const el = elements[id];
     if (!el || !el.isConnected) return null;
-    const head = values.map((v) => `[.//text()[contains(., ${esc(v)})]]`).join('');
+    // 先要求某个文字节点正好等于参数值，不行再退回包含：短值（如航班号 43）用包含时还会命中 4346、1:43
+    const heads = [
+      values.map((v) => `[.//text()[normalize-space(.)=${esc(v)}]]`).join(''),
+      values.map((v) => `[.//text()[contains(., ${esc(v)})]]`).join(''),
+    ];
     // 单独就能唯一定位的条件会绕过锚点：外层容器也包含参数值，换参数后仍会命中原来的元素
     const own = predicates(el, true)
       .map((p) => `//${stepTag(el)}[${p}]`)
       .filter((xp) => (evaluate(xp)?.snapshotLength || 0) > 1);
-    let rel = '';
-    for (let child = el, a = el.parentElement; a && a !== document.documentElement; child = a, a = a.parentElement) {
-      rel = `/${positionalStep(child)}${rel}`;
-      const text = a.textContent || '';
-      if (!values.every((v) => text.includes(v))) continue;
-      for (const tail of [...own, rel]) {
-        const xp = `//${stepTag(a)}${head}${tail}`;
-        if (matchesOnly(xp, el)) return xp;
+    for (const head of heads) {
+      let rel = '';
+      for (let child = el, a = el.parentElement; a && a !== document.documentElement; child = a, a = a.parentElement) {
+        rel = `/${positionalStep(child)}${rel}`;
+        const text = a.textContent || '';
+        if (!values.every((v) => text.includes(v))) continue;
+        // 位置路径同样不能单独唯一定位：锚点退到 tbody 这类大容器时，只剩位置下标在起作用
+        const tails = (evaluate(`//${stepTag(a)}${rel}`)?.snapshotLength || 0) > 1 ? [...own, rel] : own;
+        for (const tail of tails) {
+          const xp = `//${stepTag(a)}${head}${tail}`;
+          if (matchesOnly(xp, el)) return xp;
+        }
       }
     }
     return null;
@@ -191,15 +204,20 @@
     });
   }
 
-  // 收集整页可见元素；遮挡检测只对中心在视口内的元素做，超过上限时优先保留离视口近的
-  function collect() {
+  // 遍历页面元素，跳过 display:none 的整棵子树
+  function makeWalker() {
     const root = document.body || document.documentElement;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    return document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
       acceptNode(el) {
         if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
         return getComputedStyle(el).display === 'none' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
       },
     });
+  }
+
+  // 收集整页可见元素；遮挡检测只对中心在视口内的元素做，超过上限时优先保留离视口近的
+  function collect() {
+    const walker = makeWalker();
     const found = [];
     let el;
     while ((el = walker.nextNode())) {
@@ -267,6 +285,50 @@
     return items;
   }
 
+  // read 用的文本块清单：整页可见、文字不太短的块级元素；文字和外层完全相同的包装元素只保留最外层，
+  // 超过上限时优先保留文字多的块。不画编号框，截图保持原样
+  function blocks() {
+    clearMarks();
+    const walker = makeWalker();
+    const textOf = new Map();
+    const found = [];
+    let el;
+    while ((el = walker.nextNode())) {
+      if (!BLOCK_TAGS.has(el.tagName)) continue;
+      if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      const text = clean(el.innerText);
+      if (text.length < MIN_BLOCK_TEXT) continue;
+      let anc = el.parentElement;
+      while (anc && !textOf.has(anc)) anc = anc.parentElement;
+      if (anc && textOf.get(anc) === text) continue;
+      textOf.set(el, text);
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const inView = cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight;
+      found.push({ el, r, inView, text });
+    }
+    let kept = found;
+    if (found.length > MAX_ITEMS) {
+      const keep = new Set([...found].sort((a, b) => b.text.length - a.text.length).slice(0, MAX_ITEMS));
+      kept = found.filter((f) => keep.has(f));
+    }
+    elements = [null];
+    return kept.map(({ el, r, inView, text }, i) => {
+      elements[i + 1] = el;
+      return {
+        id: i + 1,
+        tag: el.localName,
+        preview: text.slice(0, 60),
+        length: text.length,
+        rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+        inView,
+        selector: selectorFor(el),
+      };
+    });
+  }
+
   // DOM 连续 quietMs 没有节点变化即视为稳定，最多等 maxMs（参考 Stagehand 的 waitForDomSettle）
   function settle(quietMs, maxMs) {
     return new Promise((resolve) => {
@@ -287,5 +349,5 @@
     });
   }
 
-  window.__obact = { snapshot, clearMarks, nameOf, anchor, settle };
+  window.__obact = { snapshot, blocks, clearMarks, nameOf, anchor, settle };
 }
