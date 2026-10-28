@@ -5,8 +5,8 @@
 站点：https://conduit.bondaracademy.com（RealWorld 社区练习站，允许自由注册）
 覆盖的特性：自动登录（act 填写登录或注册表单）；自动登录失败时 wait_for_human 等人工登录；
            设置 OBACT_USER_DATA_DIR 时复用已有的登录态；read 读取文章正文；按评论内容参数化定位删除图标。
-登录账号：依次使用 .env 中的 CONDUIT_EMAIL、CONDUIT_PASSWORD，上次自动注册并保存在
-         workspace/outputs/tasks/community/account.json 的测试账号；都没有或登录失败时在注册页新建一个测试账号并保存。
+登录账号：第一次运行时在注册页新建一个测试账号，打印注册信息并保存到 workspace/outputs/tasks/community/account.json，
+         之后的运行直接用它登录；登录失败（例如练习站清空了数据）时重新注册并覆盖保存。
 说明：文章页的 URL 里带文章标识，每次运行都不同，这部分步骤每次都会调用模型。发布文章后中途失败时，直接删除文章再退出。
 校验：read 读到文章正文；评论发表后出现在文章下（expect）；个人主页文章列表里有这篇文章且简介已更新；
      评论已删除；删除文章后回到首页（expect）。
@@ -14,7 +14,6 @@
 
 import asyncio
 import json
-import os
 import secrets
 import time
 from pathlib import Path
@@ -42,19 +41,12 @@ async def logged_in(ob: Obact) -> bool:
     return True
 
 
-def saved_account(path: Path) -> dict | None:
-    """.env 中的账号优先，其次是上次自动注册保存的测试账号。"""
-    email, password = os.environ.get("CONDUIT_EMAIL"), os.environ.get("CONDUIT_PASSWORD")
-    if email and password:
-        return {"email": email, "password": password}
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
-
-
 async def login(ob: Obact, account_file: Path) -> None:
-    """自动登录：有账号先登录，没有账号或登录失败时注册一个测试账号并保存；都失败时等人工登录。"""
-    account = saved_account(account_file)
+    """自动登录：有保存的测试账号先登录，没有或登录失败时注册一个新账号并保存；都失败时等人工登录。"""
+    account = json.loads(account_file.read_text(encoding="utf-8")) if account_file.exists() else None
     try:
         if account:
+            print(f"用保存的测试账号登录：{account['email']}（{account_file}）")
             try:
                 await ob.act("点击顶部导航的 Sign in", expect="**/login")
                 await ob.act("在 Email 输入框输入 {email}", params={"email": account["email"]})
@@ -73,7 +65,10 @@ async def login(ob: Obact, account_file: Path) -> None:
         await ob.act("在 Password 输入框输入 {password}", params={"password": account["password"]})
         await ob.act("点击 Sign up 按钮", expect="a[href='/editor']")
         ob.save(account, account_file)
-        print(f"已注册测试账号 {account['email']}，保存在 {account_file}")
+        print(
+            f"已注册测试账号：用户名 {account['username']}，邮箱 {account['email']}，密码 {account['password']}；"
+            f"已保存到 {account_file}，下次运行直接用它登录"
+        )
     except StepFailed as e:
         print(f"自动登录失败：{e}")
         await ob.wait_for_human("请在打开的浏览器里登录 Conduit（没有账号先点 Sign up 注册），登录后回到这里")

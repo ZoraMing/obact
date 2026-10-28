@@ -349,5 +349,18 @@
     });
   }
 
-  window.__obact = { snapshot, blocks, clearMarks, nameOf, anchor, settle };
+  // 这次点击或按键是否会在新标签页打开页面：target=_blank 的链接（下载链接除外），
+  // 或 target=_blank 的表单里点提交按钮、在输入框按回车。脚本里 window.open 打开的无法事先判断
+  function opensTab(el, method, key) {
+    const enter = method === 'press' && key === 'Enter';
+    if ((method === 'click' || enter) && el.closest('a[target="_blank"]:not([download])')) return true;
+    const form = el.form || el.closest('form');
+    if (!form || form.target !== '_blank') return false;
+    if (enter) return el.tagName === 'INPUT';
+    if (method !== 'click') return false;
+    const btn = el.closest('button, input[type="submit"], input[type="image"]');
+    return !!btn && (btn.tagName !== 'BUTTON' || btn.type === 'submit');
+  }
+
+  window.__obact = { snapshot, blocks, clearMarks, nameOf, anchor, settle, opensTab };
 }

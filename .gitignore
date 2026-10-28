@@ -5,3 +5,4 @@ workspace
 *.egg-info/
 __pycache__/
 .obact/*_failed.png
+.obact/

@@ -29,7 +29,7 @@ class BookDetail(BaseModel):
 
 async def main(category: str):
     async with Obact(task="books") as ob:
-        await ob.page.goto("https://books.toscrape.com/")
+        await ob.goto("https://books.toscrape.com/")
         await ob.act("点击左侧分类列表中的 {category}", params={"category": category}, expect="**/category/books/**")
 
         # 判断交给代码：先提取数据，再用参数化的 act 操作选中的那一项

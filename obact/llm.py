@@ -5,6 +5,7 @@ import base64
 import json
 import re
 import struct
+import sys
 import zlib
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -187,6 +188,8 @@ class LLM:
         return await self._ask(slot, messages, parse)
 
     async def _chat(self, slot: _Slot, messages: list) -> str:
+        # 模型可能要很久才回复，先打印一行，避免看起来像卡住；不以“[obact] fast ”开头，tasks/run.py 不会计为模型步骤
+        print(f"[obact] 等待 {slot.name} 模型 {slot.model} 回复……", file=sys.stderr, flush=True)
         resp = await slot.client.chat.completions.create(
             model=slot.model, messages=messages, temperature=0, response_format={"type": "json_object"}
         )

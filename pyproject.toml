@@ -2,7 +2,10 @@
 name = "obact"
 version = "0.2.0"
 requires-python = ">=3.11"
-dependencies = ["playwright==1.58.0", "openai", "pydantic>=2"]
+dependencies = ["playwright==1.58.0", "openai", "pydantic>=2", "mcp==1.30.0"]
+
+[project.scripts]
+obact-mcp = "obact.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61"]

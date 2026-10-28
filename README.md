@@ -2,7 +2,9 @@
 
 Obact 是一个单任务网页自动化工具。脚本里每一步写一句自然语言指令：第一次运行时由视觉模型在页面上找到目标并执行（S2），成功后把定位结果缓存下来；之后的运行直接按缓存执行（S1），不调用模型。页面改版导致缓存失效时，自动回到模型重新定位并覆盖缓存（自愈）。
 
-设计依据见 Obact_PRD_v2.md。页面元素收集、选择器生成、页面稳定等待和反自动化检测参考了 Stagehand，见 stagehand_design.md。
+同一套能力既可以写成 Python 脚本按流程执行，也可以通过 MCP 服务交给 AI 客户端（如 Claude Code），由 AI 自主决定每一步。
+
+设计依据见 docs/Obact_PRD_v2.md。页面元素收集、选择器生成、页面稳定等待和反自动化检测参考了 Stagehand，见 docs/stagehand_design.md。
 
 ## 功能
 
@@ -20,8 +22,9 @@ Obact 是一个单任务网页自动化工具。脚本里每一步写一句自�
 - 两个模型槽位 fast 和 smart，fast 失败自动升级到 smart。两者都必须支持图像输入，接口为 OpenAI 格式，本地或云端都可以。
 - 指令参数化：会变化的值用 {名称} 占位，缓存里存的是模板，换参数后仍按缓存回放。
 - 执行后校验（expect），不通过时不写缓存。
+- 点击打开新标签页时，后续步骤自动作用在新标签页上。
 - 降低被识别为自动化浏览器的概率；可以指定浏览器用户目录，跨运行保留登录状态。
-- 配置全部写在 .env 中，启动时自动加载。
+- MCP 服务：把操作作为原子工具提供给 AI 客户端，见“MCP 服务”一节。
 - 自带一组 OSWorld 风格的 Web 任务和运行汇总脚本，见 tasks/。
 
 ## 安装
@@ -37,29 +40,32 @@ playwright install chromium
 
 ## 配置
 
-复制 .env.example 为 .env，至少填写模型的三项：
+复制 .env.example 为 .env，填写模型的三项。大多数情况只需要这一个模型：
 
 ```
-OPENAI_URL = https://example.com/v1
-OPENAI_MODEL = 视觉模型名
-OPENAI_KEY = 你的密钥
+MODEL_BASE_URL = https://example.com/v1
+MODEL_NAME = 视觉模型名
+MODEL_KEY = 你的密钥
 ```
 
-Obact 启动时自动加载当前目录下的 .env（也可以用 Obact(task, env="其他路径") 指定），已经存在的环境变量优先，不会被覆盖。支持 KEY=VALUE、KEY = "VALUE"、export KEY=VALUE，# 开头的行和不带引号的值后面的 " #" 都按注释处理。
+想在这个模型失败时升级到一个更聪明的模型，再加 SMART_MODEL_NAME（接口不同时再加 SMART_MODEL_BASE_URL、SMART_MODEL_KEY）。
+
+Obact 启动时自动加载当前目录下的 .env（也可以用 Obact(task, env="其他路径") 指定），已经存在的环境变量优先，不会被覆盖。支持 KEY=VALUE、KEY = "VALUE"、export KEY=VALUE，# 开头的行和不带引号的值后面的 " #" 都按注释处理。找不到 .env 或没有填模型地址、模型名时，报错会写明查找的路径，并附上一份可以直接填写的模板。
 
 | 环境变量 | 说明 |
 | --- | --- |
-| OPENAI_URL、OPENAI_MODEL、OPENAI_KEY | fast 槽位的接口地址、模型名、密钥 |
-| OBACT_FAST_URL、OBACT_FAST_MODEL、OBACT_FAST_KEY | 可选，单独设置 fast 槽位，优先于 OPENAI_* |
-| OBACT_SMART_URL、OBACT_SMART_MODEL、OBACT_SMART_KEY | 可选，设置 smart 槽位，没写的项沿用 fast |
-| OBACT_FAST_COORDS、OBACT_SMART_COORDS | 模型按 0–1000 归一化输出坐标时（如 Qwen3-VL）设为 norm1000，默认 pixel |
+| MODEL_BASE_URL、MODEL_NAME、MODEL_KEY | 默认模型（fast 槽位）的接口地址、模型名、密钥，必填 |
+| SMART_MODEL_BASE_URL、SMART_MODEL_NAME、SMART_MODEL_KEY | 可选，smart 槽位，fast 失败时升级使用；没写的项沿用 fast，都不写时 smart 就是同一个模型 |
+| MODEL_COORDS、SMART_MODEL_COORDS | 模型按 0–1000 归一化输出坐标时（如 Qwen3-VL）设为 norm1000，默认 pixel |
 | OBACT_VIEWPORT | 浏览器视口，默认 1280x800。canvas 目标按相对视口的比例缓存，视口固定后坐标才能复用 |
-| OBACT_HEADLESS | 是否无头运行，默认 false；wait_for_human 需要有头浏览器 |
-| OBACT_CACHE_DIR | 缓存目录，默认 .obact |
+| OBACT_HEADLESS | 是否无头运行，默认 false（显示浏览器窗口）；wait_for_human 和人工登录需要窗口 |
+| OBACT_CACHE_DIR | 缓存目录，默认 .obact；步骤缓存、失败截图和视觉检查记录都在这里 |
 | OBACT_USER_DATA_DIR | 浏览器用户目录，指定后登录状态和 cookie 跨运行保留；不填则每次使用临时目录 |
 | OBACT_EXECUTABLE_PATH | 改用本机安装的 Chrome 等浏览器 |
 
-启动时会向两个槽位各发一张红色测试图，接口不可用、模型名不存在或模型认不出颜色都会直接报错。.env 已在 .gitignore 中，不要提交。
+视觉检查：第一次使用某个模型地址和模型名时，启动会向两个槽位各发一张红色测试图，接口不可用、模型名不存在或模型认不出颜色都会直接报错。通过后记在缓存目录的 vision_checked.json 中（只记“模型地址|模型名”，不含密钥），之后启动直接跳过；换了地址或模型会重新检查，删掉这个文件可以强制重新检查。
+
+.env 和 .obact 都在 .gitignore 中，不提交到仓库。
 
 ## 快速开始
 
@@ -76,7 +82,7 @@ class Book(BaseModel):
 
 async def main():
     async with Obact(task="books") as ob:                           # 缓存写到 .obact/books.jsonl
-        await ob.page.goto("https://books.toscrape.com/")
+        await ob.goto("https://books.toscrape.com/")
         await ob.act("点击左侧分类列表中的 {category}", params={"category": "Travel"}, expect="**/category/books/**")
         books = await ob.extract("页面上所有书的书名和价格", schema=list[Book])
         cheapest = min(books, key=lambda b: b.price)                 # 判断交给代码
@@ -88,11 +94,13 @@ async def main():
 asyncio.run(main())
 ```
 
-examples/ 下有几个示例，在仓库根目录运行，结果写到 workspace/outputs/：
+examples/ 下的示例在仓库根目录运行，结果写到 workspace/outputs/：
 
 ```powershell
-python examples/books.py Poetry    # 找分类里最便宜的书，读取商品描述，书单写成 CSV 和 Markdown，详情写成 JSON
-python examples/download.py        # 在下载练习页挑一个 .txt 文件下载，文件列表写成 Markdown
+python examples/books.py Poetry      # 找分类里最便宜的书，读取商品描述，书单写成 CSV 和 Markdown，详情写成 JSON
+python examples/download.py          # 在下载练习页挑一个 .txt 文件下载，文件列表写成 Markdown
+python examples/runoob_dfs.py        # 在菜鸟教程找讲 DFS 且带 Python 代码的教程：换词、翻页、规则筛选加模型分级，给出多个结果
+python examples/google_flights.py    # 在 Google Flights 搜索单程航班，用 smart 模型综合票价和耗时推荐航班
 ```
 
 第一次运行每一步都会调用模型；再运行一次，act、read、download 按缓存回放，只有 extract 调用模型。
@@ -103,13 +111,16 @@ python examples/download.py        # 在下载练习页挑一个 .txt 文件下�
 
 | 接口 | 说明 |
 | --- | --- |
-| Obact(task, env=".env") | task 决定缓存文件名；env 是要加载的配置文件 |
-| act(instruction, params=None, step=None, expect=None) | 执行一步操作 |
+| Obact(task, env=".env", headless=None) | task 决定缓存文件名；env 是要加载的配置文件；headless 为 None 时读取 OBACT_HEADLESS |
+| goto(url) | 打开地址，等页面稳定 |
+| act(instruction, params=None, step=None, expect=None, element_id=None, method="click", args=None) | 执行一步操作；element_id、method、args 见 MCP 服务一节的“编号” |
 | read(instruction, params=None, step=None) -> str | 返回区域内的全部文字 |
-| download(instruction, save_to=".", params=None, step=None) -> Path | 返回保存后的文件路径 |
-| extract(instruction, schema) | 返回符合 schema 的数据，schema 可以是 BaseModel 或 list[Model]、list[str] 这类类型 |
+| download(instruction, save_to=".", params=None, step=None, element_id=None) -> Path | 返回保存后的文件路径 |
+| extract(instruction, schema, slot=None) | 返回符合 schema 的数据，schema 可以是 BaseModel 或 list[Model]、list[str] 这类类型；slot 填 "fast" 或 "smart" 时只用这个槽位 |
 | save(data, path) -> Path | 按扩展名写文件 |
 | wait_for_human(message) | 打印提示，在终端按回车后继续 |
+| page_state()、page_info()、cached_steps() | 当前页面的元素清单和带编号框的截图（不调用模型）；地址、标题、标签页数；已缓存的步骤 |
+| last_step | 最近一步的执行信息：执行方式、动作、元素名称或坐标、是否已缓存 |
 | page | 当前 Playwright 页面；点击打开新标签页后指向最新打开的页面 |
 
 写指令的要点：
@@ -135,7 +146,7 @@ download：点击后 15 秒内必须触发浏览器下载，否则视为这一�
 
 wait_for_human：需要人工登录或过验证码时调用。配合 OBACT_USER_DATA_DIR 使用，登录一次后，之后的运行可以复用登录状态。
 
-日志：每一步打印一行，给了 step 时会带上步骤名。
+日志：每一步向标准错误打印一行，给了 step 时会带上步骤名。
 
 | 日志 | 含义 |
 | --- | --- |
@@ -143,11 +154,13 @@ wait_for_human：需要人工登录或过验证码时调用。配合 OBACT_USER_
 | [obact] fast 视觉模型执行（无缓存） | 没有缓存，由 fast 视觉模型定位并执行，成功后写入缓存 |
 | [obact] smart 视觉模型执行（无缓存） | fast 没有完成，由 smart 视觉模型定位并执行 |
 | [obact] fast 视觉模型执行（缓存失效，已自愈） | 缓存核对不符或回放出错，由视觉模型重新定位并覆盖缓存 |
+| [obact] 编号 按编号执行（无缓存） | 按调用方给出的 element_id 执行，没有调用模型，成功后写入缓存 |
 | （参数无法模板化，不缓存） | 参数值没有出现在选择器或输入内容中，这一步每次都走模型 |
 | [obact] fast 视觉模型提取 | extract 调用了模型 |
 | [obact] 已下载 路径 | download 保存了文件 |
+| [obact] 等待 fast 模型 名称 回复…… | 正在调用模型（包括视觉检查和重试），模型回复前不会有新的日志 |
 
-失败处理：各级都失败或执行后校验不通过时抛出 StepFailed。它的 attempts 是各级尝试记录（S1、fast、smart 各自失败的原因），screenshot 是失败时的截图，保存在缓存目录下的 任务名_failed.png。
+失败处理：各级都失败或执行后校验不通过时抛出 StepFailed。它的 attempts 是各级尝试记录（S1、编号、fast、smart 各自失败的原因），screenshot 是失败时的截图，保存在缓存目录下的 任务名_failed.png；executed 为 True 表示动作已经执行、只是执行后校验没有通过。
 
 缓存：每个任务一个文件 .obact/任务名.jsonl，每行一个步骤：
 
@@ -165,7 +178,84 @@ wait_for_human：需要人工登录或过验证码时调用。配合 OBACT_USER_
 | name | 目标元素的可访问名称，S1 执行前用来核对 |
 | method、args | 动作及其参数：click、fill、press、select_option；read 的条目为 read |
 
-想让某个任务重新学习，删掉它的 jsonl 文件即可。缓存文件可以提交到 git 记录版本；损坏的行会被跳过并打印警告。
+想让某个任务重新学习，删掉它的 jsonl 文件即可。损坏的行会被跳过并打印警告。写入前会重新读取文件，多个进程同时使用同一个任务时不会互相覆盖条目。
+
+## MCP 服务
+
+obact/mcp_server.py 通过 stdio 把上面的操作作为原子工具提供给 AI 客户端：AI 决定每一步做什么，Obact 负责在页面上执行并缓存。一个服务进程对应一个任务（一个缓存文件）和一个浏览器会话，工具调用串行执行。
+
+| 工具 | 作用 |
+| --- | --- |
+| goto | 打开 http、https 网址，返回标题、地址和标签页数 |
+| page_state | 返回标题、地址、本页面已缓存的步骤、可交互元素清单（带编号）和带编号框的截图，不调用模型 |
+| act | 执行一步操作，返回执行方式（按缓存回放、按编号执行、模型定位）、操作的元素、是否已缓存和当前页面 |
+| read | 读取区域文字，超过 max_chars（默认 20000）时截断并注明总字数 |
+| download | 点击触发下载，返回文件路径 |
+| extract | 按字段字典提取数据，如 `{"title": "str", "price": "float", "rating": "int?"}`。类型为 str、int、float、bool，带 ? 表示可以为空；many 为 true 时返回列表 |
+| save | 按扩展名保存数据文件，不需要浏览器 |
+
+act、read、download、extract 失败时，返回错误文字和失败截图；动作已执行、只是执行后校验未通过时会注明，提醒 AI 不要直接重试。没有 .env 或缺少必填项时，第一次调用工具会返回错误，写明查找的路径并附上配置模板，由 AI 转告用户。
+
+缓存命中：缓存键是“step（没有 step 时为 instruction）+ 页面路径”，AI 每次措辞不同就不会命中。所以 page_state 会列出本页面已缓存的步骤，服务说明（MCP instructions）要求 AI 把它们原样作为 step 传入，并把会变化的值写成 {占位符}、放进 params。
+
+编号：act、download 可以用 page_state 的编号（element_id）直接指定目标，不调用内部模型。编号只对紧接着的一次 act 或 download 有效；执行前核对页面地址没有变、元素唯一匹配、名称与快照一致，不符时转内部模型按 instruction 定位。编号执行成功后，和模型定位一样写入缓存。
+
+启动参数：
+
+```
+obact-mcp [--task 任务名] [--env 路径] [--headless]
+python -m obact.mcp_server [参数同上]
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| --task | 项目目录名 | 缓存文件 .obact/任务名.jsonl |
+| --env | .env | 配置文件，相对路径按项目目录解析 |
+| --headless | 不加（有头） | 无头运行；不加时按 OBACT_HEADLESS，默认显示浏览器窗口 |
+
+项目目录：环境变量 CLAUDE_PROJECT_DIR 存在时（Claude Code 会为服务进程设置），进程先切换到该目录，否则使用当前工作目录。.env、缓存目录以及 download、save 的相对路径，都按项目目录解析。
+
+部署到项目：
+
+1. 在项目使用的 Python 环境中安装：`pip install -e E:/project/obact`（在本仓库内为 `pip install -e .`），再执行 `playwright install chromium`。
+2. 在项目根目录放 .env（模板见 .env.example）。
+3. 在项目根目录写 .mcp.json：
+
+```json
+{
+  "mcpServers": {
+    "obact": {
+      "command": "obact-mcp"
+    }
+  }
+}
+```
+
+`obact-mcp` 必须能在 PATH 中找到，即先激活安装了 obact 的虚拟环境，再在该终端里启动 Claude Code。也可以把 command 写成虚拟环境里 python 的绝对路径、args 写 `["-m", "obact.mcp_server"]`，这样不用激活，但换一台机器要改路径；不想把本机路径提交到仓库时，用本地作用域：
+
+```
+claude mcp add --scope local obact -- E:/project/obact/.venv/Scripts/obact-mcp.exe
+```
+
+一个项目通常配一个条目就够了：不同流程的步骤按 step 和页面路径区分，可以共用一个缓存文件。需要分开缓存时写多个条目，用 `"args": ["--task", "shop"]` 区分。首次使用项目级 .mcp.json 时，Claude Code 会询问是否允许加载该服务。
+
+运行与关闭：
+
+| 场景 | 行为 |
+| --- | --- |
+| 启动 | 会话连接服务时由客户端启动进程，立即完成握手，不打开浏览器、不调用模型 |
+| 首次使用 | 第一次调用 goto、page_state、act、read、download、extract 时打开浏览器（视觉检查没有记录时先检查）；失败时这次调用返回错误和原因，下次调用会重试 |
+| 浏览器被关掉 | 关掉窗口或浏览器崩溃后，下一次调用自动重新打开，并提示之前的页面状态已丢失 |
+| 关闭 | 会话结束或在 /mcp 中断开时，客户端关闭标准输入，进程退出。Claude Code 约 300 毫秒后会结束服务的进程树，浏览器通常来不及正常关闭；设置了 OBACT_USER_DATA_DIR 时，最近写入的登录状态不保证已经保存 |
+| 改代码或 .env 后 | 运行中的进程不会加载新内容，需要在 /mcp 中重连该服务 |
+| 手动运行 | 在终端直接运行时，进程等待标准输入里的协议消息，看起来像卡住，这是正常的。按 Ctrl+C 退出 |
+| 日志 | 写在标准错误（UTF-8），由客户端收集；标准输出只用于协议消息 |
+
+不提供 wait_for_human：它读取标准输入，与 stdio 通道冲突。需要人工介入时，AI 应停下来，请用户在浏览器窗口中处理。
+
+并发：同一项目同时开多个会话时，每个会话各有一个服务进程，缓存条目不会互相覆盖；但两个浏览器不能共用同一个 OBACT_USER_DATA_DIR，后打开的会失败。
+
+实现与验证方法见 docs/mcp-server.md。
 
 ## OSWorld 风格的 Web 任务
 
@@ -187,17 +277,28 @@ python tasks/run.py shop booking       # 只运行指定任务
 python tasks/shop.py                   # 单独运行一个任务
 ```
 
-汇总表列出每个任务的结果、S1 命中次数和走模型的步骤数（由模型完成的步骤，不含启动时的视觉检查、fast 失败后升级前的那次调用和重试）。第一遍运行各步骤走模型并写入缓存，第二遍可以看到 act、read、download 都变成“S1 命中缓存，直接回放”，只剩 extract 调用模型。结果文件写到 workspace/outputs/tasks/任务名/。
+汇总表列出每个任务的结果、S1 命中次数和走模型的步骤数（由模型完成的步骤，不含视觉检查、fast 失败后升级前的那次调用和重试）。第一遍运行各步骤走模型并写入缓存，第二遍可以看到 act、read、download 都变成“S1 命中缓存，直接回放”，只剩 extract 调用模型。结果文件写到 workspace/outputs/tasks/任务名/。
 
-community.py 会自动登录 Conduit：依次使用 .env 中的 CONDUIT_EMAIL、CONDUIT_PASSWORD，上次自动注册并保存在 workspace/outputs/tasks/community/account.json 的测试账号；都没有或登录失败时在注册页新建一个测试账号并保存，之后的运行直接用它登录。注册也失败时（例如站点加了验证码）改为等你在浏览器里手动登录后按回车。设置 OBACT_USER_DATA_DIR 时，已登录的浏览器会直接复用。它会真实地发布文章和评论，并在结束前删除；发布文章后中途失败时，直接删除文章再退出。文章页的地址每次不同，这部分步骤每次都会调用模型；个人主页文章卡片的名称里带有每次不同的简介，按标题打开文章这一步每次都会自愈。
+community.py 会自动登录 Conduit：第一次运行时在注册页新建一个测试账号，打印用户名、邮箱和密码，并保存到 workspace/outputs/tasks/community/account.json，之后的运行直接用它登录；登录失败（例如练习站清空了数据）时重新注册并覆盖保存。注册也失败时（例如站点加了验证码）改为等你在浏览器里手动登录后按回车。设置 OBACT_USER_DATA_DIR 时，已登录的浏览器会直接复用。它会真实地发布文章和评论，并在结束前删除；发布文章后中途失败时，直接删除文章再退出。文章页的地址每次不同，这部分步骤每次都会调用模型；个人主页文章卡片的名称里带有每次不同的简介，按标题打开文章这一步每次都会自愈。
+
+## 测试
+
+tests/smoke.py 是冒烟测试：用本地测试页和 .env 里配置的真实模型跑两遍主流程，第一遍各步骤由模型完成并写缓存，第二遍检查 act、read、download 全部按缓存回放；最后以子进程启动 MCP 服务，检查握手、goto、page_state、按编号和按指令的 act。缓存写到临时目录，不访问外网，浏览器无头运行。
+
+```powershell
+python tests/smoke.py                  # 用 .env 里的模型
+python tests/smoke.py --env 其他配置    # 用另一个配置文件
+```
+
+换模型测试时，也可以直接在命令行设置 MODEL_BASE_URL、MODEL_NAME、MODEL_KEY，它们优先于 .env。全部通过时退出码为 0；失败时保留缓存目录和失败截图，并打印路径。
 
 ## 架构
 
 ```
-用户脚本
+用户脚本            MCP 客户端 ── mcp_server.py
    │  act / read / download / extract / save
    ▼
-core.py ── 唯一的编排者：加载 .env，S1 → fast → smart，执行动作，执行后校验
+core.py ── 唯一的编排者：加载 .env，S1 → 编号 → fast → smart，执行动作，执行后校验
    │            │             │              │
    ▼            ▼             ▼              ▼
 snapshot.py   cache.py      llm.py         output.py
@@ -210,13 +311,14 @@ snapshot.js   缓存键、模板   fast / smart   结果文件
 | 模块 | 职责 |
 | --- | --- |
 | core.py | Obact 类：读配置、启动浏览器、编排每一步、执行动作、校验结果、写缓存、抛出 StepFailed |
-| snapshot.js | 注入页面的脚本：收集元素和文本块、遮挡检测、生成选择器、参数锚定、画编号框、等待 DOM 稳定 |
+| snapshot.js | 注入页面的脚本：收集元素和文本块、遮挡检测、生成选择器、参数锚定、画编号框、等待 DOM 稳定、判断动作是否会打开新标签页 |
 | snapshot.py | 调用 snapshot.js，组装发给模型的清单文字、截图和"编号 → 选择器"对照表；跟踪进行中的网络请求，等待页面稳定 |
 | cache.py | 缓存键生成、参数模板化与回填、JSONL 读写 |
 | llm.py | 两个模型槽位、提示词、视觉能力检查、JSON 解析与重试 |
 | output.py | 按扩展名把结果写成文件 |
+| mcp_server.py | MCP 服务：工具定义、延迟打开和重建浏览器、结果与错误的格式化 |
 
-core 是唯一的编排者，snapshot、cache、llm、output 互不引用；浏览器只由 core（执行动作）和 snapshot（读取页面）访问。
+core 是唯一的编排者，snapshot、cache、llm、output 互不引用；浏览器只由 core（执行动作）和 snapshot（读取页面）访问；mcp_server 只调用 core 的公开方法。
 
 一步操作的流程（act、read、download 相同）：
 
@@ -225,7 +327,8 @@ core 是唯一的编排者，snapshot、cache、llm、output 互不引用；浏�
 ├─ 缓存命中 → S1：等元素出现 → 核对 → 执行 → 执行后校验 → 返回
 │               核对不符或执行出错 → 转 S2
 │               执行后校验不通过 → 删除这条缓存，抛 StepFailed
-└─ S2：快照 → fast 模型 → 执行 → 执行后校验 → 写缓存 → 返回
+└─ S2：给了 element_id 时先按编号执行，核对不符再转模型
+       快照 → fast 模型 → 执行 → 执行后校验 → 写缓存 → 返回
          模型找不到、编号无效或执行出错 → 换 smart 再来一次 → 仍失败抛 StepFailed
          执行后校验不通过 → 直接抛 StepFailed，不写缓存、不升级
 ```
@@ -243,7 +346,7 @@ core 是唯一的编排者，snapshot、cache、llm、output 互不引用；浏�
 
 S1 核对：act 和 download 要求选择器只匹配到一个可见元素，并且可访问名称与缓存一致；read 的区域内容本身会变，只要求唯一匹配且有文字；坐标条目不核对。
 
-等待页面稳定：每个动作执行后、每次拍快照前，都等进行中的文档、脚本、xhr、fetch 请求结束，并且 DOM 连续 300 毫秒没有节点变化，总共最多 5 秒。超过 2 秒还没结束的请求视为卡住，不再等待（例如连不上的第三方统计脚本）。请求通过 Playwright 事件跟踪，页面感知不到。
+等待页面稳定：每个动作执行后、每次拍快照前，都等进行中的文档、脚本、xhr、fetch 请求结束，并且 DOM 连续 300 毫秒没有节点变化，总共最多 5 秒。超过 2 秒还没结束的请求视为卡住，不再等待（例如连不上的第三方统计脚本）。请求通过 Playwright 事件跟踪，页面感知不到。点击 target=_blank 的链接、提交 target=_blank 的表单时，先等新标签页出现（最多 10 秒），再在新标签页上等稳定。
 
 模型调用：请求带 response_format json_object，回复用 pydantic 校验；接口出错或 JSON 不合法时同一模型重试 1 次，仍失败则升级到下一级。
 
@@ -257,23 +360,29 @@ S1 核对：act 和 download 要求选择器只匹配到一个可见元素，并
 4. 不支持 iframe 里的内容、shadow DOM、浏览器原生弹窗里的内容（alert、confirm、prompt 一律自动接受）和文件上传。
 5. wait_for_human 只能在终端按回车继续。
 6. 没有写 expect 时，执行不报错即视为成功并写入缓存。
-7. 启动时的视觉检查每次运行都会调用模型，全部命中缓存的运行也需要模型接口可用。
+7. 视觉检查按“模型地址|模型名”记录，只在第一次使用时进行；之后接口失效或换了密钥，要等第一次真正调用模型时才会报错。
+8. 页面脚本用 window.open 打开的新标签页无法事先判断，出现得比页面稳定还晚时，后续步骤仍会作用在原来的页面上。
 
 ## 目录结构
 
 ```
 obact/
-  core.py          编排层
-  snapshot.py      页面快照与页面稳定等待
-  snapshot.js      注入页面的脚本
-  cache.py         缓存
-  llm.py           模型调用与提示词
-  output.py        结果文件
-examples/          使用示例
-tasks/             OSWorld 风格的 Web 任务和运行汇总脚本 run.py
-.env.example       配置模板
+  core.py              编排层
+  snapshot.py          页面快照与页面稳定等待
+  snapshot.js          注入页面的脚本
+  cache.py             缓存
+  llm.py               模型调用与提示词
+  output.py            结果文件
+  mcp_server.py        MCP 服务
+examples/              使用示例
+tasks/                 OSWorld 风格的 Web 任务和运行汇总脚本 run.py
+tests/smoke.py         冒烟测试（本地测试页 + 真实模型 + MCP 子进程）
+docs/
+  Obact_PRD_v2.md      设计文档
+  mcp-server.md        MCP 服务的实现与验证
+  stagehand_design.md  Stagehand 设计参考
+.env.example           配置模板
+.mcp.json              本仓库的 MCP 配置
 pyproject.toml
-Obact_PRD_v2.md    设计文档
-stagehand_design.md
-AGENTS.md          给编码代理的项目说明
+AGENTS.md              给编码代理的项目说明
 ```

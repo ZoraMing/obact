@@ -126,6 +126,12 @@ async def name_of(page: Page, locator: Locator) -> str:
     return await locator.evaluate("el => window.__obact.nameOf(el)")
 
 
+async def opens_tab(page: Page, locator: Locator, method: str, key: str) -> bool:
+    """对这个元素执行 method（press 时按 key）是否会在新标签页打开页面，规则见 snapshot.js 的 opensTab。"""
+    await ensure(page)
+    return await locator.evaluate("(el, [m, k]) => window.__obact.opensTab(el, m, k)", [method, key])
+
+
 async def anchor(page: Page, element_id: int, values: list[str]) -> str | None:
     """为最近一次快照中的元素生成包含参数值的选择器，找不到返回 None。"""
     xpath = await page.evaluate(

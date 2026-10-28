@@ -20,7 +20,7 @@ Obact 是一个单任务网页自动化工具：第一次运行由视觉模型�
 
 ## 架构设计图
 
-![obact 架构](images/1-architecture.svg)
+![obact 架构](./images/1-architecture.svg)
 
 core 是唯一的编排者：snapshot、cache、llm 互不引用，可以单独测试或替换；浏览器只由 core（执行动作）和 snapshot（读取页面）访问。
 
@@ -54,25 +54,25 @@ async with Obact(task="flight") as ob:
 配置全部来自环境变量，写在 `.env` 中，启动时自动加载，已存在的环境变量优先：
 
 ```
-OPENAI_URL = http://localhost:8000/v1     # 两个槽位都必须支持图像输入
-OPENAI_MODEL = <视觉小模型>               # fast 槽位
-OPENAI_KEY = <密钥>
-OBACT_SMART_MODEL = <高级视觉模型>        # smart 槽位；没写的项沿用 fast
+MODEL_BASE_URL = http://localhost:8000/v1   # 两个槽位都必须支持图像输入
+MODEL_NAME = <视觉小模型>                   # fast 槽位
+MODEL_KEY = <密钥>
+SMART_MODEL_NAME = <高级视觉模型>           # smart 槽位；没写的项沿用 fast
 OBACT_VIEWPORT = 1280x800                # 固定视口，保证 canvas 坐标可以复用
 OBACT_CACHE_DIR = .obact
 ```
 
-启动时向两个模型各发一张很小的测试图，不支持视觉就直接报错。`.env` 不提交到仓库。
+第一次使用某个模型地址和模型名时，启动时向两个模型各发一张很小的测试图，不支持视觉就直接报错；通过后记录在缓存目录，之后启动跳过检查。`.env` 不提交到仓库。
 
 ## act() 总流程
 
-![act() 总流程](images/2-act-flow.svg)
+![act() 总流程](./images/2-act-flow.svg)
 
 首次运行时缓存为空，每一步都从右列开始；之后命中的步骤只走左列。S1 核对不符或执行出错时转 S2 自愈；动作已执行但 expect 不通过时直接抛错，不再升级。
 
 ## 数据流
 
-![数据流](images/3-data-flow.svg)
+![数据流](./images/3-data-flow.svg)
 
 S1 只用到实线：读缓存条目、填回参数、执行动作。各项数据的内容：
 
@@ -86,13 +86,13 @@ S1 只用到实线：读缓存条目、填回参数、执行动作。各项数�
 
 ## 各情况运行流程
 
-![各情况运行流程](images/4-scenarios.svg)
+![各情况运行流程](./images/4-scenarios.svg)
 
 每一行是一种情况下一步操作实际经过的环节。canvas 的路径与首次运行相同，只是模型返回坐标、缓存存 point，后续运行按坐标走 S1。`wait_for_human` 不在这条链上：脚本主动调用时暂停，人工完成验证后从下一步继续。
 
 ## 缓存格式
 
-每个任务一个文件 `.obact/<task>.jsonl`，每行一个步骤条目，只存回放必需的字段；版本历史交给 git。
+每个任务一个文件 `.obact/<task>.jsonl`，每行一个步骤条目，只存回放必需的字段；缓存目录默认不提交到仓库。
 
 ```json
 {"key": "点击航班 {flight_no} 的预订按钮|flights.example.com/search",

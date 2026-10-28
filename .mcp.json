@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+        "obact-browser": {
+            "command": "E:/project/obact/.venv/Scripts/python.exe",
+            "args": ["-m", "obact.mcp_server"]
+        }
+    }
+}

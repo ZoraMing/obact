@@ -15,7 +15,7 @@ OUT = Path("workspace/outputs/download")
 
 async def main():
     async with Obact(task="download") as ob:
-        await ob.page.goto("https://the-internet.herokuapp.com/download")
+        await ob.goto("https://the-internet.herokuapp.com/download")
         names = await ob.extract("页面上所有可下载文件的文件名", schema=list[str])
         name = next(n for n in names if n.lower().endswith(".txt"))
         print(f"共 {len(names)} 个文件，下载 {name}")

@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -85,10 +86,13 @@ def templatize(entry: dict, params: dict[str, str]) -> dict | None:
 class Cache:
     def __init__(self, path: Path):
         self.path = path
-        self._entries: dict[str, dict] = {}
-        if not path.exists():
-            return
-        for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        self._entries = self._load(warn=True)
+
+    def _load(self, warn: bool) -> dict[str, dict]:
+        entries: dict[str, dict] = {}
+        if not self.path.exists():
+            return entries
+        for no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:
@@ -101,20 +105,29 @@ class Cache:
                 ):
                     raise ValueError("缺少必需字段")
             except ValueError as e:
-                print(f"[obact] 警告：{path} 第 {no} 行损坏，已跳过（{e}）", flush=True)
+                if warn:
+                    print(f"[obact] 警告：{self.path} 第 {no} 行损坏，已跳过（{e}）", file=sys.stderr, flush=True)
                 continue
-            self._entries[entry["key"]] = entry
+            entries[entry["key"]] = entry
+        return entries
 
     def get(self, key: str) -> dict | None:
         return self._entries.get(key)
 
+    def on_page(self, url: str) -> list[tuple[str, dict]]:
+        """该页面（域名 + 路径）下的缓存条目，连同键中 step 或指令模板的部分。"""
+        suffix = cache_key("", url)
+        return [(k[: -len(suffix)], e) for k, e in self._entries.items() if k.endswith(suffix)]
+
     def put(self, entry: dict) -> None:
-        """写入或覆盖条目，整文件重写。"""
+        """写入或覆盖条目。先重新读取文件，保留其他进程写入的条目，再整文件重写。"""
+        self._entries = self._load(warn=False)
         self._entries[entry["key"]] = entry
         self._write()
 
     def delete(self, key: str) -> None:
-        """删除条目，整文件重写。"""
+        """删除条目。先重新读取文件，保留其他进程写入的条目，再整文件重写。"""
+        self._entries = self._load(warn=False)
         if self._entries.pop(key, None) is not None:
             self._write()
 
