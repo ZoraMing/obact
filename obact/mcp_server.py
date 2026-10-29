@@ -28,6 +28,8 @@ HOW = {"S1": "按缓存回放（未调用模型）", "编号": "按编号执行�
 INSTRUCTIONS = """Obact 浏览器自动化。一个服务对应一个浏览器会话，操作作用在最新打开的标签页上。
 
 推荐流程：goto 打开页面 → page_state 查看元素清单和截图 → act 操作；长文用 read 读取，零散字段用 extract 提取。
+滚动后才加载的内容（懒加载、无限滚动），先用 scroll 向下滚动，再 page_state 查看。
+截图里还在加载（骨架屏、加载中）时，用 wait 等某段文字或元素出现，例如 until="text=共 20 条"，再 page_state 查看；没有明确条件可等时，不给 until，固定等 timeout 秒。
 
 缓存：act、read、download 成功后按“step（没有 step 时为 instruction）+ 页面路径”缓存，之后按缓存回放，不调用模型。为了命中缓存：
 - page_state 会列出本页面已缓存的步骤，优先把它原样作为 step 传入；
@@ -35,7 +37,7 @@ INSTRUCTIONS = """Obact 浏览器自动化。一个服务对应一个浏览器�
 - 新步骤给一个描述具体动作的 step 名称，不同的动作不要复用同一个 step。
 
 编号：page_state 返回的编号可以作为 act、download 的 element_id 直接指定目标（act 同时给出 method 和 args），不调用内部模型。
-编号在下一次 act、download、read、goto 之后失效。instruction 仍然必填，用于缓存和编号失效时由模型重新定位。
+编号在下一次 act、download、read、goto、scroll 之后失效。instruction 仍然必填，用于缓存和编号失效时由模型重新定位。
 
 失败：错误中提示“动作已经执行”时不要直接重试，先调用 page_state 查看页面；中断工具调用后也先 page_state 确认状态。
 
@@ -118,11 +120,44 @@ def build_server(task: str, env: str, headless: bool | None) -> FastMCP:
             [
                 notice + _describe(info),
                 _cached(steps),
-                "可交互元素（编号可作为 act、download 的 element_id，下一次 act、download、read、goto 之后失效）：\n"
+                "可交互元素（编号可作为 act、download 的 element_id，下一次 act、download、read、goto、scroll 之后失效）：\n"
                 + snap.text,
             ]
         )
         return [text, Image(data=snap.image, format="png")]
+
+    @mcp.tool()
+    async def scroll(ctx: Context) -> str:
+        """在鼠标当前位置向下滚动一屏，等页面稳定后返回页面位置、是否已到底和当前页面。不移动鼠标，悬停状态保留。"""
+        s = session(ctx)
+        async with s.lock:
+            ob, notice = await s.browser()
+            before, after = await ob.scroll()
+            info = await ob.page_info()
+        if before == after:
+            state = "已到底：页面没有移动（鼠标停在可滚动的局部区域上时，滚动的是那个区域，可用 page_state 查看）"
+        else:
+            state = "未到底，可以继续 scroll"
+        return notice + f"页面纵向位置：{before} → {after}；{state}\n" + _describe(info)
+
+    @mcp.tool()
+    async def wait(
+        ctx: Context,
+        until: Annotated[
+            str | None,
+            Field(description="等待条件，写法同 expect：地址模式（http://、https://、** 开头）或选择器，如 text=加载完成；"
+                  "不给时固定等 timeout 秒"),
+        ] = None,
+        timeout: Annotated[float, Field(description="给了 until 时最多等多少秒；没给时固定等的秒数")] = 30,
+    ) -> str:
+        """等加载慢的页面或组件：条件满足（或固定等够时间）并且页面稳定后返回当前页面；条件超时报错。不调用模型。"""
+        s = session(ctx)
+        async with s.lock:
+            ob, notice = await s.browser()
+            await ob.wait_for(until, timeout)
+            info = await ob.page_info()
+        done = f"已满足：{until}" if until else f"已等待 {timeout} 秒"
+        return notice + done + "\n" + _describe(info)
 
     @mcp.tool()
     async def act(
@@ -138,13 +173,15 @@ def build_server(task: str, env: str, headless: bool | None) -> FastMCP:
             int | None, Field(description="page_state 中的元素编号；给出时直接操作该元素，不调用内部模型")
         ] = None,
         method: Annotated[
-            Literal["click", "fill", "press", "select_option"], Field(description="element_id 对应的动作")
+            Literal["click", "fill", "press", "select_option", "hover"],
+            Field(description="element_id 对应的动作；hover 为鼠标悬停，用于展开悬停菜单、显示悬停才出现的按钮"),
         ] = "click",
         args: Annotated[
-            list[str] | None, Field(description="动作参数：fill 为输入内容，press 为按键，select_option 为选项")
+            list[str] | None,
+            Field(description="动作参数：fill 为输入内容，press 为按键，select_option 为选项；click、hover 不用"),
         ] = None,
     ):
-        """在当前页面执行一步操作（点击、填写、按键、下拉选择），返回执行方式、操作的元素和当前页面。"""
+        """在当前页面执行一步操作（点击、悬停、填写、按键、下拉选择），返回执行方式、操作的元素和当前页面。"""
         s = session(ctx)
         async with s.lock:
             ob, notice = await s.browser()
@@ -194,6 +231,25 @@ def build_server(task: str, env: str, headless: bool | None) -> FastMCP:
             except StepFailed as e:
                 return _failure(e, notice)
             return notice + f"已下载：{path}\n" + _done(ob.last_step)
+
+    @mcp.tool()
+    async def upload(
+        instruction: Annotated[str, Field(description="点击上传按钮或文件输入框的指令")],
+        files: Annotated[list[str], Field(description="要上传的本地文件路径，相对路径按项目目录解析")],
+        ctx: Context,
+        params: Params = None,
+        step: Step = None,
+        element_id: Annotated[int | None, Field(description="page_state 中的元素编号；给出时直接点击该元素")] = None,
+    ):
+        """点击上传按钮，在弹出的文件选择框里选中 files，等页面稳定后返回执行信息和当前页面。"""
+        s = session(ctx)
+        async with s.lock:
+            ob, notice = await s.browser()
+            try:
+                await ob.upload(instruction, files, params=params, step=step, element_id=element_id)
+            except StepFailed as e:
+                return _failure(e, notice)
+            return notice + f"已上传：{'、'.join(files)}\n" + _done(ob.last_step) + "\n" + _describe(await ob.page_info())
 
     @mcp.tool()
     async def extract(
@@ -285,7 +341,7 @@ def _schema(fields: dict[str, str], many: bool) -> Any:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="以 MCP stdio 方式提供 Obact 原子工具")
-    parser.add_argument("--task", help="任务名，决定缓存文件 .obact/<任务名>.jsonl；默认取项目目录名")
+    parser.add_argument("--task", help="任务名，决定缓存文件夹 .obact/<任务名>/；默认取项目目录名")
     parser.add_argument("--env", default=".env", help="配置文件路径，相对路径按项目目录解析，默认 .env")
     parser.add_argument("--headless", action="store_true", help="无头运行；不加时按 OBACT_HEADLESS，默认显示浏览器窗口")
     args = parser.parse_args()

@@ -7,7 +7,7 @@
 按“符合、部分符合”的顺序列出全部结果；都不符合时如实报告未找到，并列出看过的文章和原因。
 
 在仓库根目录运行：python examples/runoob_dfs.py
-第一次运行时搜索、打开结果等步骤走模型并写入 .obact/runoob_dfs.jsonl；再次运行时这些步骤按缓存回放，
+第一次运行时搜索、打开结果等步骤走模型并写入 .obact/runoob_dfs/steps.jsonl；再次运行时这些步骤按缓存回放，
 提取搜索结果、判断文章和读取代码仍然调用模型。结果写到 workspace/outputs/runoob_dfs/result.json。
 """
 

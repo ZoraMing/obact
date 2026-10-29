@@ -1,7 +1,7 @@
 """示例：在 Books to Scrape（爬虫练习站）的指定分类里找最便宜的书，读取详情页的商品描述，结果整理成文件。
 
 在仓库根目录运行：python examples/books.py [分类名]，例如 python examples/books.py Poetry
-第一次运行每步都走模型并写入 .obact/books.jsonl；再次运行时 act 和 read 按缓存回放，只有 extract 调用模型。
+第一次运行每步都走模型并写入 .obact/books/steps.jsonl；再次运行时 act 和 read 按缓存回放，只有 extract 调用模型。
 结果写到 workspace/outputs/books/：书单 CSV 和 Markdown 表格，最便宜那本书的详情 JSON。
 """
 

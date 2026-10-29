@@ -95,10 +95,10 @@ def count_calls() -> None:
     chat = llm.LLM._chat
     kinds = {"这张图片": "vision", "操作指令": "act", "读取要求": "read", "提取要求": "extract"}
 
-    async def counted(self, slot, messages):
+    async def counted(self, slot, messages, schema=None):
         text = messages[-1]["content"][0]["text"]
         CALLS[next((v for k, v in kinds.items() if text.startswith(k)), "other")] += 1
-        return await chat(self, slot, messages)
+        return await chat(self, slot, messages, schema)
 
     llm.LLM._chat = counted
 
@@ -137,7 +137,7 @@ async def mcp_smoke(env: Path, home: str, project: Path, checks: Checks) -> None
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         tools = {t.name for t in (await session.list_tools()).tools}
-        checks.check(len(tools) == 7, f"MCP 列出 7 个工具：{sorted(tools)}")
+        checks.check(len(tools) == 10, f"MCP 列出 10 个工具：{sorted(tools)}")
         r = await session.call_tool("goto", {"url": home})
         checks.check(not r.isError and "Obact 冒烟测试" in r.content[0].text, "MCP goto")
         r = await session.call_tool("page_state", {})

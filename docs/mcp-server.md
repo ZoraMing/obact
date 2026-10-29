@@ -30,13 +30,16 @@ AI 客户端 ──stdio(MCP)──> mcp_server.py ──> Obact（core）──
 | --- | --- |
 | Obact(task, env, headless) | headless 为 None 时读取 OBACT_HEADLESS（默认有头）；服务只在加了 --headless 时传 True |
 | goto(url) | wait_until="domcontentloaded" 后 settle；作废编号快照 |
+| scroll() | 在鼠标当前位置用滚轮向下滚动一屏（不移动鼠标）后 settle，返回滚动前后页面的纵向位置；作废编号快照 |
+| wait_for(until, timeout) | 等地址匹配或选择器可见后 settle，超时抛 TimeoutError；until 为空时固定等 timeout 秒 |
+| upload(instruction, files, params, step, element_id) | 点击后接住文件选择框并选中 files；没有出现选择框时 StepFailed |
 | page_state() | snapshot.take 的结果，同时记下（页面、地址、快照）供 element_id 使用 |
 | page_info() | 地址、标题、标签页数 |
 | cached_steps() | 当前页面（域名 + 路径）下的缓存条目及其标签（键中 \| 之前的部分） |
 | act(..., element_id, method, args)、download(..., element_id) | 编号执行，见第 5 节 |
 | last_step | 最近一步的执行信息：how（S1、编号、fast、smart）、method、name 或 point、cached |
 | closed | 浏览器上下文已关闭，或没有页面 |
-| StepFailed.executed | 动作已执行、执行后校验未通过（expect 不通过、点击后没有触发下载） |
+| StepFailed.executed | 动作已执行、执行后校验未通过（expect 不通过、点击后没有触发下载、没写 expect 时动作执行后页面没有变化） |
 | Obact.save | 静态方法，save 工具不需要打开浏览器 |
 
 ## 4. 工具
@@ -45,16 +48,19 @@ AI 客户端 ──stdio(MCP)──> mcp_server.py ──> Obact（core）──
 | --- | --- | --- |
 | goto | url（只允许 http、https，否则直接报错） | 标题、地址、标签页数 |
 | page_state | 无 | 文字：页面信息、已缓存步骤、元素清单；图片：带编号框的截图 |
+| scroll | 无 | 滚动前后页面的纵向位置、是否已到底（两者相同即到底），加页面信息 |
+| wait | until（可选）、timeout | 已满足的条件或已等待的秒数，加页面信息；条件超时返回错误 |
 | act | instruction、params、step、expect、element_id、method、args | 执行方式、动作、元素、是否已缓存，加页面信息 |
 | read | instruction、params、step、max_chars（默认 20000） | 区域文字；超长时截断并注明总字数 |
 | download | instruction、save_to（默认 .）、params、step、element_id | 文件路径、执行方式 |
+| upload | instruction、files、params、step、element_id | 已上传的文件、执行方式，加页面信息 |
 | extract | instruction、fields、many | JSON 文本 |
 | save | data、path | 文件路径 |
 
 参数细节：
 
 - params 的值可以是 str、int、float，core 统一转为字符串。
-- method 取 click、fill、press、select_option，只在给出 element_id 时使用；fill、press、select_option 必须给 args，校验由 llm.Decision 完成，不合法时直接报错。
+- method 取 click、hover、fill、press、select_option，只在给出 element_id 时使用；fill、press、select_option 必须给 args，校验由 llm.Decision 完成，不合法时直接报错。
 - extract 的 fields 是字段名到类型名的映射，类型为 str、int、float、bool，后缀 ? 表示可选（类型为 X | None，默认 None）。由 _schema 用 create_model 生成模型，many 为 true 时为 list[模型]。fields 为空或类型不合法时，在调用模型之前报错。
 
 返回值与错误：
@@ -72,10 +78,10 @@ AI 客户端 ──stdio(MCP)──> mcp_server.py ──> Obact（core）──
 流程（core._step）：S1 → 编号 → fast → smart。
 
 - 缓存命中时仍先走 S1，编号不使用。
-- _picked 在 act、download 开始时取出并作废快照，所以快照只能用一次。read（文本块快照会替换页面里记录的编号）和 goto 也会作废快照。
+- _picked 在 act、download 开始时取出并作废快照，所以快照只能用一次。read（文本块快照会替换页面里记录的编号）、goto 和 scroll 也会作废快照。
 - 执行前核对：快照的页面对象和地址与当前一致；编号在快照的清单中；对应选择器唯一匹配且名称与快照一致。不符时抛 _Mismatch 或 _Miss，记入 attempts，转 fast。
 - 执行使用与模型定位相同的 _apply：参数值不在选择器里时用 snapshot.anchor 生成锚定选择器，条目在执行前生成，由 _step 统一模板化后写缓存，参数无法模板化时不缓存。
-- 执行后校验不通过时，与其他级别一样直接抛 StepFailed，不升级到模型。
+- 执行后校验不通过时，与其他级别一样直接抛 StepFailed，不升级到模型；没写 expect 时动作执行后页面没有任何变化，与其他级别一样不写缓存，转 fast。
 
 ## 6. 缓存
 
@@ -88,11 +94,11 @@ AI 客户端 ──stdio(MCP)──> mcp_server.py ──> Obact（core）──
 不写 pytest。在 scratchpad 中用临时脚本验证：
 
 1. 进程内：mcp.shared.memory 的 create_connected_server_and_client_session 连接 build_server；按 AGENTS.md 的方法替换 LLM._chat；测试页由本地 HTTP 服务提供（goto 不接受 file://），页面需要声明 `<meta charset="utf-8">`。
-   - 检查：列出工具后未做视觉检查；goto file:// 被拒；首次 goto 后视觉检查两次；act 走模型并缓存；page_state 列出已缓存步骤；编号执行不调用模型并缓存；快照作废后转模型；expect 失败返回截图并注明已执行，且不写缓存；read 截断；download 保存文件；extract 可选字段为 null；extract 类型不合法报错；关闭浏览器后下一次调用自动恢复。
+   - 检查：列出工具后未做视觉检查；goto file:// 被拒；首次 goto 后视觉检查两次；act 走模型并缓存；page_state 列出已缓存步骤；编号执行不调用模型并缓存；快照作废后转模型；scroll 返回滚动前后的位置，到底时注明已到底，之后按编号 act 转模型；expect 失败返回截图并注明已执行，且不写缓存；read 截断；download 保存文件；extract 可选字段为 null；extract 类型不合法报错；关闭浏览器后下一次调用自动恢复。
    - 第二个服务实例：page_state 列出缓存；act、read、download 全部按缓存回放，模型调用为 0。
    - 两个 Cache 实例交替写同一文件，条目都保留。
 2. 真实子进程：mcp.client.stdio 启动 `python -m obact.mcp_server`，工作目录故意不设为项目目录，并设置 CLAUDE_PROJECT_DIR；用本地 HTTP 服务模拟 OpenAI 接口，统计请求次数。
-   - 检查：握手期间没有模型请求；首次 goto 后才有两次视觉检查请求；缓存写在 CLAUDE_PROJECT_DIR/.obact/目录名.jsonl；标准错误能按 UTF-8 解码。
+   - 检查：握手期间没有模型请求；首次 goto 后才有两次视觉检查请求；缓存写在 CLAUDE_PROJECT_DIR/.obact/目录名/steps.jsonl；标准错误能按 UTF-8 解码。
 3. `ruff check obact examples tasks --line-length 120`。
 
 ## 8. 已知限制

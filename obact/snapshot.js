@@ -22,6 +22,9 @@
     'TABLE', 'TR', 'PRE', 'BLOCKQUOTE', 'FORM', 'FIGURE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
   ]);
   const MIN_BLOCK_TEXT = 10;
+  const MAX_LEAF_TEXT = 30;
+  const MAX_PSEUDO_NODES = 20;
+  const PRIVATE_USE = /[\uE000-\uF8FF]/g;
   // 生成选择器时依次尝试的属性；文本谓词排在 alt 之后、type 之前
   const ATTRS_BEFORE_TEXT = ['data-testid', 'data-test', 'data-qa', 'id', 'name', 'aria-label', 'placeholder', 'title', 'alt'];
   const ATTRS_AFTER_TEXT = ['type', 'role'];
@@ -153,7 +156,29 @@
       n = clean(el.innerText);
     }
     if (!n) n = clean(el.getAttribute('title') || el.getAttribute('alt') || el.querySelector('img[alt]')?.getAttribute('alt'));
+    if (!n) n = pseudoName(el);
     return n.slice(0, 80);
+  }
+
+  // ::before 或 ::after 生成的文字。content 只取引号里的字符串，有 "/" 后的替代文字时取替代文字；
+  // none、normal 以及含 counter()、open-quote、url() 等算不出文字的值返回空；去掉图标字体用的私用区字符
+  function pseudoText(el, which) {
+    const st = getComputedStyle(el, which);
+    if (st.display === 'none' || st.visibility !== 'visible') return '';
+    const tokens = st.content.match(/"(?:[^"\\]|\\.)*"|[^\s"]+/g) || [];
+    const slash = tokens.indexOf('/');
+    const strs = slash >= 0 ? tokens.slice(slash + 1) : tokens;
+    if (!strs.length || strs.some((t) => t[0] !== '"')) return '';
+    const unescape = (s) => s.slice(1, -1).replace(/\\([0-9a-fA-F]{1,6})\s?|\\([\s\S])/g,
+      (m, hex, ch) => (hex ? String.fromCodePoint(parseInt(hex, 16)) : ch));
+    return strs.map(unescape).join('').replace(PRIVATE_USE, '');
+  }
+
+  // 元素本身和前 MAX_PSEUDO_NODES 个可见后代的伪元素文字，如文字写在 <button><i></i></button> 的 i::before 里
+  function pseudoName(el) {
+    const inner = Array.from(el.querySelectorAll('*')).slice(0, MAX_PSEUDO_NODES).filter((d) => d.checkVisibility());
+    const parts = inner.flatMap((d) => [pseudoText(d, '::before'), pseudoText(d, '::after')]);
+    return clean([pseudoText(el, '::before'), ...parts, pseudoText(el, '::after')].join(' '));
   }
 
   function valueOf(el) {
@@ -179,6 +204,14 @@
       return !parent || getComputedStyle(parent).cursor !== 'pointer';
     }
     return false;
+  }
+
+  // 叶子文字元素：没有子元素，带一段含字母或数字的短文字，不在 label 里。靠事件委托响应点击的元素（React 的下拉项、
+  // 日历格子）自身没有交互特征，靠这条规则进清单（参考 Stagehand v1 的 isLeafElement）
+  function isLeafText(el) {
+    if (el.childElementCount || el.closest('label')) return false;
+    const text = clean(el.textContent);
+    return text.length <= MAX_LEAF_TEXT && /[\p{L}\p{N}]/u.test(text);
   }
 
   function visibleRect(el, st) {
@@ -215,25 +248,35 @@
     });
   }
 
-  // 收集整页可见元素；遮挡检测只对中心在视口内的元素做，超过上限时优先保留离视口近的
+  // 收集整页可见元素；遮挡检测只对中心在视口内的元素做。叶子文字元素只收视口内、不在可交互元素里面的。
+  // 超过上限时先保留可交互元素，再按离视口的远近
   function collect() {
     const walker = makeWalker();
     const found = [];
+    const owners = new Set();
     let el;
     while ((el = walker.nextNode())) {
       const st = getComputedStyle(el);
-      if (!isCandidate(el, st)) continue;
+      const leaf = !isCandidate(el, st);
+      if (!leaf) owners.add(el);
+      else if (!isLeafText(el)) continue;
       const r = visibleRect(el, st);
       if (!r) continue;
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
       const inView = cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight;
+      if (leaf) {
+        if (!inView) continue;
+        let a = el.parentElement;
+        while (a && !owners.has(a)) a = a.parentElement;
+        if (a) continue;
+      }
       if (inView && !isTop(el, r)) continue;
       const dist = inView ? 0 : Math.abs(cx - innerWidth / 2) + Math.abs(cy - innerHeight / 2);
-      found.push({ el, r, inView, dist });
+      found.push({ el, r, inView, dist, leaf });
     }
     if (found.length <= MAX_ITEMS) return found;
-    const keep = new Set([...found].sort((a, b) => a.dist - b.dist).slice(0, MAX_ITEMS));
+    const keep = new Set([...found].sort((a, b) => a.leaf - b.leaf || a.dist - b.dist).slice(0, MAX_ITEMS));
     return found.filter((f) => keep.has(f));
   }
 
@@ -246,10 +289,11 @@
       const [x, y, w, h] = it.rect;
       const color = COLORS[it.id % COLORS.length];
       const mark = document.createElement('div');
-      mark.style.cssText = `all:initial;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border:2px solid ${color};box-sizing:border-box;`;
+      // all:initial 会把 pointer-events 恢复成 auto；编号框盖住鼠标时会抢走悬停状态，悬停菜单随之收起
+      mark.style.cssText = `all:initial;pointer-events:none;position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border:2px solid ${color};box-sizing:border-box;`;
       const label = document.createElement('span');
       label.textContent = String(it.id);
-      label.style.cssText = `all:initial;position:absolute;left:-2px;top:${y >= 14 ? -14 : 0}px;background:${color};color:#fff;font:bold 11px/14px Arial,sans-serif;padding:0 3px;`;
+      label.style.cssText = `all:initial;pointer-events:none;position:absolute;left:-2px;top:${y >= 14 ? -14 : 0}px;background:${color};color:#fff;font:bold 11px/14px Arial,sans-serif;padding:0 3px;`;
       mark.appendChild(label);
       box.appendChild(mark);
     }
@@ -329,6 +373,87 @@
     });
   }
 
+  // extract 用的页面文本：一行一个可见文本块，带视口坐标。块状元素（display 不是 inline、contents，含 inline-block、
+  // table-cell 和 flex、grid 的子项）里不属于下层块状元素的文字按顺序成行，下层块状元素前后的文字各自成行；
+  // 相邻的两个行内元素之间补一个空格。隐藏的元素整棵跳过；伪元素文字、链接的 title、图片的 alt、下拉框的选中项也写进行里
+  function texts() {
+    const lines = [];
+    const shown = (el) => el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    function walk(block) {
+      let parts = [];
+      let first = null;
+      let last = null;
+      const add = (s, node) => {
+        parts.push(s);
+        if (node && s.trim()) {
+          first = first || node;
+          last = node;
+        }
+      };
+      const flush = () => {
+        const text = clean(parts.join(''));
+        if (text) {
+          let r = block.getBoundingClientRect();
+          if (first) {
+            const range = document.createRange();
+            range.setStartBefore(first);
+            range.setEndAfter(last);
+            r = range.getBoundingClientRect();
+          }
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const inView = cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight;
+          const rect = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+          lines.push({ text, rect, inView });
+        }
+        parts = [];
+        first = last = null;
+      };
+      const pseudo = (el, which) => {
+        const t = pseudoText(el, which);
+        if (t) add(` ${t} `);
+      };
+      const content = (el) => {
+        pseudo(el, '::before');
+        if (el.tagName === 'IMG') {
+          const alt = clean(el.alt || el.title);
+          if (alt) add(` [img: ${alt}] `, el);
+        } else if (el.tagName === 'SELECT') {
+          add(` ${el.selectedOptions[0]?.text || ''} `, el);
+        } else {
+          let prevEl = false;
+          for (const child of el.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              add(child.data, child);
+              prevEl = false;
+              continue;
+            }
+            if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TAGS.has(child.tagName)) continue;
+            const st = getComputedStyle(child);
+            // display:contents 的元素自己没有盒子，checkVisibility 总是 false，可见性由子元素各自判断
+            if (st.display === 'none' || (st.display !== 'contents' && !shown(child))) continue;
+            if (st.display !== 'inline' && st.display !== 'contents') {
+              flush();
+              walk(child);
+              prevEl = false;
+              continue;
+            }
+            if (prevEl || child.tagName === 'BR') add(' ');
+            content(child);
+            prevEl = true;
+          }
+        }
+        const title = el.tagName === 'A' ? clean(el.title) : '';
+        if (title && !clean(el.textContent).includes(title)) add(` [title: ${title}] `);
+        pseudo(el, '::after');
+      };
+      content(block);
+      flush();
+    }
+    walk(document.body || document.documentElement);
+    return lines;
+  }
+
   // DOM 连续 quietMs 没有节点变化即视为稳定，最多等 maxMs（参考 Stagehand 的 waitForDomSettle）
   function settle(quietMs, maxMs) {
     return new Promise((resolve) => {
@@ -362,5 +487,67 @@
     return !!btn && (btn.tagName !== 'BUTTON' || btn.type === 'submit');
   }
 
-  window.__obact = { snapshot, blocks, clearMarks, nameOf, anchor, settle, opensTab };
+  // 点击时浏览器会让按钮、链接获得焦点，点在不能获得焦点的地方时焦点回到 body：这类焦点变化是点击本身带来的
+  const CLICK_FOCUS = 'body, a, button, input[type=button], input[type=submit], input[type=reset], input[type=image], '
+    + '[role=button], [role=link]';
+  // 内部的变化观察不到的元素：画布、内嵌页面和插件、视频
+  const OPAQUE = 'canvas, iframe, embed, object, video';
+  let watching = null;
+
+  // 表单控件的值、勾选和选中状态；这些 property 的变化不会触发 MutationObserver
+  function formState() {
+    const controls = document.querySelectorAll('input, textarea, select');
+    const state = (el) => (el.tagName === 'SELECT' ? Array.from(el.options, (o) => o.selected) : [el.value, el.checked]);
+    return JSON.stringify(Array.from(controls, state));
+  }
+
+  // 编号框容器的插入、移除和容器内部的变化
+  function isMark(r) {
+    const el = r.target.nodeType === Node.ELEMENT_NODE ? r.target : r.target.parentElement;
+    if (el && el.closest(`#${MARK_ID}`)) return true;
+    const nodes = [...r.addedNodes, ...r.removedNodes];
+    return nodes.length > 0 && nodes.every((n) => n.id === MARK_ID);
+  }
+
+  // 动作执行前调用：记下焦点和表单控件状态，开始记录 DOM 变化（childList、attributes、characterData）和滚动
+  function watchEffect(method) {
+    if (watching) watching.stop();
+    const w = { method, changed: false, focus: document.activeElement, form: formState() };
+    const observer = new MutationObserver((records) => {
+      if (records.some((r) => !isMark(r))) w.changed = true;
+    });
+    observer.observe(document, { childList: true, attributes: true, characterData: true, subtree: true });
+    const onScroll = () => { w.changed = true; };
+    addEventListener('scroll', onScroll, true);
+    w.stop = () => {
+      if (observer.takeRecords().some((r) => !isMark(r))) w.changed = true;
+      observer.disconnect();
+      removeEventListener('scroll', onScroll, true);
+    };
+    watching = w;
+  }
+
+  // 动作执行并等页面稳定后调用：这期间 DOM、滚动、焦点、表单控件状态有没有变化。
+  // 导航后的新文档里没有观察记录，算作有变化；click 后焦点落在 CLICK_FOCUS 上不算变化
+  function hadEffect() {
+    const w = watching;
+    watching = null;
+    if (!w) return true;
+    w.stop();
+    const focus = document.activeElement;
+    const focusMoved = focus !== w.focus && !(w.method === 'click' && (!focus || focus.matches(CLICK_FOCUS)));
+    return w.changed || focusMoved || formState() !== w.form;
+  }
+
+  // 页面没有变化时再看动作目标：fill、select_option 后的值等于要求的值（与原值相同），或目标内部的变化观察不到
+  function effectOn(el, method, value) {
+    if (!el || el.closest(OPAQUE) || el.querySelector(OPAQUE) || el.shadowRoot) return true;
+    if (method === 'fill') return el.value === value;
+    if (method === 'select_option') return Array.from(el.selectedOptions || []).some((o) => o.value === value || o.label === value);
+    return false;
+  }
+
+  window.__obact = {
+    snapshot, blocks, texts, clearMarks, nameOf, anchor, settle, opensTab, watchEffect, hadEffect, effectOn,
+  };
 }

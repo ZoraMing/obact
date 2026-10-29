@@ -132,6 +132,29 @@ async def opens_tab(page: Page, locator: Locator, method: str, key: str) -> bool
     return await locator.evaluate("(el, [m, k]) => window.__obact.opensTab(el, m, k)", [method, key])
 
 
+async def watch_effect(page: Page, method: str) -> None:
+    """紧挨着动作执行之前调用，开始观察页面变化，规则见 snapshot.js 的 watchEffect、hadEffect。"""
+    await ensure(page)
+    await page.evaluate("(m) => window.__obact.watchEffect(m)", method)
+
+
+async def had_effect(page: Page, target: Locator | tuple[float, float], method: str, value: str) -> bool:
+    """动作执行并 settle 之后调用：观察期间页面有没有变化，target 是元素定位器或视口像素坐标。
+
+    页面没有变化时再按 snapshot.js 的 effectOn 看目标本身。发生导航、执行上下文被销毁时算作有变化。
+    """
+    try:
+        if await page.evaluate("() => !window.__obact || window.__obact.hadEffect()"):
+            return True
+        # DOM 没有变化，目标还在原处
+        if isinstance(target, tuple):
+            js = "([x, y, m, v]) => window.__obact.effectOn(document.elementFromPoint(x, y), m, v)"
+            return await page.evaluate(js, [*target, method, value])
+        return await target.evaluate("(el, [m, v]) => window.__obact.effectOn(el, m, v)", [method, value])
+    except PlaywrightError:
+        return True
+
+
 async def anchor(page: Page, element_id: int, values: list[str]) -> str | None:
     """为最近一次快照中的元素生成包含参数值的选择器，找不到返回 None。"""
     xpath = await page.evaluate(
@@ -141,7 +164,10 @@ async def anchor(page: Page, element_id: int, values: list[str]) -> str | None:
 
 
 async def page_text(page: Page) -> str:
-    return await page.evaluate("(n) => (document.body ? document.body.innerText : '').slice(0, n)", MAX_TEXT)
+    """extract 用的页面文本：一行一个可见文本块，格式“文字 @(x,y,宽x高)”，规则见 snapshot.js 的 texts。"""
+    await ensure(page)
+    items = await page.evaluate("() => window.__obact.texts()")
+    return "\n".join(_text_line(it) for it in items)[:MAX_TEXT]
 
 
 def _line(it: dict) -> str:
@@ -167,4 +193,10 @@ def _block_line(it: dict) -> str:
     preview = it["preview"] + ("…" if it["length"] > len(it["preview"]) else "")
     x, y, w, h = it["rect"]
     line = f"[{it['id']}] {it['tag']} {json.dumps(preview, ensure_ascii=False)}（{it['length']} 字）@({x},{y},{w}x{h})"
+    return line if it["inView"] else line + " 屏幕外"
+
+
+def _text_line(it: dict) -> str:
+    x, y, w, h = it["rect"]
+    line = f"{it['text']} @({x},{y},{w}x{h})"
     return line if it["inView"] else line + " 屏幕外"

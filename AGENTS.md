@@ -8,25 +8,28 @@ Obact 是 Python 实现的单任务网页自动化工具：第一次运行由视
 
 | 文件 | 作用 |
 | --- | --- |
-| obact/core.py | Obact 类，唯一的编排者：读 .env 配置与视觉检查记录、act/read/download 共用的 _step 流程（S1 → 编号 → fast → smart）、动作执行与新标签页等待、执行后校验、反自动化检测 |
-| obact/snapshot.js | 注入页面的脚本，挂在 window.__obact：snapshot（元素清单）、blocks（文本块清单）、nameOf、anchor、settle、opensTab（这次点击或回车是否会打开新标签页） |
+| obact/core.py | Obact 类，唯一的编排者：读 .env 配置与视觉检查记录、act/read/download/upload 共用的 _step 流程（S1 → 编号 → fast → smart）、动作执行与新标签页等待、执行后校验、反自动化检测 |
+| obact/snapshot.js | 注入页面的脚本，挂在 window.__obact：snapshot（元素清单）、blocks（文本块清单）、texts（extract 用的带坐标文本）、nameOf、anchor、settle、opensTab（这次点击或回车是否会打开新标签页）、watchEffect / hadEffect / effectOn（动作有没有让页面发生变化） |
 | obact/snapshot.py | 调用 snapshot.js，组装 Snapshot（清单文字、截图、编号 → 选择器）；watch 跟踪进行中的请求，settle 等页面稳定 |
 | obact/cache.py | 缓存键、参数模板化与回填、JSONL 读写 |
 | obact/llm.py | 模型槽位、提示词（ACT_PROMPT、READ_PROMPT、EXTRACT_PROMPT）、视觉检查、JSON 解析与重试 |
 | obact/output.py | save 的文件写出 |
-| obact/mcp_server.py | MCP 服务（stdio）：把 goto、page_state、act、read、download、extract、save 暴露为原子工具；首次调用时才打开浏览器，浏览器关闭后重新打开；有 CLAUDE_PROJECT_DIR 时切换到项目目录；只通过 Obact 的公开方法访问浏览器；日志写标准错误，标准输出只留给协议消息 |
+| obact/mcp_server.py | MCP 服务（stdio）：把 goto、page_state、scroll、wait、act、read、download、upload、extract、save 暴露为原子工具；首次调用时才打开浏览器，浏览器关闭后重新打开；有 CLAUDE_PROJECT_DIR 时切换到项目目录；只通过 Obact 的公开方法访问浏览器；日志写标准错误，标准输出只留给协议消息 |
 | examples/ | 使用示例 |
 | tasks/ | OSWorld 风格的 Web 任务（shop、booking、archive、download、community）、公共校验 common.py、运行汇总 run.py |
 | tests/smoke.py | 冒烟测试：本地测试页 + 真实模型跑两遍主流程，再以子进程测 MCP 服务 |
+| tests/test_*.py | pytest：单元、假模型功能测试、MCP 进程内测试（默认）；真实模型（--real）；外网练习站（--site）。页面在 pages.py，假模型在 support.py |
 
 ## 环境与命令
 
 所有命令在仓库根目录执行，使用项目虚拟环境 .venv（Python 3.12）。
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -e .                          # 安装（playwright、openai、pydantic、mcp）
+.venv\Scripts\python.exe -m pip install -e .[test]                    # 安装（playwright、openai、pydantic、mcp，测试用 pytest）
 .venv\Scripts\ruff.exe check obact examples tasks tests --line-length 120   # 代码检查，改动后必须通过
 .venv\Scripts\python.exe tests/smoke.py                                     # 冒烟测试：本地测试页 + 真实模型 + MCP
+.venv\Scripts\python.exe -m pytest                                          # 单元 + 假模型功能测试 + MCP（无网络、无模型）
+.venv\Scripts\python.exe -m pytest --real --site                            # 再加真实模型和外网练习站的测试
 .venv\Scripts\python.exe tasks/run.py shop booking archive download         # 真实站点验证，打印汇总表
 ```
 
@@ -36,12 +39,12 @@ Obact 是 Python 实现的单任务网页自动化工具：第一次运行由视
 
 1. core 是唯一的编排者；snapshot、cache、llm、output 互不引用。浏览器只由 core（执行动作）和 snapshot（读取页面）访问。mcp_server.py 只 import core，不直接引用 snapshot、cache、llm、output。
 2. snapshot.js 整个文件是一个箭头函数表达式，由 page.evaluate 执行，再次注入时直接返回。文件末尾不能加分号，也不要改成模块或语句形式；页面上只挂 window.__obact 一个全局变量。
-3. 参数值必须在选择器的字符串字面量或 args 中被模板化，才能写缓存；做不到时 templatize 返回 None，这一步不缓存。出现在 args 里的参数只在 args 中替换，不替换进选择器；click 的 args 恒为空。回放时选择器用 render_selector 填参数，不要用 render。不要放宽这些规则，否则换参数回放会静默点错元素。
+3. 参数值必须在选择器的字符串字面量或 args 中被模板化，才能写缓存；做不到时 templatize 返回 None，这一步不缓存。出现在 args 里的参数只在 args 中替换，不替换进选择器；click、hover 的 args 恒为空。回放时选择器用 render_selector 填参数，不要用 render。不要放宽这些规则，否则换参数回放会静默点错元素。
 4. 参数锚定（snapshot.js 的 anchor）先用“文字节点等于参数值”，再退回“包含”；锚点下面的条件（属性条件和位置路径）本身不能唯一定位元素，否则锚点会被绕过。
-5. act 和 download 的 S1 必须核对“唯一匹配 + 名称一致”后才执行；read 只核对唯一匹配和非空文字；核对不符抛 _Mismatch，转 S2。按 element_id 执行（编号）时同样先核对页面地址未变、唯一匹配、名称与快照一致，不符转模型；page_state 的快照只能用一次，act、download、read、goto 时作废。
-6. 执行后校验（verify）不通过时直接抛 StepFailed：不写缓存、不升级到下一级模型；S1 回放后不通过时还要删除这条缓存。动作执行之前的失败才升级。
+5. act 和 download 的 S1 必须核对“唯一匹配 + 名称一致”后才执行；read 只核对唯一匹配和非空文字；核对不符抛 _Mismatch，转 S2。按 element_id 执行（编号）时同样先核对页面地址未变、唯一匹配、名称与快照一致，不符转模型；page_state 的快照只能用一次，act、download、read、goto、scroll 时作废。
+6. 执行后校验（verify）不通过时直接抛 StepFailed：不写缓存、不升级到下一级模型；S1 回放后不通过时还要删除这条缓存。动作执行之前的失败才升级。唯一的例外是 act 没写 expect、click、press、fill、select_option 执行后页面没有任何变化（_run 抛 _NoEffect，判定规则在 snapshot.js 的 watchEffect、hadEffect、effectOn）：这一级不写缓存，记入 attempts 后升级到下一级，S1 回放没有效果时还要删除这条缓存；各级都失败时抛 StepFailed，executed=True。写了 expect 的 act 不做这项检查，expect 不通过仍然不升级；download、read 也不做。观察只覆盖动作执行到动作后 settle 结束这段时间，判定宁可漏判为“有效果”，不要把有效果的动作判成没有效果。
 7. 每个动作执行后、每次拍快照前都要 settle：等进行中的请求结束（超过 2 秒的视为卡住）且 DOM 稳定，总共最多 5 秒。请求跟踪只用 Playwright 事件，不要往页面里注入监听网络的代码。点击或回车会打开新标签页时（opensTab 判断），先等新标签页出现再 settle，否则 settle、expect 和后续步骤会作用在旧页面上；不会打开新标签页的动作不额外等待。
-8. 模型输出走 response_format json_object，用 pydantic 校验；同一模型最多重试 1 次。
+8. 模型输出走 response_format json_schema 约束解码（schema 来自 pydantic 模型，不用 strict），接口报 400 时这个槽位改用 json_object；回复再用 pydantic 校验；同一模型最多重试 1 次。content 为空时取 reasoning_content。
 9. 缓存条目只存回放必需的字段（key、selector 或 point、name、method、args），格式见 README。
 
 ## 代码风格
@@ -53,14 +56,14 @@ Obact 是 Python 实现的单任务网页自动化工具：第一次运行由视
 
 ## 验证方法
 
-仓库里没有 pytest 单元测试；除非用户要求，不要新增。改动后先跑 tests/smoke.py（本地测试页 + .env 里的真实模型，两遍运行加 MCP 子进程，退出码 0 为通过），再按需要做下面两种验证，并在汇报中如实给出结果。用便宜或本地的模型跑冒烟测试时，在命令行设置 MODEL_BASE_URL、MODEL_NAME、MODEL_KEY 覆盖 .env。
+改动后先跑 pytest（默认档不需要网络和模型）；新增或修改功能时，在 tests/test_features.py 里用假模型补对应的测试，涉及模型是否会正确使用的功能，再在 tests/test_real.py 里补真实模型的测试。然后跑 tests/smoke.py（本地测试页 + .env 里的真实模型，两遍运行加 MCP 子进程，退出码 0 为通过），再按需要做下面两种验证，并在汇报中如实给出结果。用便宜或本地的模型跑冒烟测试时，在命令行设置 MODEL_BASE_URL、MODEL_NAME、MODEL_KEY 覆盖 .env。
 
 本地验证：写一个本地 HTML 测试页，用假模型替换 LLM._chat，跑两遍同一个脚本：第一遍应全部走 S2 并写缓存，第二遍 act、read、download 的模型调用次数应为 0。假模型按用户消息的开头区分调用类型：
 
 ```python
 from obact import llm
 
-async def fake_chat(self, slot, messages):
+async def fake_chat(self, slot, messages, schema=None):
     text = messages[-1]["content"][0]["text"]
     if text.startswith("这张图片"):     # 视觉检查：缓存目录里没有 vision_checked.json 记录时才会调用
         return '{"color": "红色"}'
@@ -80,10 +83,10 @@ llm.LLM._chat = fake_chat
 
 ## 调试
 
-- 看模型选了什么：包装 LLM.decide 或 LLM.locate，打印传入的清单文字和返回值。
+- 看模型选了什么：act、download 的终端日志里“目标（fast）”这类行写明了编号、名称、选择器或坐标、method 和模型给的理由；要看清单文字时，包装 LLM.decide 或 LLM.locate，打印传入的清单文字和返回值。
 - 看模型看到的画面：调用 snapshot.take(page) 或 snapshot.take_blocks(page)，把 .image 写成 PNG；单独使用 Playwright 时先调用 snapshot.watch(page)，settle 才会等网络请求。
-- 失败截图在缓存目录下的 任务名_failed.png，StepFailed.attempts 里有各级失败原因。
-- 某一步行为异常时，先删掉 .obact 里对应任务的 jsonl，确认 S2 本身是否正确，再看 S1。
+- 失败截图在缓存目录下的 任务名/failed.png，StepFailed.attempts 里有各级失败原因。
+- 某一步行为异常时，先删掉 .obact 下对应任务文件夹里的 steps.jsonl，确认 S2 本身是否正确，再看 S1。
 
 ## 协作约定
 
