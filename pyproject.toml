@@ -1,6 +1,8 @@
 [project]
 name = "obact"
 version = "0.2.0"
+description = "用自然语言写网页自动化：视觉模型首次定位，之后按缓存回放，失效时自愈；可作为 MCP 服务使用"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["playwright==1.58.0", "openai", "pydantic>=2", "mcp==1.30.0"]
 

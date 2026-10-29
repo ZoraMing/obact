@@ -1,6 +1,6 @@
 ## MCP 服务开发文档
 
-obact/mcp_server.py 把 Obact 的操作以原子工具的形式提供给 AI 客户端，经 stdio 通信。使用方法和部署见 README.md 的“MCP 服务”一节，本文档说明实现。
+obact/mcp_server.py 把 Obact 的操作以原子工具的形式提供给 AI 客户端，经 stdio 通信。使用方法和部署见 [MCP 服务](mcp.md)，本文档说明实现。
 
 ## 1. 结构
 
